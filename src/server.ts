@@ -567,6 +567,7 @@ question is whether the fetcher accepts or drops either form.`
   )
 })
 app.get('/probe/t6/hello\\+world', P('T6PLUS', 'T6-PLUS probe:t6plus'))
+app.get('/probe/t6/hello%2Bworld', P('T6PLUS', 'T6-PLUS probe:t6plus'))
 app.get('/probe/t6/hello%20world', P('T6PCT', 'T6-PCT probe:t6pct'))
 
 // T7 — redirect (H5): does the destination arrive via 302 and directly?
