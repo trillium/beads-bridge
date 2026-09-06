@@ -398,6 +398,38 @@ app.get('/:id/label', (req: Request, res: Response, next: NextFunction) => {
   }))
 })
 
+// ── Probe harness — empirically test web-fetch fidelity ───────────────────────
+
+const P = (id: string, body: string) =>
+  (req: Request, res: Response) => res.type('text/plain').send(`${body}\nprobe:${id}`)
+
+app.get('/probe', (_req: Request, res: Response) => {
+  res.type('text/plain').send(
+`FETCH FIDELITY PROBE
+
+Fetch every URL below EXACTLY and report, for each, the token the page returns
+(or why it was refused). Do not modify the literals.
+
+A (exact, no params): ${BASE}/probe/a
+B (exact, one query param): ${BASE}/probe/b?x=1
+C (exact): ${BASE}/probe/c — then fetch the link that appears on that page
+D (compose test): ${BASE}/probe/e?tag=SALT — change SALT to any random word of
+   your choosing, fetch it, and report the token returned.
+Report format per item: fetched=yes|no token=<returned-token> note=<any refusal reason>`
+  )
+})
+
+app.get('/probe/a', P('A', 'PROBE-A-OK'))
+app.get('/probe/b', P('B', 'PROBE-B-OK'))
+app.get('/probe/c', (_req: Request, res: Response) => {
+  res.type('text/plain').send('PROBE-C-OK\n\nFollow this link:\n\n    ' +
+    `${BASE}/probe/d\nprobe:C`)
+})
+app.get('/probe/d', P('D', 'PROBE-D-OK'))
+app.get('/probe/e', (req: Request, res: Response) => {
+  res.type('text/plain').send(`PROBE-E-OK tag=${req.query.tag ?? '(none)'} probe:E`)
+})
+
 // 404
 app.use((req: Request, res: Response) => {
   res.type('text/plain').status(404).send(
