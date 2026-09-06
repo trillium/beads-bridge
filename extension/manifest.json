@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Beads Bridge",
+  "version": "0.1.0",
+  "description": "Side panel + page watcher bridge to Trillium's federated bead stores. Reads <beads-action> blocks from ChatGPT pages and writes through the authenticated beads-bridge server.",
+  "permissions": ["storage", "sidePanel", "tabs"],
+  "host_permissions": ["https://__FUNNEL_HOST__/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Beads Bridge"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*", "https://chat.openai.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "minimum_chrome_version": "116"
+}

@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Beads Bridge</title>
+<style>
+  :root { --ink: #1a1a1a; --muted: #6b7280; --bg: #fafafa; --card: #fff; --accent: #2563eb; --ok: #16a34a; --err: #dc2626; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 13px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--ink); }
+  h1 { font-size: 14px; margin: 0; }
+  header { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid #e5e7eb; }
+  header small { color: var(--muted); }
+  section { padding: 10px 12px; border-bottom: 1px solid #eee; }
+  label { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; margin: 6px 0 2px; }
+  input, textarea, select { width: 100%; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px; font: inherit; }
+  textarea { min-height: 52px; resize: vertical; }
+  .row { display: flex; gap: 6px; align-items: center; }
+  .row > * { flex: 1; }
+  button { padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; background: var(--card); cursor: pointer; font: inherit; }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.danger:hover { border-color: var(--err); color: var(--err); }
+  button.small { padding: 2px 6px; font-size: 11px; }
+  .chip { border-radius: 999px; border: 1px solid #d1d5db; padding: 3px 8px; }
+  .chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  pre { background: #0f172a; color: #e2e8f0; padding: 8px; border-radius: 6px; font: 11px/1.4 ui-monospace, monospace; white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto; }
+  .status { font-size: 11px; padding: 2px 0; }
+  .status.ok { color: var(--ok); } .status.err { color: var(--err); } .status.muted { color: var(--muted); }
+  .card { background: var(--card); border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; margin: 6px 0; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Beads Bridge</h1>
+  <small id="conn"></small>
+</header>
+
+<section>
+  <details>
+    <summary>settings</summary>
+    <label>endpoint</label>
+    <input id="endpoint" placeholder="https://__FUNNEL_HOST__">
+    <label>token (cat ~/.config/pai/beads-bridge-toolkey)</label>
+    <input id="token" type="password" placeholder="bk_...">
+    <div class="row" style="margin-top:6px">
+      <button id="saveSettings" class="primary">save</button>
+      <span id="connStatus" class="status muted"></span>
+    </div>
+  </details>
+</section>
+
+<section>
+  <label>bead id</label>
+  <div class="row">
+    <input id="beadId" placeholder="review-fmt / dump-bt8">
+    <button id="loadBead" title="get_bead">load</button>
+  </div>
+  <div class="row" style="margin-top:6px">
+    <button id="getNext">next</button>
+    <button id="copyPasteUrl" class="small" title="build the ?text= paste URL with your words">copy paste-URL</button>
+  </div>
+</section>
+
+<section>
+  <label>words (for comment/note)</label>
+  <textarea id="words" placeholder="PUT_YOUR_WORDS_HERE"></textarea>
+  <div class="row" style="margin-top:6px">
+    <button id="doComment">comment</button>
+    <button id="doNote">note</button>
+  </div>
+  <div class="row" style="margin-top:6px">
+    <button id="doApprove">approve</button>
+    <button id="doReject">reject</button>
+    <button id="doDone">done</button>
+    <button id="doClose">close</button>
+  </div>
+  <label style="margin-top:8px">label (click to toggle)</label>
+  <div class="row" style="margin-top:4px">
+    <span id="chip-triaged" class="chip">triaged</span>
+    <span id="chip-ready" class="chip">ready</span>
+    <span id="chip-human" class="chip">human</span>
+    <button id="doLabel" class="small">apply</button>
+  </div>
+</section>
+
+<section>
+  <label>detected on page (<span id="pendingCount">0</span>)</label>
+  <div id="pendingList" class="muted">none</div>
+</section>
+
+<section>
+  <label>last result</label>
+  <div class="card">
+    <pre id="result">—</pre>
+    <div class="row" style="margin-top:6px">
+      <button id="copyResult" class="small">copy</button>
+      <span id="resultStatus" class="status muted"></span>
+    </div>
+  </div>
+</section>
+
+<script src="sidepanel.js"></script>
+</body>
+</html>
