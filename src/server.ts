@@ -430,6 +430,15 @@ app.get('/probe/e', (req: Request, res: Response) => {
   res.type('text/plain').send(`PROBE-E-OK tag=${req.query.tag ?? '(none)'} probe:E`)
 })
 
+// F — differential: was E's refusal because the URL was on-page, or because
+// composition itself is ineligible? User pastes the exact /probe/f?tag=URLBASE
+// URL verbatim, then instructs ChatGPT to substitute {:RAWTAG:} with a random
+// word and fetch it. If refused here too, composition is dead regardless of
+// the URL's provenance.
+app.get('/probe/f', (req: Request, res: Response) => {
+  res.type('text/plain').send(`PROBE-F-OK tag=${req.query.tag ?? '(none)'} probe:F`)
+})
+
 // 404
 app.use((req: Request, res: Response) => {
   res.type('text/plain').status(404).send(
