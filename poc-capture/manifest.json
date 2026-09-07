@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Beads Bridge — Passive Capture POC",
+  "version": "0.0.1",
+  "description": "Step 6 POC: service-worker polls ChatGPT list+detail with the browser's own session (credentials:include). No credential extraction, no beads writes.",
+  "permissions": ["alarms", "storage"],
+  "host_permissions": ["https://chatgpt.com/*"],
+  "background": {
+    "service_worker": "sw.js"
+  },
+  "action": {
+    "default_title": "Capture POC",
+    "default_popup": "viewer.html"
+  },
+  "minimum_chrome_version": "116"
+}

@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+body { font-family: system-ui; width: 560px; padding: 12px; font-size: 12px; }
+button { margin: 2px; }
+table { border-collapse: collapse; width: 100%; margin-top: 8px; }
+td, th { border: 1px solid #ccc; padding: 3px 5px; text-align: left; vertical-align: top; }
+.mono { font-family: ui-monospace, monospace; font-size: 11px; }
+#status { background: #f4f4f4; padding: 6px; white-space: pre-wrap; }
+.warn { color: #a00; }
+</style>
+</head>
+<body>
+<h3>Capture POC (Step 6)</h3>
+<div id="status">loading…</div>
+<p>
+<button id="poll">Poll now</button>
+<button id="export">Export JSON</button>
+<button id="clear">Clear POC state</button>
+</p>
+<p>
+Record phone send (tap the instant you hit send on the phone):
+<button data-send="PHONE_CAPTURE_TEST_A_2026">Sent A</button>
+<button data-send="PHONE_CAPTURE_TEST_B_2026">Sent B</button>
+<button data-send="PHONE_CAPTURE_TEST_C_2026">Sent C</button>
+</p>
+<p class="warn">Rules: desktop ChatGPT stays logged in and untouched — no clicks, no refresh. Reads only; no credentials leave the browser.</p>
+<table>
+<thead><tr>
+<th>marker</th><th>phone → captured (latency)</th><th>conv / msg</th><th>role + content</th><th>dup</th>
+</tr></thead>
+<tbody id="rows"></tbody>
+</table>
+<script src="viewer.js"></script>
+</body>
+</html>

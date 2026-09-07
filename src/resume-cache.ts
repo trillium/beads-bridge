@@ -64,9 +64,9 @@ export function staleRoster(id: string, fresh: boolean): string[] | null {
   return null
 }
 
-export async function refreshFetch(key: string, id: string, mode: string): Promise<string> {
+export async function refreshFetch(key: string, id: string, mode: string, extra?: string): Promise<string> {
   const { stdout } = await execFileAsync('bun',
-    [`${RESUME_DOCX_DIR}/bin/fetch.ts`, id, mode],
+    [`${RESUME_DOCX_DIR}/bin/fetch.ts`, id, mode, ...(extra ? [extra] : [])],
     { encoding: 'utf8', timeout: 180000, maxBuffer: 4 * 1024 * 1024 })
   const body = stdout.trim()
   fetchCache.set(key, { at: Date.now(), body })

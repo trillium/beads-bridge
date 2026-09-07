@@ -9,15 +9,16 @@ import { qstr, pstr, bd, storeFromId, cacheTag } from '../util'
 import { wrap } from '../wrap'
 import { isWebAgent } from '../agent-detect'
 
+export const mountOrder = -10
 export const readRouter = Router()
 
 // GET / — the research-assistant prompt (markdown), served verbatim from prompt.md.
 // The cache-tag placeholder is minted here so the URL ChatGPT receives is literal.
 // GET / — agents get prompt.md (the bridge action brief); browsers get the
-// HTML landing page with links to every part of the app.
+// SPA (Vite build output, file-based routes in web/src/routes/).
 readRouter.get('/', (req: Request, res: Response) => {
   if (!isWebAgent(req.get('user-agent'), req.get('accept')))
-    return void res.sendFile(path.join(__dirname, '..', '..', 'public', 'index.html'))
+    return void res.sendFile(path.join(__dirname, '..', '..', 'web', 'dist', 'index.html'))
   try {
     const prompt = readFileSync(path.join(__dirname, '..', 'prompt.md'), 'utf8')
       .replace('<server-issued-tag>', cacheTag())

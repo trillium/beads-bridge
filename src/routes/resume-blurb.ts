@@ -8,6 +8,7 @@ import { withCb, shortCode } from '../util'
 import { guideEntries } from './guide'
 import { isWebAgent } from '../agent-detect'
 
+export const mountOrder = -20
 export const resumeBlurbRouter = Router()
 
 // GET /resume — user-facing assistance page for the resume voice loop.
@@ -51,17 +52,9 @@ resumeBlurbRouter.get(['/resume', '/resume/:id'], async (req: Request, res: Resp
     .replace('{{REFRESH}}', refreshList)
     .replace('{{GUIDES}}', guidesList)
     .replace('{{ROSTER}}', rosterBlock)
-  // Agents get the raw blurb as text (no HTML shell to chew through);
-  // browsers keep the copy-button page.
+  // Agents get the raw blurb as text; browsers use the SPA copy page.
   if (isWebAgent(req.get('user-agent'), req.get('accept')))
     return void res.type('text/plain').send(blurb)
-  const esc = blurb.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  res.type('text/html').send(
-    `<!doctype html><html><head><meta charset=utf-8><title>Resume session blurb</title>` +
-    `<style>body{font-family:system-ui;margin:2em;max-width:60em}pre{background:#f4f4f4;padding:1em;white-space:pre-wrap}button{font-size:1.1em;padding:.5em 1em}</style></head><body>` +
-    `<h1>Resume working session — ${resume}</h1>` +
-    `<p>Copy the blurb, switch to ChatGPT, paste it. ChatGPT fetches the listed pages itself.</p>` +
-    `<button onclick="navigator.clipboard.writeText(document.getElementById('b').innerText).then(()=>{this.innerText='Copied!'})">Copy blurb</button>` +
-    `<pre id="b">${esc}</pre></body></html>`)
+  return void res.redirect(`/#/resume?resume=${resume}`)
 })
 

@@ -5,6 +5,7 @@ import { BASE } from '../config'
 import { qstr, pstr, bd, storeFromId } from '../util'
 import { wrap } from '../wrap'
 
+export const mountOrder = 10
 export const verbsRouter = Router()
 
 // GET /{bead-id}/comment

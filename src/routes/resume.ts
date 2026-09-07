@@ -9,6 +9,7 @@ import { pstr, withCb, shortCode } from '../util'
 import { wrap } from '../wrap'
 import { guideEntries } from './guide'
 
+export const mountOrder = -30
 export const resumeRouter = Router()
 
 // ?debug=1 appends the debug-state protocol from blurbs/fetch-debug.md
@@ -70,6 +71,7 @@ resumeRouter.get('/fetch/:id', async (req: Request, res: Response) => {
     ['debug', 'debug state — fetch this if any other view fails'],
     ['findings', 'open verification findings (address first)'],
     ['stories', 'story records: evidence layer beneath bullets'],
+    ['project/<slug>', 'per-project evidence pack (stories, tasks, bullets) — e.g. project/gas-town'],
   ]
   // Coaching blurb lives in blurbs/resume-index.md (read per-hit so edits
   // apply without a restart); {BASE} and {RESUME} are filled in here.
@@ -101,6 +103,39 @@ resumeRouter.get('/fetch/:id', async (req: Request, res: Response) => {
     meta: { id },
     actions: modes.map(([m]) => `GET ${cb(`${BASE}/fetch/${id}/${m}`)}`),
   }))
+})
+
+resumeRouter.get('/fetch/:id/project/:slug', async (req: Request, res: Response) => {
+  const id = pstr(req.params.id)
+  const slug = pstr(req.params.slug)
+  if (!/^[A-Za-z][A-Za-z0-9_-]{2,64}$/.test(id)) {
+    return res.type('text/plain').status(400).send(`unknown resume id: ${id}`)
+  }
+  if (!/^[a-z][a-z0-9-]{1,40}$/.test(slug)) {
+    return res.type('text/plain').status(400).send(`unknown project slug: ${slug}`)
+  }
+  const key = `${id}/project/${slug}`
+  const hit = fetchCache.get(key)
+  const fresh = req.query.fresh === '1'
+  try {
+    if (hit && !fresh) {
+      if (!inflight.has(key)) {
+        inflight.add(key)
+        refreshFetch(key, id, 'project', slug).catch(() => {}).finally(() => inflight.delete(key))
+      }
+      const at = hit.at
+      var body = `${hit.body}\n\ndata last updated at ${new Date(at).toISOString()}${Date.now() - at > FETCH_TTL_MS ? ' (stale — refresh running)' : ''}`
+    } else {
+      inflight.add(key)
+      const freshBody = await refreshFetch(key, id, 'project', slug)
+      var body = `${freshBody}\n\ndata last updated at ${new Date(Date.now()).toISOString()}`
+    }
+    res.type('text/plain').send(body)
+  } catch (e: unknown) {
+    const err = e as { stdout?: string; message?: string }
+    if (hit) res.type('text/plain').send(`${hit.body}\n\ndata last updated at ${new Date(hit.at).toISOString()} (stale — refresh running)`)
+    else res.type('text/plain').status(502).send(`# fetch failed: ${key}\n\n${String(err.stdout ?? '').trim() || err.message || 'error'}`)
+  }
 })
 
 resumeRouter.get('/fetch/:id/:mode', async (req: Request, res: Response) => {
