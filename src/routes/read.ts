@@ -147,6 +147,25 @@ readRouter.get('/:store', (req: Request, res: Response, next: NextFunction) => {
   }))
 })
 
+// GET /beads/{id1+id2+...} — show multiple beads on one page (max 20).
+// Lets one literal URL carry the whole deeper-context roster.
+readRouter.get('/beads/:ids', (req: Request, res: Response) => {
+  const raw = String(pstr(req.params.ids)).split('+').map((x: string) => x.trim()).filter(Boolean).slice(0, 40)
+  const valid = raw.filter((id: string) => /^[A-Za-z][A-Za-z0-9_-]{2,64}$/.test(id) && storeFromId(id))
+  if (!valid.length) return res.type('text/plain').status(400).send('No valid bead ids in URL.')
+  const parts = valid.map((id: string) => {
+    const store = storeFromId(id)!
+    const body = bd(store, `show ${id}`)
+    const comments = bd(store, `comments ${id}`)
+    return [`# ${id} (STORE: ${store})`, '', comments ? `${body}\n\n## Comments\n${comments}` : body].join('\n')
+  })
+  res.type('text/plain').send(wrap({
+    title: `Beads: ${valid.join(' + ')}`,
+    body: parts.join('\n\n---\n\n'),
+    actions: valid.map(id => `GET ${BASE}/${id} — view ${id} alone`),
+  }))
+})
+
 // GET /{bead-id} — show bead
 readRouter.get('/:id', (req: Request, res: Response, next: NextFunction) => {
   const id = pstr(req.params.id)
