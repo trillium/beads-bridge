@@ -2,6 +2,10 @@
 // each paste lands as a bead in the chosen store for later AI integration.
 import { Router, Request, Response } from 'express'
 import { execFile } from 'child_process'
+import { createHash } from 'crypto'
+import { readFileSync, writeFileSync, mkdirSync } from 'fs'
+import { homedir } from 'os'
+import { join, dirname } from 'path'
 import { BASE } from '../config'
 import { withCb, shortCode } from '../util'
 
@@ -9,6 +13,22 @@ export const pasteRouter = Router()
 
 // Stores the paste form may target (CLI wrapper must exist in PATH).
 const PASTE_STORES = ['inbox', 'task', 'resume_bullets', 'stories'] as const
+
+// Exact-text dedupe: sha256(text) -> bead id, persisted as an internal cache.
+// The inbox was receiving the same block multiple times; resubmits now resolve
+// to the original bead instead of creating a duplicate.
+const HASH_CACHE = join(homedir(), 'data', 'inbox', '.paste-hashes.json')
+const loadHashes = (): Record<string, string> => {
+  try { return JSON.parse(readFileSync(HASH_CACHE, 'utf8')) } catch { return {} }
+}
+const saveHash = (hash: string, id: string): void => {
+  const cache = loadHashes()
+  cache[hash] = id
+  mkdirSync(dirname(HASH_CACHE), { recursive: true })
+  writeFileSync(HASH_CACHE, JSON.stringify(cache, null, 1))
+}
+const textHash = (text: string): string =>
+  createHash('sha256').update(text.trim()).digest('hex').slice(0, 16)
 
 interface InboxItem { id: string; title: string; open: boolean }
 
@@ -69,10 +89,19 @@ pasteRouter.post('/paste', async (req: Request, res: Response) => {
     const store = 'inbox'
     const text = String(req.body?.text ?? '')
     if (!text.trim()) return void res.type('html').send(PAGE('nothing to save — paste text first', await inboxItems()))
+    const hash = textHash(text)
+    const seen = loadHashes()[hash]
+    if (seen) {
+      const msg = `duplicate — exact same text already saved as <a href="/paste/inbox/${seen}">${seen}</a>; not saved again`
+      if ((req.headers.accept ?? '').includes('application/json'))
+        return void res.json({ id: seen, store, url: `${BASE}/paste/inbox/${seen}`, duplicate: true })
+      return void res.type('html').send(PAGE(msg, await inboxItems()))
+    }
     const title = String(req.body?.title ?? '').trim().slice(0, 120) || deriveTitle(text)
     const args = ['create', title, '--description', text, '--label', 'source:paste', '--label', 'paste:untriaged']
     const out = await run(store, args)
     const id = (out.match(/([a-z_]+-[a-z0-9]+)/) || [])[1] ?? 'unknown'
+    if (id !== 'unknown') saveHash(hash, id)
     if ((req.headers.accept ?? '').includes('application/json'))
       return void res.json({ id, store, url: `${BASE}/paste/${store}/${id}` })
     res.type('html').send(PAGE(`saved bead <a href="/paste/${store}/${id}">${id}</a>`, await inboxItems()))
