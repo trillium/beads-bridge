@@ -56,6 +56,7 @@ resumeRouter.get('/fetch/:id', async (req: Request, res: Response) => {
   ]
   res.type('text/plain').send(wrap({
     title: `Resume ${id} — views`,
+    noNext: true,
     body: [`Pick a view — fetch its URL exactly as written:`, ``,
       ...modes.map(([m, d]) => `${BASE}/fetch/${id}/${m}  — ${d}`),
       ...(beadUrls.length ? [``, `Deeper context — full beads (fetch any literal):`, ``,
@@ -107,6 +108,7 @@ resumeRouter.get('/fetch/:id/:mode', async (req: Request, res: Response) => {
   }
   res.type('text/plain').send(wrap({
     title: `Resume ${id} — ${mode}`,
+    noNext: true,
     body,
     meta: { id },
     actions: [

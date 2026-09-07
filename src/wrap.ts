@@ -9,9 +9,12 @@ export interface WrapOptions {
   body: string
   actions?: string[]
   meta?: { store?: string; id?: string }
+  /** Suppress the /next queue footer (for flows like the resume voice loop
+   *  where it would mislead). */
+  noNext?: boolean
 }
 
-export function wrap({ title, body, actions = [], meta = {} }: WrapOptions): string {
+export function wrap({ title, body, actions = [], meta = {}, noNext = false }: WrapOptions): string {
   const lines: string[] = []
   lines.push(`# ${title}`)
   lines.push('')
@@ -51,9 +54,11 @@ export function wrap({ title, body, actions = [], meta = {} }: WrapOptions): str
       for (const l of links) lines.push(`  ${l}`)
     }
   }
-  lines.push('')
-  lines.push('---')
-  const next = `${BASE}/next?cache=${cacheTag()}`
-  lines.push(`Fetch [the next item](${next}) — exact URL: ${next}`)
+  if (!noNext) {
+    lines.push('')
+    lines.push('---')
+    const next = `${BASE}/next?cache=${cacheTag()}`
+    lines.push(`Fetch [the next item](${next}) — exact URL: ${next}`)
+  }
   return lines.join('\n')
 }
