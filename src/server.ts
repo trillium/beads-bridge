@@ -10,7 +10,9 @@ import { readRouter } from './routes/read'
 import { verbsRouter } from './routes/verbs'
 import { probeRouter } from './routes/probe'
 import { actionsRouter } from './routes/actions'
+import { warmResume } from './resume-cache'
 import { guideRouter } from './routes/guide'
+import { resumeBlurbRouter } from './routes/resume-blurb'
 
 const app = express()
 
@@ -22,6 +24,7 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
 
 // Resume voice-loop routes first: /fetch/* and /resume must win over /:store.
 app.use(resumeRouter)
+app.use(resumeBlurbRouter)
 app.use(readRouter)
 app.use(verbsRouter)
 app.use(probeRouter)
@@ -39,6 +42,7 @@ app.use((req: Request, res: Response) => {
 // ── Start ─────────────────────────────────────────────────────────────────────
 
 app.listen(PORT, '0.0.0.0', () => {
+  warmResume('resumes-zak')
   console.log(`beads-bridge on all interfaces :${PORT}`)
   console.log(`  local:   http://localhost:${PORT}`)
   console.log(`  tailnet: http://__TAILNET_IP__:${PORT}`)
