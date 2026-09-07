@@ -2,13 +2,19 @@
 Wrap your COMPLETE output for this turn in one single markdown block:
 
 ```markdown
+## steps taken — mark EVERY step with its outcome indicator
+- ✅ (what you did — worked)
+- ❌ (what you did — failed: timeout / error / rejected, with which URL)
+- (every attempted fetch gets exactly one indicator; no unmarked steps)
+```markdown
 ## steps taken
-- (what you did, in order)
+- ✅ Fetched ... (worked)
+- ❌ Fetched ... (timed out)
 ## expected
 - (what you expected each step to do)
 ## results
-- worked: ...
-- did not work: ...
+- worked: ... (must match the ✅ steps above)
+- did not work: ... (must match the ❌ steps above, with the failing step named first)
 ## improvements / questions
 - (anything you observed, plus any questions — always include this section, even if empty)
 ## agreed changes (if any)
