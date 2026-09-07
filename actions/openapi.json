@@ -556,6 +556,35 @@
           }
         }
       }
+    },
+    "/fetch/{resumeId}/findings": {
+      "get": {
+        "operationId": "fetch_resume_findings",
+        "summary": "Open verification findings for a resume.",
+        "parameters": [
+          {
+            "name": "resumeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "resumes-zak"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Plain-text findings",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
