@@ -1,7 +1,6 @@
 // Resume voice-loop routes: /fetch/{resumeId}/{mode} + /resume assistance page.
 // MUST be mounted before the /:store and /:id routes (Express matches in order).
 import { Router, Request, Response } from 'express'
-import { execSync } from 'child_process'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { BASE, RESUME_DOCX_DIR, FETCH_MODES } from '../config'
@@ -12,11 +11,22 @@ export const resumeRouter = Router()
 
 const execFileAsync = promisify(execFile)
 
-// Short-TTL cache: a fetch fans out to ~50 bead subprocess calls (~60-120s),
-// so repeat hits (browser retries, ChatGPT re-fetch) must not re-run it.
-// Bead state changes on human timescales; 90s stale is safe. Bypass with ?fresh=1.
+// Stale-while-revalidate: a fetch fans out to ~50 bead subprocess calls
+// (~60-120s), so every hit serves the cache immediately (even stale) while a
+// background refresh keeps it fresh. Bead state changes on human timescales.
+// ?fresh=1 forces a refresh-and-wait instead.
 const fetchCache = new Map<string, { at: number; body: string }>()
 const FETCH_TTL_MS = 90_000
+const inflight = new Set<string>()
+
+async function refreshFetch(key: string, id: string, mode: string): Promise<string> {
+  const { stdout } = await execFileAsync('bun',
+    [`${RESUME_DOCX_DIR}/bin/fetch.ts`, id, mode],
+    { encoding: 'utf8', timeout: 180000, maxBuffer: 4 * 1024 * 1024 })
+  const body = stdout.trim()
+  fetchCache.set(key, { at: Date.now(), body })
+  return body
+}
 
 // GET /fetch/{resumeId}/{mode} — deterministic resume views for the voice loop.
 // Served from resume-docx get_resume_content() (src/fetch.ts via bin/fetch.ts):
@@ -36,21 +46,31 @@ resumeRouter.get('/fetch/:id/:mode', async (req: Request, res: Response) => {
   }
   const key = `${id}/${mode}`
   const hit = fetchCache.get(key)
-  let body: string
-  if (hit && Date.now() - hit.at < FETCH_TTL_MS && req.query.fresh !== '1') {
-    body = hit.body
+  const fresh = req.query.fresh === '1'
+  const fail = (e: unknown) => {
+    const err = e as { stdout?: string; message?: string }
+    return `# fetch failed: ${id}/${mode}\n\n${String(err.stdout ?? '').trim() || err.message || 'error'}`
+  }
+  const stamp = (at: number, body: string) =>
+    `${body}\n\ndata last updated at ${new Date(at).toISOString()}${Date.now() - at > FETCH_TTL_MS ? ' (stale — refresh running)' : ''}`
+  if (hit && !fresh) {
+    // Serve stale immediately; revalidate in the background (once per key).
+    if (!inflight.has(key)) {
+      inflight.add(key)
+      refreshFetch(key, id, mode).catch(() => {}).finally(() => inflight.delete(key))
+    }
+    var body = stamp(hit.at, hit.body)
   } else {
     try {
-      // Async (not execSync): a slow fetch must not block the event loop.
-      const { stdout } = await execFileAsync('bun',
-        [`${RESUME_DOCX_DIR}/bin/fetch.ts`, id, mode],
-        { encoding: 'utf8', timeout: 180000, maxBuffer: 4 * 1024 * 1024 })
-      body = stdout.trim()
-      fetchCache.set(key, { at: Date.now(), body })
+      inflight.add(key)
+      const freshBody = await refreshFetch(key, id, mode)
+      var body = stamp(Date.now(), freshBody)
     } catch (e: unknown) {
-      const err = e as { stdout?: string; message?: string }
-      return res.type('text/plain').status(502)
-        .send(`# fetch failed: ${id}/${mode}\n\n${String(err.stdout ?? '').trim() || err.message || 'error'}`)
+      // Serve stale on failure rather than nothing, when we have it.
+      if (hit) var body = stamp(hit.at, hit.body)
+      else return res.type('text/plain').status(502).send(fail(e))
+    } finally {
+      inflight.delete(key)
     }
   }
   res.type('text/plain').send(wrap({
@@ -70,7 +90,7 @@ resumeRouter.get('/fetch/:id/:mode', async (req: Request, res: Response) => {
 // The blurb contains exact literal fetch URLs (the model cannot compose URLs
 // on its own — it can only fetch literals it was given), so ChatGPT can then
 // safely fetch the session's pages itself and talk through them.
-resumeRouter.get('/resume', (req: Request, res: Response) => {
+resumeRouter.get('/resume', async (req: Request, res: Response) => {
   const q = String(req.query.resume ?? '')
   const resume = /^[A-Za-z][A-Za-z0-9_-]{2,64}$/.test(q) ? q : 'resumes-zak'
   const urls = [`${BASE}/fetch/${resume}/unconfirmed`, `${BASE}/fetch/${resume}/complete`, `${BASE}/fetch/${resume}/job-description`]
@@ -78,9 +98,10 @@ resumeRouter.get('/resume', (req: Request, res: Response) => {
   // blurb (the model can only fetch literals it was given — it cannot compose them).
   let beadUrls: string[] = []
   try {
-    const raw = execSync(`bun ${RESUME_DOCX_DIR}/bin/fetch.ts ${resume} urls`,
-      { encoding: 'utf8', timeout: 120000 }).trim()
-    beadUrls = raw.split('\n').map(l => l.trim()).filter(Boolean)
+    const { stdout } = await execFileAsync('bun',
+      [`${RESUME_DOCX_DIR}/bin/fetch.ts`, resume, 'urls'],
+      { encoding: 'utf8', timeout: 120000 })
+    beadUrls = stdout.trim().split('\n').map(l => l.trim()).filter(Boolean)
   } catch { beadUrls = [] }
   const blurb = [
     `# Resume working session — ${resume}`,
@@ -101,7 +122,10 @@ resumeRouter.get('/resume', (req: Request, res: Response) => {
     `bead text as the section body. Omit unchanged bullets entirely.`,
     ...(beadUrls.length ? [
       ``,
-      `Deeper context — full beads. Fetch any of these literals to query that bead:`,
+      `Deeper context — full beads. Fetch any of these literals to query that bead.`,
+      `For everything at once, fetch this single literal:`,
+      ``,
+      `${BASE}/beads/${beadUrls.map(u => u.split('/').pop()).join('+')}`,
       ``,
       ...beadUrls,
     ] : [
