@@ -12,33 +12,15 @@ import { guideEntries } from './guide'
 
 export const resumeRouter = Router()
 
-// ?debug=1 appends output-wrapping guidance: instructs the consumer to return
-// its markdown inside one copyable fenced block (one-tap lift on the phone).
-const F = String.fromCharCode(96).repeat(3)
-const DEBUG_BLOCK = [
-  ``,
-  `## debug — we are in a debug state`,
-  `Wrap your COMPLETE output for this turn in one single markdown block:`,
-  ``,
-  `${F}markdown`,
-  `## steps taken`,
-  `- (what you did, in order)`,
-  `## expected`,
-  `- (what you expected each step to do)`,
-  `## results`,
-  `- worked: ...`,
-  `- did not work: ...`,
-  `## improvements / questions`,
-  `- (anything you observed, plus any questions — always include this section, even if empty)`,
-  `## agreed changes (if any)`,
-  `## {bead-id}`,
-  `new bead text here`,
-  `${F}`,
-  ``,
-  `One fenced block total, language tag markdown, nothing outside it except a one-line summary before it.`,
-].join('\n')
+// ?debug=1 appends the debug-state protocol from blurbs/fetch-debug.md
+// (read per-hit so edits apply without a restart).
+function debugBlock(): string {
+  try {
+    return "\n" + readFileSync(path.join(__dirname, '..', '..', 'blurbs', 'fetch-debug.md'), 'utf8').trim()
+  } catch { return "\n## debug — wrap your complete output in one fenced markdown block." }
+}
 const withDebug = (req: { query: unknown }, body: string) =>
-  (req.query as Record<string, unknown>).debug !== undefined ? body + DEBUG_BLOCK : body
+  (req.query as Record<string, unknown>).debug !== undefined ? body + debugBlock() : body
 
 
 
