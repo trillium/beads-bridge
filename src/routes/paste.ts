@@ -63,11 +63,33 @@ store, title, and labels from the content itself.</p>
 </div>
 <div id="result"></div>
 <script>
-document.getElementById('pasteform').addEventListener('submit', function (e) {
-  e.preventDefault();
-  var btn = document.getElementById('savebtn');
+var box = document.getElementById('pastetext');
+var btn = document.getElementById('savebtn');
+var pasted = false;
+var autoTimer = null;
+var setReady = function (on) {
+  box.style.border = on ? '3px solid #22c55e' : '';
+  box.style.background = on ? '#f0fdf4' : '';
+};
+var cancelAuto = function () {
+  pasted = false;
+  setReady(false);
+  if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+};
+box.addEventListener('paste', function () { pasted = true; });
+box.addEventListener('input', function () {
+  if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+  if (pasted && box.value.length > 50) {
+    setReady(true);
+    document.getElementById('result').innerHTML = '<p>Pasted — auto-saving…</p>';
+    autoTimer = setTimeout(function () { doSave(true); }, 700);
+  } else {
+    setReady(false);
+  }
+});
+var doSave = function (auto) {
+  if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
   if (btn.disabled) return;
-  var box = document.getElementById('pastetext');
   if (!box.value.trim()) {
     document.getElementById('result').innerHTML = '<p><b>Nothing to save — no bead was recorded.</b> Paste text first.</p>';
     box.focus();
@@ -97,7 +119,7 @@ document.getElementById('pasteform').addEventListener('submit', function (e) {
     document.getElementById('loading').style.display = 'none';
     document.getElementById('formwrap').style.display = 'block';
     btn.disabled = false;
-    var box = document.getElementById('pastetext');
+    cancelAuto();
     box.value = '';
     box.focus();
     document.getElementById('result').innerHTML = data.duplicate
@@ -111,6 +133,10 @@ document.getElementById('pasteform').addEventListener('submit', function (e) {
     btn.disabled = false;
     document.getElementById('result').innerHTML = '<p><b>Save failed — no bead was recorded.</b> ' + err + '. Your text is still in the box; try again.</p>';
   });
+};
+document.getElementById('pasteform').addEventListener('submit', function (e) {
+  e.preventDefault();
+  doSave(false);
 });
 </script>
 </div>
