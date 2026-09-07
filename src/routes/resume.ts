@@ -1,6 +1,8 @@
 // Resume voice-loop routes: /fetch/{resumeId}/{mode} + /resume assistance page.
 // MUST be mounted before the /:store and /:id routes (Express matches in order).
 import { Router, Request, Response } from 'express'
+import { readFileSync } from 'fs'
+import path from 'path'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { BASE, RESUME_DOCX_DIR, FETCH_MODES } from '../config'
@@ -18,6 +20,33 @@ const execFileAsync = promisify(execFile)
 const fetchCache = new Map<string, { at: number; body: string }>()
 const FETCH_TTL_MS = 90_000
 const inflight = new Set<string>()
+
+// Roster cache (bead URL lists for the index + blurb): same SWR pattern.
+// The urls fan-out costs as much as a mode fetch, so it gets the same treatment.
+const rosterCache = new Map<string, { at: number; urls: string[] }>()
+const rosterInflight = new Set<string>()
+
+async function refreshRoster(id: string): Promise<string[]> {
+  const { stdout } = await execFileAsync('bun',
+    [`${RESUME_DOCX_DIR}/bin/fetch.ts`, id, 'urls'],
+    { encoding: 'utf8', timeout: 180000, maxBuffer: 4 * 1024 * 1024 })
+  const urls = stdout.trim().split('\n').map(l => l.trim()).filter(Boolean)
+  rosterCache.set(id, { at: Date.now(), urls })
+  return urls
+}
+
+/** Serve the roster instantly (even stale); refresh in background. Null = none yet. */
+function staleRoster(id: string, fresh: boolean): string[] | null {
+  const hit = rosterCache.get(id)
+  if (hit && !fresh) {
+    if (!rosterInflight.has(id)) {
+      rosterInflight.add(id)
+      refreshRoster(id).catch(() => {}).finally(() => rosterInflight.delete(id))
+    }
+    return hit.urls
+  }
+  return null
+}
 
 async function refreshFetch(key: string, id: string, mode: string): Promise<string> {
   const { stdout } = await execFileAsync('bun',
@@ -41,23 +70,33 @@ resumeRouter.get('/fetch/:id', async (req: Request, res: Response) => {
   if (!/^[A-Za-z][A-Za-z0-9_-]{2,64}$/.test(id)) {
     return res.type('text/plain').status(400).send(`unknown resume id: ${id}`)
   }
-  let beadUrls: string[] = []
-  try {
-    const { stdout } = await execFileAsync('bun',
-      [`${RESUME_DOCX_DIR}/bin/fetch.ts`, id, 'urls'],
-      { encoding: 'utf8', timeout: 120000 })
-    beadUrls = stdout.trim().split('\n').map(l => l.trim()).filter(Boolean)
-  } catch { beadUrls = [] }
+  const fresh = req.query.fresh === '1'
+  let beadUrls = staleRoster(id, fresh)
+  if (!beadUrls) {
+    try { beadUrls = await refreshRoster(id) }
+    catch { beadUrls = [] }
+    finally { rosterInflight.delete(id) }
+  }
   const modes: [string, string][] = [
     ['unconfirmed', 'pending bullets + workExperience context (what needs work)'],
     ['complete', 'full markdown with green/orange ledger + directions block'],
     ['job-description', 'posting job bead verbatim'],
     ['done', 'exact output format for returning agreed changes'],
   ]
+  // Coaching blurb lives in blurbs/resume-index.md (read per-hit so edits
+  // apply without a restart); {BASE} and {RESUME} are filled in here.
+  let coaching: string
+  try {
+    coaching = readFileSync(path.join(__dirname, '..', '..', 'blurbs', 'resume-index.md'), 'utf8')
+      .split('\n').filter(l => !l.startsWith('Placeholders') && !l.startsWith('- {'))
+      .join('\n').trim()
+      .replaceAll('{BASE}', BASE).replaceAll('{RESUME}', id)
+  } catch { coaching = `Work the ${id} resume: fetch job-description, then unconfirmed, one bullet at a time.` }
   res.type('text/plain').send(wrap({
     title: `Resume ${id} — views`,
     noNext: true,
-    body: [`Pick a view — fetch its URL exactly as written:`, ``,
+    body: [coaching, ``,
+      `Pick a view — fetch its URL exactly as written:`, ``,
       ...modes.map(([m, d]) => `${BASE}/fetch/${id}/${m}  — ${d}`),
       ...(beadUrls.length ? [``, `Deeper context — full beads (fetch any literal):`, ``,
         `${BASE}/beads/${beadUrls.map(u => u.split('/').pop()).join('+')}  — everything at once`,
@@ -130,13 +169,13 @@ resumeRouter.get('/resume', async (req: Request, res: Response) => {
   const urls = [`${BASE}/fetch/${resume}/unconfirmed`, `${BASE}/fetch/${resume}/complete`, `${BASE}/fetch/${resume}/job-description`, `${BASE}/fetch/${resume}/done`]
   // Full bead roster: every URL ChatGPT may query must appear verbatim in this
   // blurb (the model can only fetch literals it was given — it cannot compose them).
-  let beadUrls: string[] = []
-  try {
-    const { stdout } = await execFileAsync('bun',
-      [`${RESUME_DOCX_DIR}/bin/fetch.ts`, resume, 'urls'],
-      { encoding: 'utf8', timeout: 120000 })
-    beadUrls = stdout.trim().split('\n').map(l => l.trim()).filter(Boolean)
-  } catch { beadUrls = [] }
+  // Served stale-while-revalidate like the index: instant blurb, fresh roster behind.
+  let beadUrls = staleRoster(resume, req.query.fresh === '1')
+  if (!beadUrls) {
+    try { beadUrls = await refreshRoster(resume) }
+    catch { beadUrls = [] }
+    finally { rosterInflight.delete(resume) }
+  }
   const blurb = [
     `# Resume working session — ${resume}`,
     ``,
