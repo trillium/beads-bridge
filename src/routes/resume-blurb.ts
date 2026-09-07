@@ -17,7 +17,7 @@ export const resumeBlurbRouter = Router()
 resumeBlurbRouter.get('/resume', async (req: Request, res: Response) => {
   const q = String(req.query.resume ?? '')
   const resume = /^[A-Za-z][A-Za-z0-9_-]{2,64}$/.test(q) ? q : 'resumes-zak'
-  const urls = [`${BASE}/fetch/${resume}/unconfirmed`, `${BASE}/fetch/${resume}/complete`, `${BASE}/fetch/${resume}/job-description`, `${BASE}/fetch/${resume}/done`, `${BASE}/fetch/${resume}/findings`, `${BASE}/fetch/${resume}/debug`]
+  const urls = [`${BASE}/fetch/${resume}/unconfirmed`, `${BASE}/fetch/${resume}/complete`, `${BASE}/fetch/${resume}/job-description`, `${BASE}/fetch/${resume}/done`, `${BASE}/fetch/${resume}/findings`, `${BASE}/fetch/${resume}/debug`, `${BASE}/fetch/${resume}/stories`]
   // Full bead roster: every URL ChatGPT may query must appear verbatim in this
   // blurb (the model can only fetch literals it was given — it cannot compose them).
   // Served stale-while-revalidate like the index: instant blurb, fresh roster behind.
@@ -32,7 +32,7 @@ resumeBlurbRouter.get('/resume', async (req: Request, res: Response) => {
   const blurb = [
     `# Resume working session — ${resume}`,
     ``,
-    `Fetch these six pages EXACTLY as written below. Do not modify, shorten,`,
+    `Fetch these seven pages EXACTLY as written below. Do not modify, shorten,`,
     `or compose these URLs — fetch each literal:`,
     ``,
     ...urls.map((u, i) => `${i + 1}. ${cb(u)}`),

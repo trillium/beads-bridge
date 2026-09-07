@@ -7,7 +7,7 @@ import yaml from 'js-yaml'
 export const PORT = 3737
 export const BASE = 'https://__FUNNEL_HOST__'
 export const RESUME_DOCX_DIR = process.env.RESUME_DOCX_DIR ?? `${process.env.HOME}/code/resume-docx`
-export const FETCH_MODES = ['unconfirmed', 'complete', 'job-description', 'done', 'findings'] as const
+export const FETCH_MODES = ['unconfirmed', 'complete', 'job-description', 'done', 'findings', 'stories'] as const
 
 // Tool-bridge auth: a bearer token stored outside the repo. First run mints one.
 const TOOLKEY_PATH = `${process.env.HOME}/.config/pai/beads-bridge-toolkey`

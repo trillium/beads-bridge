@@ -614,6 +614,35 @@
           }
         }
       }
+    },
+    "/fetch/{resumeId}/stories": {
+      "get": {
+        "operationId": "fetch_resume_stories",
+        "summary": "Story records: evidence layer beneath result bullets.",
+        "parameters": [
+          {
+            "name": "resumeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "resumes-zak"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Plain-text story records",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

@@ -69,6 +69,7 @@ resumeRouter.get('/fetch/:id', async (req: Request, res: Response) => {
     ['done', 'exact output format for returning agreed changes'],
     ['debug', 'debug state — fetch this if any other view fails'],
     ['findings', 'open verification findings (address first)'],
+    ['stories', 'story records: evidence layer beneath bullets'],
   ]
   // Coaching blurb lives in blurbs/resume-index.md (read per-hit so edits
   // apply without a restart); {BASE} and {RESUME} are filled in here.
