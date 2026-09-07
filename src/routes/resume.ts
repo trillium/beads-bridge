@@ -143,6 +143,12 @@ resumeRouter.get('/fetch/:id/:mode', async (req: Request, res: Response) => {
   const cbStamp2 = shortCode()
   body = body.replace(/(https:\/\/[^\s)'"<>]+)/g, (u) =>
     /[?&]cb=/.test(u) ? u : withCb(u, cbStamp2))
+  if (mode === 'findings') {
+    // Findings doctrine rides along: constraints + job-fit rules, read per-hit.
+    try {
+      body += "\n\n---\n\n" + readFileSync(path.join(__dirname, '..', '..', 'blurbs', 'findings-doctrine.md'), 'utf8').trim()
+    } catch { /* findings stand alone without doctrine */ }
+  }
   body = withDebug(req, body)
   res.type('text/plain').send(wrap({
     title: `Resume ${id} — ${mode}`,
