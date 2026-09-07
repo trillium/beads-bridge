@@ -527,6 +527,35 @@
           }
         }
       }
+    },
+    "/print/{resumeId}": {
+      "get": {
+        "operationId": "print_setup",
+        "summary": "Print page setup + layout verdict for a resume.",
+        "parameters": [
+          {
+            "name": "resumeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "resumes-zak"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Plain-text print setup",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

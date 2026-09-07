@@ -12,6 +12,7 @@ import { probeRouter } from './routes/probe'
 import { actionsRouter } from './routes/actions'
 import { warmResume } from './resume-cache'
 import { guideRouter } from './routes/guide'
+import { printRouter } from './routes/print'
 import { resumeBlurbRouter } from './routes/resume-blurb'
 
 const app = express()
@@ -30,6 +31,7 @@ app.use(verbsRouter)
 app.use(probeRouter)
 app.use(actionsRouter)
 app.use(guideRouter)
+app.use(printRouter)
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 

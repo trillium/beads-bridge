@@ -57,6 +57,7 @@ resumeRouter.get('/fetch/:id', async (req: Request, res: Response) => {
   const indexBody = [coaching, ``,
       `Pick a view — fetch its URL exactly as written:`, ``,
       ...modes.map(([m, d]) => `${cb(`${BASE}/fetch/${id}/${m}`)}  — ${d}`),
+      `${cb(`${BASE}/print/${id}`)}  — print page setup + layout verdict`,
       ``, `Guidance — doctrine for this loop (fetch any literal):`, ``,
       ...guideEntries().map(([u, d]) => `${cb(u)}  — ${d}`),
       ...(beadUrls.length ? [``, `Deeper context — full beads (fetch any literal):`, ``,
