@@ -7,7 +7,7 @@ import { promisify } from 'util'
 import { readdirSync, statSync } from 'fs'
 import { join } from 'path'
 import { BASE, RESUME_DOCX_DIR } from '../config'
-import { pstr } from '../util'
+import { pstr, withCb, shortCode } from '../util'
 import { wrap } from '../wrap'
 
 export const printRouter = Router()
@@ -82,6 +82,6 @@ printRouter.get('/print/:id', async (req: Request, res: Response) => {
     noNext: true,
     body: lines.join('\n'),
     meta: { id },
-    actions: [`GET ${BASE}/fetch/${id}/complete — resume content`],
+    actions: [`GET ${withCb(`${BASE}/fetch/${id}/complete`, shortCode())} — resume content`],
   }))
 })

@@ -5,7 +5,7 @@ import { readFileSync } from 'fs'
 import path from 'path'
 import { BASE, FETCH_MODES } from '../config'
 import { fetchCache, FETCH_TTL_MS, inflight, refreshFetch, staleRoster, refreshRoster, rosterInflight } from '../resume-cache'
-import { pstr } from '../util'
+import { pstr, withCb, shortCode } from '../util'
 import { wrap } from '../wrap'
 import { guideEntries } from './guide'
 
@@ -44,7 +44,7 @@ resumeRouter.get('/fetch/:id/debug', (req: Request, res: Response) => {
       `Staleness check: every retried view ends with "data last updated at <iso>". Compare stamps across retries — if a stamp never advances, you are seeing a served copy, not a fresh read; say so in results.`, ``,
       `data last updated at ${new Date().toISOString()} (this debug page renders live on every hit)`].join('\n'),
     meta: { id },
-    actions: retry.map(u => `GET ${u}`),
+    actions: retry.map(u => `GET ${withCb(u, shortCode())}`),
   }))
 })
 
@@ -79,23 +79,25 @@ resumeRouter.get('/fetch/:id', async (req: Request, res: Response) => {
       .join('\n').trim()
       .replaceAll('{BASE}', BASE).replaceAll('{RESUME}', id)
   } catch { coaching = `Work the ${id} resume: fetch job-description, then unconfirmed, one bullet at a time.` }
+  const cbStamp = shortCode()
+  const cb = (u: string) => withCb(u, cbStamp)
   const indexBody = [coaching, ``,
       `Pick a view — fetch its URL exactly as written:`, ``,
-      ...modes.map(([m, d]) => `${BASE}/fetch/${id}/${m}  — ${d}`),
+      ...modes.map(([m, d]) => `${cb(`${BASE}/fetch/${id}/${m}`)}  — ${d}`),
       ``, `Refresh literals — same views, forced fresh (fetch if a stamp looks stale):`, ``,
       ...['unconfirmed', 'complete', 'findings'].map(m => `${BASE}/fetch/${id}/${m}?fresh=1  — refresh ${m}`),
       `${BASE}/print/${id}  — print page setup + layout verdict`,
       ``, `Guidance — doctrine for this loop (fetch any literal):`, ``,
-      ...guideEntries().map(([u, d]) => `${u}  — ${d}`),
+      ...guideEntries().map(([u, d]) => `${cb(u)}  — ${d}`),
       ...(beadUrls.length ? [``, `Deeper context — full beads (fetch any literal):`, ``,
-        `${BASE}/beads/${beadUrls.map(u => u.split('/').pop()).join('+')}  — everything at once`,
-        ``, ...beadUrls] : [])].join('\n')
+        `${cb(`${BASE}/beads/${beadUrls.map(u => u.split('/').pop()).join('+')}`)}  — everything at once`,
+        ``, ...beadUrls.map(u => cb(u))] : [])].join('\n')
   res.type('text/plain').send(wrap({
     title: `Resume ${id} — views`,
     noNext: true,
     body: withDebug(req, indexBody),
     meta: { id },
-    actions: modes.map(([m]) => `GET ${BASE}/fetch/${id}/${m}`),
+    actions: modes.map(([m]) => `GET ${cb(`${BASE}/fetch/${id}/${m}`)}`),
   }))
 })
 
@@ -138,6 +140,9 @@ resumeRouter.get('/fetch/:id/:mode', async (req: Request, res: Response) => {
       inflight.delete(key)
     }
   }
+  const cbStamp2 = shortCode()
+  body = body.replace(/(https:\/\/[^\s)'"<>]+)/g, (u) =>
+    /[?&]cb=/.test(u) ? u : withCb(u, cbStamp2))
   body = withDebug(req, body)
   res.type('text/plain').send(wrap({
     title: `Resume ${id} — ${mode}`,
@@ -145,9 +150,9 @@ resumeRouter.get('/fetch/:id/:mode', async (req: Request, res: Response) => {
     body,
     meta: { id },
     actions: [
-      `GET ${BASE}/fetch/${id}/unconfirmed      — pending bullets + workExperience context`,
-      `GET ${BASE}/fetch/${id}/complete         — full markdown with green/orange ledger`,
-      `GET ${BASE}/fetch/${id}/job-description  — posting job bead verbatim`,
+      `GET ${withCb(`${BASE}/fetch/${id}/unconfirmed`, shortCode())}      — pending bullets + workExperience context`,
+      `GET ${withCb(`${BASE}/fetch/${id}/complete`, shortCode())}         — full markdown with green/orange ledger`,
+      `GET ${withCb(`${BASE}/fetch/${id}/job-description`, shortCode())}  — posting job bead verbatim`,
     ],
   }))
 })
