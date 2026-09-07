@@ -11,32 +11,33 @@ import { withCb, shortCode } from '../util'
 
 export const guideRouter = Router()
 
-const CV = join(homedir(), 'code', 'cv-generator', 'cv-generator')
+const RDOCX = join(homedir(), 'code', 'resume-docx')
+const BBRIDGE = join(homedir(), 'code', 'beads-bridge')
 
 // Allowlist only — never serve arbitrary paths.
 const GUIDES: Record<string, { file: string; title: string; blurb: string }> = {
   'bullets': {
-    file: join(CV, 'docs', 'resume-bullets.md'),
+    file: join(RDOCX, 'docs', 'doctrine', 'resume-bullets.md'),
     title: 'How to structure good resume bullets',
     blurb: 'Action → Number → Method, quantification rules, weak styles to kill',
   },
   'questioning': {
-    file: join(CV, '.claude', 'commands', 'improve-bullet.md'),
+    file: join(RDOCX, 'docs', 'doctrine', 'questioning.md'),
     title: 'How to question the user about work/projects',
     blurb: 'Clarifying-question workflow that extracts proof without fabricating',
   },
   'discovery': {
-    file: join(CV, '..', '..', 'resume-docx', 'docs', 'story-discovery-brief.md'),
+    file: join(RDOCX, 'docs', 'story-discovery-brief.md'),
     title: 'Story discovery session brief',
     blurb: 'If investigating stories, read this: project list, method, completion test, output format',
   },
   'labels': {
-    file: join(CV, '..', '..', 'beads-bridge', 'blurbs', 'label-taxonomy.md'),
+    file: join(BBRIDGE, 'blurbs', 'label-taxonomy.md'),
     title: 'Label taxonomy for discoverable beads',
     blurb: 'How agents apply project:/resume:/story:/verification: labels so the triage agent runs clean',
   },
   'refine': {
-    file: join(CV, '.claude', 'commands', 'evaluate.md'),
+    file: join(RDOCX, 'docs', 'doctrine', 'refine.md'),
     title: 'Refinement rubric (KEEP/REWRITE/CUT verdicts)',
     blurb: 'X-Y-Z compliance, validity check, AI-slop flags, grandma test',
   },
