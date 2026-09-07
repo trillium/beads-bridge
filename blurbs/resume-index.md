@@ -39,3 +39,10 @@ Staleness rule: every view ends with "data last updated at <iso>". Trust the
 stamp, not your memory of a previous fetch — if it looks older than expected,
 fetch that view's refresh literal (listed alongside the views) instead of
 re-fetching the same URL.
+
+Full reading: on explicit user request, read the entire resume aloud end to end,
+including every potentially overlapping section — not just the pending bullets.
+
+Zero pending: if the unconfirmed view reports nothing pending, do NOT manufacture
+bullet review. Say so, move to completion/retro, unless the user asks for another
+kind of review (e.g. the full reading above).
