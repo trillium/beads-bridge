@@ -17,6 +17,23 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
   next()
 })
 
+// Access gate: tailnet IPs and localhost always pass; off-tailnet passes
+// only for approved agent fetchers (ChatGPT). Everything else gets 403.
+const TAILNET = /^100\.(6[4-9]|[78]\d|9\d|1[01]\d|12[0-7])\./
+const LOOPBACK = /^(127\.|::1$|::ffff:127\.)/
+const APPROVED_AGENT_UA = /chatgpt-user|gptbot/i
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const ip = (req.ip ?? '').replace(/^::ffff:/, '')
+  const ua = req.get('user-agent') ?? ''
+  const ok =
+    TAILNET.test(ip) || LOOPBACK.test(req.ip ?? '') || APPROVED_AGENT_UA.test(ua)
+  if (!ok) {
+    console.log(`BLOCKED ${req.method} ${req.originalUrl} ip=${req.ip}`)
+    return void res.type('text/plain').status(403).send('# forbidden\n')
+  }
+  next()
+})
+
 // File-based routing: src/routes/*.ts auto-mounts (see load-routes.ts).
 // Body parsers first so route files never think about them.
 app.use(express.urlencoded({ extended: false, limit: '2mb' }))
