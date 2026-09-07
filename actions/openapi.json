@@ -7,7 +7,7 @@
   },
   "servers": [
     {
-      "url": "https://__FUNNEL_HOST__"
+      "url": "__FUNNEL_BASE__"
     }
   ],
   "paths": {

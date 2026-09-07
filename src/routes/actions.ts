@@ -4,7 +4,7 @@ import express, { Router, Request, Response, NextFunction, RequestHandler } from
 import { execSync } from 'child_process'
 import { readFileSync } from 'fs'
 import path from 'path'
-import { toolKey, STORES } from '../config'
+import { toolKey, STORES, fillTokens } from '../config'
 import { bd, storeFromId } from '../util'
 
 export const actionsRouter = Router()
@@ -180,9 +180,9 @@ actionsRouter.post('/action/label', requireToolKey, (req: Request, res: Response
 })
 
 actionsRouter.get('/actions/openapi.json', (_req: Request, res: Response) => {
-  res.type('application/json').send(
+  res.type('application/json').send(fillTokens(
     readFileSync(path.join(__dirname, '..', '..', 'actions', 'openapi.json'), 'utf8')
-  )
+  ))
 })
 
 // 404

@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Side panel + page watcher bridge to Trillium's federated bead stores. Reads <beads-action> blocks from ChatGPT pages and writes through the authenticated beads-bridge server.",
   "permissions": ["storage", "sidePanel", "tabs"],
-  "host_permissions": ["https://__FUNNEL_HOST__/*"],
+  "host_permissions": ["__FUNNEL_HOST__/*"],
   "background": {
     "service_worker": "background.js"
   },

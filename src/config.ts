@@ -1,11 +1,30 @@
 // Shared config: ports, URLs, auth key, store registry. Single source of truth
 // for every route module.
-import { readFileSync, writeFileSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync } from 'fs'
+import { join, dirname } from 'path'
 import { randomBytes } from 'crypto'
 import yaml from 'js-yaml'
 
+// Minimal .env loader (no dependency): KEY=value per line, # comments.
+// The tailnet hostname/IP live ONLY in .env (gitignored) — never in code.
+const ROOT = join(__dirname, '..')
+try {
+  const envPath = join(ROOT, '.env')
+  if (existsSync(envPath)) {
+    for (const line of readFileSync(envPath, 'utf8').split('\n')) {
+      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/)
+      if (m && !(m[1] in process.env)) process.env[m[1]] = m[2]
+    }
+  }
+} catch { /* no .env — env must come from the environment */ }
+
 export const PORT = 3737
-export const BASE = 'https://__FUNNEL_HOST__'
+const funnel = (process.env.FUNNEL_BASE ?? '').replace(/\/$/, '')
+if (!funnel) throw new Error('FUNNEL_BASE is not set (add it to .env — see .env.example)')
+export const BASE = funnel
+export const TAILNET_IP = process.env.TAILNET_IP ?? 'unset'
+// Committed files carry __FUNNEL_BASE__ tokens; substitute at serve time.
+export const fillTokens = (s: string): string => s.split('__FUNNEL_BASE__').join(BASE)
 export const RESUME_DOCX_DIR = process.env.RESUME_DOCX_DIR ?? `${process.env.HOME}/code/resume-docx`
 export const FETCH_MODES = ['unconfirmed', 'complete', 'job-description', 'done', 'findings', 'stories'] as const
 

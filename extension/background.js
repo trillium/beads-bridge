@@ -1,4 +1,4 @@
-const DEFAULTS = { endpoint: 'https://__FUNNEL_HOST__', token: '' }
+const DEFAULTS = { endpoint: '__FUNNEL_BASE__', token: '' }
 
 async function getSettings() {
   const s = await chrome.storage.local.get(DEFAULTS)

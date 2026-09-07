@@ -2,7 +2,7 @@
 
 Fetch this exact URL and follow the directions in the response:
 
-    https://__FUNNEL_HOST__/next?cache=<server-issued-tag>
+    __FUNNEL_BASE__/next?cache=<server-issued-tag>
 
 Rules that govern your fetching:
 

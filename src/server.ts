@@ -2,7 +2,7 @@ import express, { Request, Response, NextFunction, RequestHandler } from 'expres
 import { execSync } from 'child_process'
 import { readFileSync } from 'fs'
 import path from 'path'
-import { PORT, BASE, toolKey, STORES, storeAbout } from './config'
+import { PORT, BASE, toolKey, STORES, storeAbout, TAILNET_IP } from './config'
 import { qstr, pstr, cacheTag, bd, storeFromId } from './util'
 import { wrap } from './wrap'
 import { warmResume } from './resume-cache'
@@ -60,7 +60,7 @@ async function start() {
     warmResume('resumes-zak')
     console.log(`beads-bridge on all interfaces :${PORT}`)
     console.log(`  local:   http://localhost:${PORT}`)
-    console.log(`  tailnet: http://__TAILNET_IP__:${PORT}`)
+    console.log(`  tailnet: http://${TAILNET_IP}:${PORT}`)
     console.log(`  funnel:  ${BASE} (public; use this in ChatGPT blurbs)`)
   })
 }

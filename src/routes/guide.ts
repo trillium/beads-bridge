@@ -5,7 +5,7 @@ import { Router, Request, Response } from 'express'
 import { readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
-import { BASE } from '../config'
+import { BASE, fillTokens } from '../config'
 import { wrap } from '../wrap'
 import { withCb, shortCode } from '../util'
 
@@ -70,7 +70,7 @@ guideRouter.get('/guide/:name', (req: Request, res: Response) => {
       `unknown guide: ${name} (want ${Object.keys(GUIDES).join('|')})`)
   }
   try {
-    const body = readFileSync(g.file, 'utf8')
+    const body = fillTokens(readFileSync(g.file, 'utf8'))
     res.type('text/plain').send(wrap({
       title: `Guide: ${g.title}`,
       noNext: true,

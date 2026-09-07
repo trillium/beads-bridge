@@ -9,7 +9,7 @@ How to run the session:
 Never compose URLs — fetch only the literals on this page.
 
 Placeholders (filled by the server, do not edit the braces):
-- {BASE} — public bridge root, e.g. https://__FUNNEL_HOST__
+- {BASE} — public bridge root, e.g. __FUNNEL_BASE__
 - {RESUME} — the resume bead id for this session
 
 Speaking rule (this loop is voice-first): never read a bead id aloud mid-session.

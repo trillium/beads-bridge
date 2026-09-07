@@ -4,7 +4,7 @@ import { Router, Request, Response, NextFunction } from 'express'
 import { execSync } from 'child_process'
 import { readFileSync } from 'fs'
 import path from 'path'
-import { BASE, STORES, storeAbout } from '../config'
+import { BASE, STORES, storeAbout, fillTokens } from '../config'
 import { qstr, pstr, bd, storeFromId, cacheTag } from '../util'
 import { wrap } from '../wrap'
 import { isWebAgent } from '../agent-detect'
@@ -20,7 +20,7 @@ readRouter.get('/', (req: Request, res: Response) => {
   if (!isWebAgent(req.get('user-agent'), req.get('accept')))
     return void res.sendFile(path.join(__dirname, '..', '..', 'web', 'dist', 'index.html'))
   try {
-    const prompt = readFileSync(path.join(__dirname, '..', 'prompt.md'), 'utf8')
+    const prompt = fillTokens(readFileSync(path.join(__dirname, '..', '..', 'prompt.md'), 'utf8'))
       .replace('<server-issued-tag>', cacheTag())
     res.type('text/markdown').send(prompt)
   } catch {
