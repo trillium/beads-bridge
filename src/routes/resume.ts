@@ -1,12 +1,21 @@
 // Resume voice-loop routes: /fetch/{resumeId}/{mode} + /resume assistance page.
 // MUST be mounted before the /:store and /:id routes (Express matches in order).
 import { Router, Request, Response } from 'express'
-import { execSync } from 'child_process'
+import { execFile } from 'child_process'
+import { promisify } from 'util'
 import { BASE, RESUME_DOCX_DIR, FETCH_MODES } from '../config'
 import { pstr } from '../util'
 import { wrap } from '../wrap'
 
 export const resumeRouter = Router()
+
+const execFileAsync = promisify(execFile)
+
+// Short-TTL cache: a fetch fans out to ~50 bead subprocess calls (~60-120s),
+// so repeat hits (browser retries, ChatGPT re-fetch) must not re-run it.
+// Bead state changes on human timescales; 90s stale is safe. Bypass with ?fresh=1.
+const fetchCache = new Map<string, { at: number; body: string }>()
+const FETCH_TTL_MS = 90_000
 
 // GET /fetch/{resumeId}/{mode} — deterministic resume views for the voice loop.
 // Served from resume-docx get_resume_content() (src/fetch.ts via bin/fetch.ts):
@@ -14,7 +23,7 @@ export const resumeRouter = Router()
 // workExperience context), complete (full markdown with green/orange ledger +
 // directions block), job-description (posting_ref job bead verbatim).
 
-resumeRouter.get('/fetch/:id/:mode', (req: Request, res: Response) => {
+resumeRouter.get('/fetch/:id/:mode', async (req: Request, res: Response) => {
   const id = pstr(req.params.id)
   const mode = pstr(req.params.mode)
   if (!/^[A-Za-z][A-Za-z0-9_-]{2,64}$/.test(id)) {
@@ -24,14 +33,24 @@ resumeRouter.get('/fetch/:id/:mode', (req: Request, res: Response) => {
     return res.type('text/plain').status(400)
       .send(`unknown mode: ${mode} (want ${FETCH_MODES.join('|')})`)
   }
+  const key = `${id}/${mode}`
+  const hit = fetchCache.get(key)
   let body: string
-  try {
-    body = execSync(`bun ${RESUME_DOCX_DIR}/bin/fetch.ts ${id} ${mode}`,
-      { encoding: 'utf8', timeout: 120000 }).trim()
-  } catch (e: unknown) {
-    const err = e as { stdout?: string; message?: string }
-    return res.type('text/plain').status(502)
-      .send(`# fetch failed: ${id}/${mode}\n\n${err.stdout?.trim() || err.message || 'error'}`)
+  if (hit && Date.now() - hit.at < FETCH_TTL_MS && req.query.fresh !== '1') {
+    body = hit.body
+  } else {
+    try {
+      // Async (not execSync): a slow fetch must not block the event loop.
+      const { stdout } = await execFileAsync('bun',
+        [`${RESUME_DOCX_DIR}/bin/fetch.ts`, id, mode],
+        { encoding: 'utf8', timeout: 180000, maxBuffer: 4 * 1024 * 1024 })
+      body = stdout.trim()
+      fetchCache.set(key, { at: Date.now(), body })
+    } catch (e: unknown) {
+      const err = e as { stdout?: string; message?: string }
+      return res.type('text/plain').status(502)
+        .send(`# fetch failed: ${id}/${mode}\n\n${String(err.stdout ?? '').trim() || err.message || 'error'}`)
+    }
   }
   res.type('text/plain').send(wrap({
     title: `Resume ${id} — ${mode}`,
