@@ -423,6 +423,35 @@
           }
         }
       }
+    },
+    "/fetch/{resumeId}": {
+      "get": {
+        "operationId": "fetch_resume_index",
+        "summary": "Resume view index: every mode URL as literals.",
+        "parameters": [
+          {
+            "name": "resumeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "resumes-zak"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Plain-text mode index",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

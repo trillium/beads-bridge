@@ -34,6 +34,28 @@ async function refreshFetch(key: string, id: string, mode: string): Promise<stri
 // workExperience context), complete (full markdown with green/orange ledger +
 // directions block), job-description (posting_ref job bead verbatim).
 
+// GET /fetch/{resumeId} — index for one resume: every mode URL as literals.
+// Landing here means something omitted the mode; hand back the full map.
+resumeRouter.get('/fetch/:id', (req: Request, res: Response) => {
+  const id = String(pstr(req.params.id))
+  if (!/^[A-Za-z][A-Za-z0-9_-]{2,64}$/.test(id)) {
+    return res.type('text/plain').status(400).send(`unknown resume id: ${id}`)
+  }
+  const modes: [string, string][] = [
+    ['unconfirmed', 'pending bullets + workExperience context (what needs work)'],
+    ['complete', 'full markdown with green/orange ledger + directions block'],
+    ['job-description', 'posting job bead verbatim'],
+    ['done', 'exact output format for returning agreed changes'],
+  ]
+  res.type('text/plain').send(wrap({
+    title: `Resume ${id} — views`,
+    body: [`Pick a view — fetch its URL exactly as written:`, ``,
+      ...modes.map(([m, d]) => `${BASE}/fetch/${id}/${m}  — ${d}`)].join('\n'),
+    meta: { id },
+    actions: modes.map(([m]) => `GET ${BASE}/fetch/${id}/${m}`),
+  }))
+})
+
 resumeRouter.get('/fetch/:id/:mode', async (req: Request, res: Response) => {
   const id = pstr(req.params.id)
   const mode = pstr(req.params.mode)
