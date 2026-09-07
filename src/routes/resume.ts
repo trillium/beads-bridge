@@ -40,7 +40,9 @@ resumeRouter.get('/fetch/:id/debug', (req: Request, res: Response) => {
     body: [`You are in a debug state because a fetch failed. Do not guess contents. Do not retry blindly more than once.`, ``,
       proto, ``,
       `Retry these literals one at a time, then follow the protocol above:`, ``,
-      ...retry].join('\n'),
+      ...retry, ``,
+      `Staleness check: every retried view ends with "data last updated at <iso>". Compare stamps across retries — if a stamp never advances, you are seeing a served copy, not a fresh read; say so in results.`, ``,
+      `data last updated at ${new Date().toISOString()} (this debug page renders live on every hit)`].join('\n'),
     meta: { id },
     actions: retry.map(u => `GET ${u}`),
   }))
