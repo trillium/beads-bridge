@@ -452,6 +452,81 @@
           }
         }
       }
+    },
+    "/guide": {
+      "get": {
+        "operationId": "guide_index",
+        "summary": "Index of guidance pages.",
+        "responses": {
+          "200": {
+            "description": "Plain-text guide index",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/guide/bullets": {
+      "get": {
+        "operationId": "guide_bullets",
+        "summary": "Guide: Bullet doctrine: Action-Number-Method, quantification, weak styles.",
+        "description": "Served verbatim from cv-generator (bullets).",
+        "responses": {
+          "200": {
+            "description": "Guide markdown",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/guide/questioning": {
+      "get": {
+        "operationId": "guide_questioning",
+        "summary": "Guide: Clarifying-question workflow for extracting proof without fabricating.",
+        "description": "Served verbatim from cv-generator (questioning).",
+        "responses": {
+          "200": {
+            "description": "Guide markdown",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/guide/refine": {
+      "get": {
+        "operationId": "guide_refine",
+        "summary": "Guide: Refinement rubric: X-Y-Z, validity, AI-slop flags, grandma test.",
+        "description": "Served verbatim from cv-generator (refine).",
+        "responses": {
+          "200": {
+            "description": "Guide markdown",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

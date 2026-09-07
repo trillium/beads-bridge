@@ -10,6 +10,7 @@ import { readRouter } from './routes/read'
 import { verbsRouter } from './routes/verbs'
 import { probeRouter } from './routes/probe'
 import { actionsRouter } from './routes/actions'
+import { guideRouter } from './routes/guide'
 
 const app = express()
 
@@ -25,6 +26,7 @@ app.use(readRouter)
 app.use(verbsRouter)
 app.use(probeRouter)
 app.use(actionsRouter)
+app.use(guideRouter)
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 

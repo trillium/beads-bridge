@@ -8,6 +8,7 @@ import { promisify } from 'util'
 import { BASE, RESUME_DOCX_DIR, FETCH_MODES } from '../config'
 import { pstr } from '../util'
 import { wrap } from '../wrap'
+import { guideEntries } from './guide'
 
 export const resumeRouter = Router()
 
@@ -98,6 +99,8 @@ resumeRouter.get('/fetch/:id', async (req: Request, res: Response) => {
     body: [coaching, ``,
       `Pick a view — fetch its URL exactly as written:`, ``,
       ...modes.map(([m, d]) => `${BASE}/fetch/${id}/${m}  — ${d}`),
+      ``, `Guidance — doctrine for this loop (fetch any literal):`, ``,
+      ...guideEntries().map(([u, d]) => `${u}  — ${d}`),
       ...(beadUrls.length ? [``, `Deeper context — full beads (fetch any literal):`, ``,
         `${BASE}/beads/${beadUrls.map(u => u.split('/').pop()).join('+')}  — everything at once`,
         ``, ...beadUrls] : [])].join('\n'),
@@ -183,6 +186,10 @@ resumeRouter.get('/resume', async (req: Request, res: Response) => {
     `or compose these URLs — fetch each literal:`,
     ``,
     ...urls.map((u, i) => `${i + 1}. ${u}`),
+    ``,
+    `Guidance doctrine for this loop (fetch any literal when you need it):`,
+    ``,
+    ...guideEntries().map(([u, d]) => `${u}  — ${d}`),
     ``,
     `What they are:`,
     `- unconfirmed — pending bullets only, each with its workExperience context (frame + role + siblings). This is what needs work.`,
