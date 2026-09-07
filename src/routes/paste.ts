@@ -87,6 +87,46 @@ box.addEventListener('input', function () {
     setReady(false);
   }
 });
+var esc = function (s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+};
+var itemHtml = function (i) {
+  return '<details data-id="' + i.id + '"><summary>' + (i.open ? '○' : '●') + ' ' + i.id +
+    ' — ' + esc(i.title.slice(0, 40)) + '</summary>' +
+    '<div class="peekbody"><i>expanding…</i></div>' +
+    '<div><a href="/paste/inbox/' + i.id + '">open raw</a></div></details>';
+};
+var renderItems = function (items) {
+  var open = items.filter(function (i) { return i.open; }).length;
+  document.getElementById('panel').innerHTML =
+    '<h3>Inbox (' + open + ' open)</h3>' +
+    (items.map(itemHtml).join('') || '<p><i>empty</i></p>');
+};
+// SWR peek cache: serve last-seen text instantly, revalidate behind it.
+var peekCache = {};
+var fillPeek = function (d, fresh) {
+  var body = d.querySelector('.peekbody');
+  if (body) body.innerHTML = '<pre>' + esc(String(fresh).slice(0, 2000)) + '</pre>';
+};
+// Lazy peek: cached text renders instantly (stale ok), fetch revalidates.
+document.getElementById('panel').addEventListener('toggle', function (e) {
+  var d = e.target;
+  if (d.tagName !== 'DETAILS' || !d.open) return;
+  var id = d.dataset.id;
+  if (peekCache[id]) fillPeek(d, peekCache[id]); // stale serves now
+  if (d.dataset.valid === '1') return; // fresh enough, skip revalidate
+  d.dataset.valid = '1';
+  fetch('/paste/inbox/' + id)
+    .then(function (r) {
+      if (!r.ok) throw new Error('server returned ' + r.status);
+      return r.text();
+    })
+    .then(function (t) { peekCache[id] = t; fillPeek(d, t); })
+    .catch(function (err) {
+      d.dataset.valid = '';
+      if (!peekCache[id]) d.querySelector('.peekbody').innerHTML = '<i>peek failed: ' + esc(String(err)) + '</i>';
+    });
+}, true);
 var doSave = function (auto) {
   if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
   if (btn.disabled) return;
@@ -98,31 +138,6 @@ var doSave = function (auto) {
   btn.disabled = true;
   document.getElementById('formwrap').style.display = 'none';
   document.getElementById('loading').style.display = 'block';
-  var esc = function (s) {
-    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  };
-  var itemHtml = function (i) {
-    return '<details data-id="' + i.id + '"><summary>' + (i.open ? '○' : '●') + ' ' + i.id +
-      ' — ' + esc(i.title.slice(0, 40)) + '</summary>' +
-      '<div class="peekbody"><i>expanding…</i></div>' +
-      '<div><a href="/paste/inbox/' + i.id + '">open raw</a></div></details>';
-  };
-  var renderItems = function (items) {
-    var open = items.filter(function (i) { return i.open; }).length;
-    document.getElementById('panel').innerHTML =
-      '<h3>Inbox (' + open + ' open)</h3>' +
-      (items.map(itemHtml).join('') || '<p><i>empty</i></p>');
-  };
-  // Lazy peek: fetch bead text on first expand, cache in the node.
-  document.getElementById('panel').addEventListener('toggle', function (e) {
-    var d = e.target;
-    if (d.tagName !== 'DETAILS' || !d.open || d.dataset.loaded) return;
-    d.dataset.loaded = '1';
-    fetch('/paste/inbox/' + d.dataset.id)
-      .then(function (r) { return r.text(); })
-      .then(function (t) { d.querySelector('.peekbody').innerHTML = '<pre>' + esc(t.slice(0, 2000)) + '</pre>'; })
-      .catch(function (err) { d.querySelector('.peekbody').innerHTML = '<i>peek failed: ' + esc(String(err)) + '</i>'; });
-  }, true);
   fetch('/paste', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
