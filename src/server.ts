@@ -911,6 +911,9 @@ app.use((req: Request, res: Response) => {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 
-app.listen(PORT, () => {
-  console.log(`beads-bridge running on http://localhost:${PORT}`)
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`beads-bridge on all interfaces :${PORT}`)
+  console.log(`  local:   http://localhost:${PORT}`)
+  console.log(`  tailnet: http://__TAILNET_IP__:${PORT}`)
+  console.log(`  funnel:  ${BASE} (public; use this in ChatGPT blurbs)`)
 })
