@@ -1,36 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { createFileRoute } from '@tanstack/react-router'
+import { Button, Note } from '../components/ui'
+import { InboxPanel, fetchInbox, type InboxItem } from '../components/InboxPanel'
 
 export const Route = createFileRoute('/paste')({
   component: Paste,
 })
 
-interface InboxItem {
-  id: string
-  title: string
-  open: boolean
-}
-
-async function fetchList(): Promise<InboxItem[]> {
-  const r = await fetch('/paste/list')
-  if (!r.ok) throw new Error(`server returned ${r.status}`)
-  return r.json()
-}
-
 function Paste() {
   const [text, setText] = useState('')
   const [saving, setSaving] = useState(false)
   const [ready, setReady] = useState(false)
-  const [result, setResult] = useState<string>('')
+  const [result, setResult] = useState('')
   const [items, setItems] = useState<InboxItem[]>([])
-  const [peeks, setPeeks] = useState<Record<string, string>>({})
   const pastedRef = useRef(false)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const boxRef = useRef<HTMLTextAreaElement>(null)
 
   const refresh = useCallback(async () => {
     try {
-      setItems(await fetchList())
+      setItems(await fetchInbox())
     } catch {
       /* panel keeps stale list */
     }
@@ -75,7 +64,9 @@ function Paste() {
         boxRef.current?.focus()
         void refresh()
       } catch (err) {
-        setResult(`Save failed — no bead was recorded. ${err}. Your text is still in the box; try again.`)
+        setResult(
+          `Save failed — no bead was recorded. ${err}. Your text is still in the box; try again.`,
+        )
       } finally {
         setSaving(false)
       }
@@ -98,28 +89,14 @@ function Paste() {
     }
   }
 
-  const togglePeek = async (id: string, open: boolean) => {
-    if (!open || peeks[id]) return
-    try {
-      const r = await fetch(`/paste/inbox/${id}`)
-      if (!r.ok) throw new Error(`server returned ${r.status}`)
-      const t = await r.text()
-      setPeeks((p) => ({ ...p, [id]: t.slice(0, 2000) }))
-    } catch (err) {
-      setPeeks((p) => ({ ...p, [id]: `peek failed: ${err}` }))
-    }
-  }
-
-  const openCount = items.filter((i) => i.open).length
-
   return (
-    <div style={{ display: 'flex', gap: 24 }}>
-      <div style={{ flex: 1 }}>
-        <h2>Paste → bead</h2>
-        <p>
+    <div className="flex gap-6">
+      <div className="flex-1">
+        <h2 className="text-xl font-semibold">Paste → bead</h2>
+        <Note>
           Paste the block — nothing else to fill in. The integrator tool
           discovers store, title, and labels from the content itself.
-        </p>
+        </Note>
         {saving ? (
           <p>
             <b>Saving…</b> creating your bead, one moment.
@@ -142,43 +119,22 @@ function Paste() {
                 pastedRef.current = true
               }}
               onChange={(e) => onChange(e.target.value)}
-              style={
+              className={
                 ready
-                  ? { border: '3px solid #22c55e', background: '#f0fdf4' }
-                  : undefined
+                  ? 'rounded border-green-500 bg-green-50 outline outline-2 outline-green-500 dark:bg-green-950'
+                  : 'rounded border border-neutral-300 bg-white dark:border-neutral-700 dark:bg-neutral-900'
               }
             />
             <br />
             <br />
-            <button type="submit" disabled={saving}>
+            <Button type="submit" disabled={saving}>
               Save paste
-            </button>
+            </Button>
           </form>
         )}
-        {result && <p>{result}</p>}
+        {result && <Note>{result}</Note>}
       </div>
-      <div style={{ width: 280, borderLeft: '1px solid #ccc', paddingLeft: 16 }}>
-        <h3>Inbox ({openCount} open)</h3>
-        {items.length === 0 && (
-          <p>
-            <i>empty</i>
-          </p>
-        )}
-        {items.map((i) => (
-          <details key={i.id} onToggle={(e) => void togglePeek(i.id, e.currentTarget.open)}>
-            <summary>
-              {i.open ? '○' : '●'} {i.id} — {i.title.slice(0, 40)}
-            </summary>
-            <div>
-              <i>{peeks[i.id] ?? 'expanding…'}</i>
-              {peeks[i.id] && <pre>{peeks[i.id]}</pre>}
-            </div>
-            <div>
-              <a href={`/paste/inbox/${i.id}`}>open raw</a>
-            </div>
-          </details>
-        ))}
-      </div>
+      <InboxPanel items={items} />
     </div>
   )
 }
