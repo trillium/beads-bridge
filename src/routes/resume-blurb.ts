@@ -29,57 +29,24 @@ resumeBlurbRouter.get('/resume', async (req: Request, res: Response) => {
   }
   const cbStamp = shortCode()
   const cb = (x: string) => withCb(x, cbStamp)
-  const blurb = [
-    `# Resume working session — ${resume}`,
+  const urlsList = urls.map((u, i) => `${i + 1}. ${cb(u)}`).join('\n')
+  const refreshList = ['unconfirmed', 'complete', 'findings'].map((m, i) => `${i + 7}. ${BASE}/fetch/${resume}/${m}?fresh=1`).join('\n')
+  const guidesList = guideEntries().map(([u, d]) => `${cb(u)}  — ${d}`).join('\n')
+  const rosterBlock = beadUrls.length ? [
+    `Deeper context — full beads. Fetch any of these literals to query that bead.`,
+    `For everything at once, fetch this single literal:`,
     ``,
-    `Fetch these seven pages EXACTLY as written below. Do not modify, shorten,`,
-    `or compose these URLs — fetch each literal:`,
+    `${cb(`${BASE}/beads/${beadUrls.map(u => u.split('/').pop()).join('+')}`)}`,
     ``,
-    ...urls.map((u, i) => `${i + 1}. ${cb(u)}`),
-    ``,
-    `Stale check: every view ends with "data last updated at <iso>". If a stamp looks older than expected, fetch its refresh literal (same content, forced fresh):`,
-    ``,
-    ...['unconfirmed', 'complete', 'findings'].map((m, i) => `${i + 7}. ${BASE}/fetch/${resume}/${m}?fresh=1`),
-    ``,
-    `Guidance doctrine for this loop (fetch any literal when you need it):`,
-    ``,
-    ...guideEntries().map(([u, d]) => `${cb(u)}  — ${d}`),
-    ``,
-    `What they are:`,
-    `- unconfirmed — pending bullets only, each with its workExperience context (frame + role + siblings). This is what needs work.`,
-    `- complete — full resume markdown with a green/orange ledger plus a directions block listing the orange items.`,
-    `- job-description — the posting job bead verbatim (role, duties, requirements).`,
-    `- done — the exact output format to use when returning agreed changes.`,
-    `- findings — open verification findings; check these FIRST before bullet work.`,
-    `- debug — if ANY fetch fails, go here immediately and follow the debug state directions.`,
-    ``,
-    `Then talk me through the orange (pending) bullets one at a time by voice.`,
-    `When we agree on new wording for a bullet, output it as a markdown section`,
-    `headed exactly ## {bead-id} (for example ## resume_bullets-bqk) with the new`,
-    `bead text as the section body. Omit unchanged bullets entirely.`,
-    ``,
-    `Durable statements: when producing substantial text the user is likely to`,
-    `reuse, revise, copy elsewhere, or hand to another agent (session summary,`,
-    `handoff, findings, report), place the finished artifact in a clearly`,
-    `separated, self-contained section. Keep conversational commentary OUTSIDE`,
-    `the artifact. The artifact must contain everything needed to understand and`,
-    `reuse it without the surrounding conversation — context, evidence`,
-    `boundaries, caveats, and instructions included. When revising an artifact,`,
-    `return the complete updated artifact, not just the changes. The user saves`,
-    `these sections to an inbox, so make each one paste-ready on its own.`,
-    ...(beadUrls.length ? [
-      ``,
-      `Deeper context — full beads. Fetch any of these literals to query that bead.`,
-      `For everything at once, fetch this single literal:`,
-      ``,
-      `${cb(`${BASE}/beads/${beadUrls.map(u => u.split('/').pop()).join('+')}`)}`,
-      ``,
-      ...beadUrls.map(u => cb(u)),
-    ] : [
-      ``,
-      `(Bead roster unavailable — ask the user for the bead id, or fetch the complete view.)`,
-    ]),
-  ].join('\n')
+    ...beadUrls.map(u => cb(u)),
+  ].join('\n') : `(Bead roster unavailable — ask the user for the bead id, or fetch the complete view.)`
+  const template = readFileSync(path.join(__dirname, '..', '..', 'blurbs', 'resume-session.md'), 'utf8')
+  const blurb = template
+    .replace('{{RESUME}}', resume)
+    .replace('{{URLS}}', urlsList)
+    .replace('{{REFRESH}}', refreshList)
+    .replace('{{GUIDES}}', guidesList)
+    .replace('{{ROSTER}}', rosterBlock)
   const esc = blurb.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   res.type('text/html').send(
     `<!doctype html><html><head><meta charset=utf-8><title>Resume session blurb</title>` +
