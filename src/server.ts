@@ -37,22 +37,6 @@ app.use(printRouter)
 app.use(express.urlencoded({ extended: false, limit: '2mb' }))
 app.use(express.json({ limit: '2mb' }))
 app.use(pasteRouter)
-// Agents get a text sitemap at /; browsers get the landing page.
-app.get('/', (req: Request, res: Response, next: NextFunction) => {
-  if (!isWebAgent(req.get('user-agent'), req.get('accept'))) return next()
-  res.type('text/plain').send([
-    `# beads-bridge`,
-    ``,
-    `Beads stores over HTTP. Key routes:`,
-    `- GET /resume/{resume} — session blurb (copy into ChatGPT)`,
-    `- GET /fetch/{resume}/ — index (unconfirmed|complete|job-description|done|findings|stories|debug)`,
-    `- GET /fetch/{resume}/project/{slug} — per-project evidence pack`,
-    `- GET /paste — paste endpoint contract (POST JSON {text} to save)`,
-    `- GET /guide/{bullets|questioning|discovery|labels|refine} — doctrine`,
-    `- GET /next — next triage item; GET /print/{resume} — printable resume`,
-    `- GET /help — full route help`,
-  ].join('\n'))
-})
 app.use(express.static(path.join(__dirname, '..', 'public')))
 
 // ── Routes ────────────────────────────────────────────────────────────────────

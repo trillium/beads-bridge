@@ -7,12 +7,17 @@ import path from 'path'
 import { BASE, STORES, storeAbout } from '../config'
 import { qstr, pstr, bd, storeFromId, cacheTag } from '../util'
 import { wrap } from '../wrap'
+import { isWebAgent } from '../agent-detect'
 
 export const readRouter = Router()
 
 // GET / — the research-assistant prompt (markdown), served verbatim from prompt.md.
 // The cache-tag placeholder is minted here so the URL ChatGPT receives is literal.
-readRouter.get('/', (_req: Request, res: Response) => {
+// GET / — agents get prompt.md (the bridge action brief); browsers get the
+// HTML landing page with links to every part of the app.
+readRouter.get('/', (req: Request, res: Response) => {
+  if (!isWebAgent(req.get('user-agent'), req.get('accept')))
+    return void res.sendFile(path.join(__dirname, '..', '..', 'public', 'index.html'))
   try {
     const prompt = readFileSync(path.join(__dirname, '..', 'prompt.md'), 'utf8')
       .replace('<server-issued-tag>', cacheTag())
