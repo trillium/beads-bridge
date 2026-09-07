@@ -1,0 +1,63 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>beads-bridge</title>
+<style>
+body { font-family: system-ui; margin: 2em; max-width: 44em; }
+h1 { margin-bottom: 0; }
+.sub { color: #555; margin-top: .2em; }
+.card { border: 1px solid #ddd; border-radius: 8px; padding: 1em; margin: 1em 0; }
+.card h2 { margin: 0 0 .4em; font-size: 1.1em; }
+a.btn { display: inline-block; margin: .2em .4em .2em 0; padding: .4em .9em;
+  border: 1px solid #888; border-radius: 6px; text-decoration: none; color: #111; }
+code { background: #f4f4f4; padding: .1em .4em; border-radius: 4px; }
+</style>
+</head>
+<body>
+<h1>beads-bridge</h1>
+<p class="sub">Beads stores over HTTP — voice loops, paste inbox, fetch views.</p>
+
+<div class="card">
+<h2>Resume voice loop</h2>
+<a class="btn" href="/resume/resumes-zak">Session blurb (coder)</a>
+<a class="btn" href="/fetch/resumes-zak/">Index</a>
+<a class="btn" href="/fetch/resumes-zak/unconfirmed">Unconfirmed</a>
+<a class="btn" href="/fetch/resumes-zak/complete">Complete</a>
+<a class="btn" href="/fetch/resumes-zak/findings">Findings</a>
+<a class="btn" href="/fetch/resumes-zak/stories">Stories</a>
+<a class="btn" href="/fetch/resumes-zak/debug">Debug</a>
+</div>
+
+<div class="card">
+<h2>Paste inbox</h2>
+<a class="btn" href="/paste">Paste → bead</a>
+<p>Paste agent output blocks; the integrator discovers store, title, and labels from the content.</p>
+</div>
+
+<div class="card">
+<h2>Guides</h2>
+<a class="btn" href="/guide/bullets">Bullets</a>
+<a class="btn" href="/guide/questioning">Questioning</a>
+<a class="btn" href="/guide/discovery">Discovery</a>
+<a class="btn" href="/guide/labels">Labels</a>
+<a class="btn" href="/guide/refine">Refine</a>
+</div>
+
+<div class="card">
+<h2>Beads</h2>
+<a class="btn" href="/next">Next item</a>
+<a class="btn" href="/print/resumes-zak">Print (coder resume)</a>
+<a class="btn" href="/fetch/resumes-zak/project/gas-town">Evidence: gas-town</a>
+<a class="btn" href="/fetch/resumes-zak/project/parlay">Evidence: parlay</a>
+<a class="btn" href="/fetch/resumes-zak/project/gas-city">Evidence: gas-city</a>
+</div>
+
+<div class="card">
+<h2>API</h2>
+<a class="btn" href="/help">Help</a>
+<p>OpenAPI JSON at <code>/openapi.json</code> (see <code>actions/openapi.json</code> in the repo).</p>
+</div>
+</body>
+</html>
