@@ -7,6 +7,7 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { BASE } from '../config'
 import { wrap } from '../wrap'
+import { withCb } from '../util'
 
 export const guideRouter = Router()
 
@@ -41,11 +42,12 @@ export const guideEntries = (): [string, string][] =>
 guideRouter.get('/guide', (_req: Request, res: Response) => {
   const lines = Object.entries(GUIDES).map(
     ([name, g]) => `${BASE}/guide/${name}  — ${g.title} (${g.blurb})`)
+  const cbStamp = Date.now()
   res.type('text/plain').send(wrap({
     title: 'Guidance pages',
     noNext: true,
-    body: [`Fetch any literal to load that doctrine:`, ``, ...lines].join('\n'),
-    actions: Object.keys(GUIDES).map(name => `GET ${BASE}/guide/${name}`),
+    body: [`Fetch any literal to load that doctrine:`, ``, ...lines.map(l => l.replace(/(https:\/\/[^\s]+)/, (u) => withCb(u, cbStamp)))].join('\n'),
+    actions: Object.keys(GUIDES).map(name => `GET ${withCb(`${BASE}/guide/${name}`, cbStamp)}`),
   }))
 })
 

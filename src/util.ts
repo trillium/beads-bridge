@@ -37,3 +37,9 @@ export function extractLinks(body: string): string[] {
   out.delete(BASE)
   return [...out]
 }
+
+// Cache buster: every URL we emit carries ?cb=<page-load-ms> so downstream
+// fetchers (ChatGPT) can never serve a stale cached copy. The server ignores
+// it — only `fresh` and `debug` change behavior.
+export const withCb = (url: string, stamp: number): string =>
+  url.includes('?') ? `${url}&cb=${stamp}` : `${url}?cb=${stamp}`
