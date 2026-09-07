@@ -36,11 +36,18 @@ async function refreshFetch(key: string, id: string, mode: string): Promise<stri
 
 // GET /fetch/{resumeId} — index for one resume: every mode URL as literals.
 // Landing here means something omitted the mode; hand back the full map.
-resumeRouter.get('/fetch/:id', (req: Request, res: Response) => {
+resumeRouter.get('/fetch/:id', async (req: Request, res: Response) => {
   const id = String(pstr(req.params.id))
   if (!/^[A-Za-z][A-Za-z0-9_-]{2,64}$/.test(id)) {
     return res.type('text/plain').status(400).send(`unknown resume id: ${id}`)
   }
+  let beadUrls: string[] = []
+  try {
+    const { stdout } = await execFileAsync('bun',
+      [`${RESUME_DOCX_DIR}/bin/fetch.ts`, id, 'urls'],
+      { encoding: 'utf8', timeout: 120000 })
+    beadUrls = stdout.trim().split('\n').map(l => l.trim()).filter(Boolean)
+  } catch { beadUrls = [] }
   const modes: [string, string][] = [
     ['unconfirmed', 'pending bullets + workExperience context (what needs work)'],
     ['complete', 'full markdown with green/orange ledger + directions block'],
@@ -50,7 +57,10 @@ resumeRouter.get('/fetch/:id', (req: Request, res: Response) => {
   res.type('text/plain').send(wrap({
     title: `Resume ${id} — views`,
     body: [`Pick a view — fetch its URL exactly as written:`, ``,
-      ...modes.map(([m, d]) => `${BASE}/fetch/${id}/${m}  — ${d}`)].join('\n'),
+      ...modes.map(([m, d]) => `${BASE}/fetch/${id}/${m}  — ${d}`),
+      ...(beadUrls.length ? [``, `Deeper context — full beads (fetch any literal):`, ``,
+        `${BASE}/beads/${beadUrls.map(u => u.split('/').pop()).join('+')}  — everything at once`,
+        ``, ...beadUrls] : [])].join('\n'),
     meta: { id },
     actions: modes.map(([m]) => `GET ${BASE}/fetch/${id}/${m}`),
   }))
