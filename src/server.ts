@@ -11,9 +11,13 @@ import { isWebAgent } from './agent-detect'
 
 const app = express()
 
-app.use((req: Request, _res: Response, next: NextFunction) => {
-  const ua = req.get('user-agent')?.slice(0, 120) ?? '-'
-  console.log(`${new Date().toISOString()} ${req.method} ${req.originalUrl} UA:${ua}`)
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const start = Date.now()
+  res.on('finish', () => {
+    const ua = req.get('user-agent')?.slice(0, 80) ?? '-'
+    const verdict = (req as Request & { accessVerdict?: string }).accessVerdict ?? 'ALLOW:legacy'
+    console.log(`${new Date().toISOString()} ${verdict} ${res.statusCode} ${req.method} ${req.originalUrl} ip=${req.ip} ua=${ua} ${Date.now() - start}ms`)
+  })
   next()
 })
 
@@ -23,12 +27,14 @@ const TAILNET = /^100\.(6[4-9]|[78]\d|9\d|1[01]\d|12[0-7])\./
 const LOOPBACK = /^(127\.|::1$|::ffff:127\.)/
 const APPROVED_AGENT_UA = /chatgpt-user|gptbot/i
 app.use((req: Request, res: Response, next: NextFunction) => {
+  const tagged = req as Request & { accessVerdict?: string }
   const ip = (req.ip ?? '').replace(/^::ffff:/, '')
   const ua = req.get('user-agent') ?? ''
-  const ok =
-    TAILNET.test(ip) || LOOPBACK.test(req.ip ?? '') || APPROVED_AGENT_UA.test(ua)
-  if (!ok) {
-    console.log(`BLOCKED ${req.method} ${req.originalUrl} ip=${req.ip}`)
+  if (TAILNET.test(ip)) tagged.accessVerdict = 'ALLOW:tailnet'
+  else if (LOOPBACK.test(req.ip ?? '')) tagged.accessVerdict = 'ALLOW:localhost'
+  else if (APPROVED_AGENT_UA.test(ua)) tagged.accessVerdict = 'ALLOW:agent-ua'
+  else {
+    tagged.accessVerdict = 'DENY:403'
     return void res.type('text/plain').status(403).send('# forbidden\n')
   }
   next()
