@@ -12,6 +12,26 @@ import { guideEntries } from './guide'
 
 export const resumeRouter = Router()
 
+// ?debug=1 appends output-wrapping guidance: instructs the consumer to return
+// its markdown inside one copyable fenced block (one-tap lift on the phone).
+const F = String.fromCharCode(96).repeat(3)
+const DEBUG_BLOCK = [
+  ``,
+  `## debug — output wrapping`,
+  `Return your agreed-change markdown wrapped in a single copyable block:`,
+  ``,
+  `${F}markdown`,
+  `## {bead-id}`,
+  `new bead text here`,
+  `${F}`,
+  ``,
+  `One fenced block total, language tag markdown, nothing outside it except a one-line summary before it.`,
+].join('\n')
+const withDebug = (req: { query: unknown }, body: string) =>
+  (req.query as Record<string, unknown>).debug !== undefined ? body + DEBUG_BLOCK : body
+
+
+
 const execFileAsync = promisify(execFile)
 
 // Stale-while-revalidate: a fetch fans out to ~50 bead subprocess calls
@@ -93,17 +113,18 @@ resumeRouter.get('/fetch/:id', async (req: Request, res: Response) => {
       .join('\n').trim()
       .replaceAll('{BASE}', BASE).replaceAll('{RESUME}', id)
   } catch { coaching = `Work the ${id} resume: fetch job-description, then unconfirmed, one bullet at a time.` }
-  res.type('text/plain').send(wrap({
-    title: `Resume ${id} — views`,
-    noNext: true,
-    body: [coaching, ``,
+  const indexBody = [coaching, ``,
       `Pick a view — fetch its URL exactly as written:`, ``,
       ...modes.map(([m, d]) => `${BASE}/fetch/${id}/${m}  — ${d}`),
       ``, `Guidance — doctrine for this loop (fetch any literal):`, ``,
       ...guideEntries().map(([u, d]) => `${u}  — ${d}`),
       ...(beadUrls.length ? [``, `Deeper context — full beads (fetch any literal):`, ``,
         `${BASE}/beads/${beadUrls.map(u => u.split('/').pop()).join('+')}  — everything at once`,
-        ``, ...beadUrls] : [])].join('\n'),
+        ``, ...beadUrls] : [])].join('\n')
+  res.type('text/plain').send(wrap({
+    title: `Resume ${id} — views`,
+    noNext: true,
+    body: withDebug(req, indexBody),
     meta: { id },
     actions: modes.map(([m]) => `GET ${BASE}/fetch/${id}/${m}`),
   }))
@@ -148,6 +169,7 @@ resumeRouter.get('/fetch/:id/:mode', async (req: Request, res: Response) => {
       inflight.delete(key)
     }
   }
+  body = withDebug(req, body)
   res.type('text/plain').send(wrap({
     title: `Resume ${id} — ${mode}`,
     noNext: true,
