@@ -289,6 +289,43 @@ app.get('/fetch/:id/:mode', (req: Request, res: Response) => {
   }))
 })
 
+// GET /resume — user-facing assistance page for the resume voice loop.
+// Flow: user opens this page, copies the blurb, pastes it into ChatGPT.
+// The blurb contains exact literal fetch URLs (the model cannot compose URLs
+// on its own — it can only fetch literals it was given), so ChatGPT can then
+// safely fetch the session's pages itself and talk through them.
+app.get('/resume', (req: Request, res: Response) => {
+  const q = String(req.query.resume ?? '')
+  const resume = /^[A-Za-z][A-Za-z0-9_-]{2,64}$/.test(q) ? q : 'resumes-zak'
+  const urls = [`${BASE}/fetch/${resume}/unconfirmed`, `${BASE}/fetch/${resume}/complete`, `${BASE}/fetch/${resume}/job-description`]
+  const blurb = [
+    `# Resume working session — ${resume}`,
+    ``,
+    `Fetch these three pages EXACTLY as written below. Do not modify, shorten,`,
+    `or compose these URLs — fetch each literal:`,
+    ``,
+    ...urls.map((u, i) => `${i + 1}. ${u}`),
+    ``,
+    `What they are:`,
+    `- unconfirmed — pending bullets only, each with its workExperience context (frame + role + siblings). This is what needs work.`,
+    `- complete — full resume markdown with a green/orange ledger plus a directions block listing the orange items.`,
+    `- job-description — the posting job bead verbatim (role, duties, requirements).`,
+    ``,
+    `Then talk me through the orange (pending) bullets one at a time by voice.`,
+    `When we agree on new wording for a bullet, output it as a markdown section`,
+    `headed exactly ## {bead-id} (for example ## resume_bullets-bqk) with the new`,
+    `bead text as the section body. Omit unchanged bullets entirely.`,
+  ].join('\n')
+  const esc = blurb.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  res.type('text/html').send(
+    `<!doctype html><html><head><meta charset=utf-8><title>Resume session blurb</title>` +
+    `<style>body{font-family:system-ui;margin:2em;max-width:60em}pre{background:#f4f4f4;padding:1em;white-space:pre-wrap}button{font-size:1.1em;padding:.5em 1em}</style></head><body>` +
+    `<h1>Resume working session — ${resume}</h1>` +
+    `<p>Copy the blurb, switch to ChatGPT, paste it. ChatGPT fetches the listed pages itself.</p>` +
+    `<button onclick="navigator.clipboard.writeText(document.getElementById('b').innerText).then(()=>{this.innerText='Copied!'})">Copy blurb</button>` +
+    `<pre id="b">${esc}</pre></body></html>`)
+})
+
 // GET /{store} — list or search store
 app.get('/:store', (req: Request, res: Response, next: NextFunction) => {
   const store = pstr(req.params.store)
