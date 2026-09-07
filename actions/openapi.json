@@ -6,55 +6,167 @@
     "description": "Structured read/write actions over Trillium's federated bead stores (brain, task, review, etc.). Every bead id encodes its store prefix (e.g. review-fmt). Read actions return the bead plus its available_actions so the model can act without navigation. Mutations return the canonical post-state, not bare text."
   },
   "servers": [
-    { "url": "https://__FUNNEL_HOST__" }
+    {
+      "url": "https://__FUNNEL_HOST__"
+    }
   ],
   "paths": {
     "/action/next": {
       "get": {
         "operationId": "next",
         "summary": "Next open bead labeled 'human', review store first. Returns structured bead with available_actions.",
-        "security": [ { "bearerAuth": [] } ],
-        "responses": { "200": { "description": "Bead summary", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Bead" } } } } }
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bead summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Bead"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/action/bead": {
       "get": {
         "operationId": "get_bead",
         "summary": "Fetch one bead by id (e.g. review-fmt).",
-        "security": [ { "bearerAuth": [] } ],
-        "parameters": [
-          { "name": "bead_id", "in": "query", "required": true, "schema": { "type": "string", "example": "review-fmt" } }
+        "security": [
+          {
+            "bearerAuth": []
+          }
         ],
-        "responses": { "200": { "description": "Bead summary", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Bead" } } } } }
+        "parameters": [
+          {
+            "name": "bead_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "review-fmt"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bead summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Bead"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/action/comment": {
       "post": {
         "operationId": "comment",
         "summary": "Add a comment to a bead.",
-        "security": [ { "bearerAuth": [] } ],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CommentBody" } } } },
-        "responses": { "200": { "description": "Canonical post-state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Bead" } } } } }
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommentBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Canonical post-state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Bead"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/action/note": {
       "post": {
         "operationId": "note",
         "summary": "Append a note to a bead.",
-        "security": [ { "bearerAuth": [] } ],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CommentBody" } } } },
-        "responses": { "200": { "description": "Canonical post-state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Bead" } } } } }
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommentBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Canonical post-state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Bead"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/action/approve": {
       "post": {
         "operationId": "approve",
         "summary": "Approve an OPEN bead: comment + close. 409 if not open.",
-        "security": [ { "bearerAuth": [] } ],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BeadBody" } } } },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BeadBody"
+              }
+            }
+          }
+        },
         "responses": {
-          "200": { "description": "Canonical post-state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Bead" } } } },
-          "409": { "description": "Bead not open" }
+          "200": {
+            "description": "Canonical post-state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Bead"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Bead not open"
+          }
         }
       }
     },
@@ -62,11 +174,35 @@
       "post": {
         "operationId": "reject",
         "summary": "Reject an OPEN bead: comment, stays open. 409 if not open.",
-        "security": [ { "bearerAuth": [] } ],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BeadBody" } } } },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BeadBody"
+              }
+            }
+          }
+        },
         "responses": {
-          "200": { "description": "Canonical post-state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Bead" } } } },
-          "409": { "description": "Bead not open" }
+          "200": {
+            "description": "Canonical post-state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Bead"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Bead not open"
+          }
         }
       }
     },
@@ -74,11 +210,35 @@
       "post": {
         "operationId": "done",
         "summary": "Mark an OPEN bead handled: comment + close. 409 if not open.",
-        "security": [ { "bearerAuth": [] } ],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/BeadBody" } } } },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BeadBody"
+              }
+            }
+          }
+        },
         "responses": {
-          "200": { "description": "Canonical post-state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Bead" } } } },
-          "409": { "description": "Bead not open" }
+          "200": {
+            "description": "Canonical post-state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Bead"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Bead not open"
+          }
         }
       }
     },
@@ -86,18 +246,152 @@
       "post": {
         "operationId": "label",
         "summary": "Add/remove labels on a bead. Vocabulary is fixed: triaged, ready, human.",
-        "security": [ { "bearerAuth": [] } ],
-        "requestBody": { "required": true, "content": { "application/json": { "schema": {
-          "type": "object",
-          "required": ["bead_id"],
-          "properties": {
-            "bead_id": { "type": "string", "example": "review-fmt" },
-            "add": { "type": "string", "enum": ["triaged", "ready", "human"] },
-            "remove": { "type": "string", "enum": ["triaged", "ready", "human"] },
-            "idempotency_key": { "type": "string", "description": "Optional; replays return the stored response" }
+        "security": [
+          {
+            "bearerAuth": []
           }
-        } } } },
-        "responses": { "200": { "description": "Canonical post-state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Bead" } } } } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "bead_id"
+                ],
+                "properties": {
+                  "bead_id": {
+                    "type": "string",
+                    "example": "review-fmt"
+                  },
+                  "add": {
+                    "type": "string",
+                    "enum": [
+                      "triaged",
+                      "ready",
+                      "human"
+                    ]
+                  },
+                  "remove": {
+                    "type": "string",
+                    "enum": [
+                      "triaged",
+                      "ready",
+                      "human"
+                    ]
+                  },
+                  "idempotency_key": {
+                    "type": "string",
+                    "description": "Optional; replays return the stored response"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Canonical post-state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Bead"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/fetch/{resumeId}/unconfirmed": {
+      "get": {
+        "operationId": "fetch_resume_unconfirmed",
+        "summary": "Resume unconfirmed: Pending bullets only, each with surrounding workExperience (frame + role + statu",
+        "description": "Pending bullets only, each with surrounding workExperience (frame + role + status-marked siblings). Token-minimal triage view.",
+        "parameters": [
+          {
+            "name": "resumeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "resumes-zak"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Plain-text resume view",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/fetch/{resumeId}/complete": {
+      "get": {
+        "operationId": "fetch_resume_complete",
+        "summary": "Resume complete: Full variable-content resume as markdown with green/orange ledger plus a directi",
+        "description": "Full variable-content resume as markdown with green/orange ledger plus a directions block for orange items.",
+        "parameters": [
+          {
+            "name": "resumeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "resumes-zak"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Plain-text resume view",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/fetch/{resumeId}/job-description": {
+      "get": {
+        "operationId": "fetch_resume_job_description",
+        "summary": "Resume job-description: Posting job bead description verbatim (via the resume manifest posting_ref).",
+        "description": "Posting job bead description verbatim (via the resume manifest posting_ref).",
+        "parameters": [
+          {
+            "name": "resumeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "resumes-zak"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Plain-text resume view",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
       }
     }
   },
@@ -105,40 +399,97 @@
     "schemas": {
       "BeadBody": {
         "type": "object",
-        "required": ["bead_id"],
+        "required": [
+          "bead_id"
+        ],
         "properties": {
-          "bead_id": { "type": "string", "example": "review-fmt" },
-          "idempotency_key": { "type": "string", "description": "Optional; replays return the stored response" }
+          "bead_id": {
+            "type": "string",
+            "example": "review-fmt"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "description": "Optional; replays return the stored response"
+          }
         }
       },
       "CommentBody": {
         "type": "object",
-        "required": ["bead_id", "text"],
+        "required": [
+          "bead_id",
+          "text"
+        ],
         "properties": {
-          "bead_id": { "type": "string", "example": "review-fmt" },
-          "text": { "type": "string", "description": "Comment or note text" },
-          "idempotency_key": { "type": "string", "description": "Optional; replays return the stored response" }
+          "bead_id": {
+            "type": "string",
+            "example": "review-fmt"
+          },
+          "text": {
+            "type": "string",
+            "description": "Comment or note text"
+          },
+          "idempotency_key": {
+            "type": "string",
+            "description": "Optional; replays return the stored response"
+          }
         }
       },
       "Bead": {
         "type": "object",
         "properties": {
-          "ok": { "type": "boolean" },
-          "bead_id": { "type": "string" },
-          "store": { "type": "string" },
-          "title": { "type": "string" },
-          "state": { "type": "string", "enum": ["open", "closed"] },
-          "priority": { "type": "string" },
-          "labels": { "type": "array", "items": { "type": "string" } },
-          "comments": { "type": "string" },
-          "available_actions": { "type": "array", "items": { "type": "string" } },
-          "wrote": { "type": "string", "description": "Present on mutations" },
-          "transitioned": { "type": "string", "description": "Present on approve/reject/done" }
+          "ok": {
+            "type": "boolean"
+          },
+          "bead_id": {
+            "type": "string"
+          },
+          "store": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "closed"
+            ]
+          },
+          "priority": {
+            "type": "string"
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "comments": {
+            "type": "string"
+          },
+          "available_actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "wrote": {
+            "type": "string",
+            "description": "Present on mutations"
+          },
+          "transitioned": {
+            "type": "string",
+            "description": "Present on approve/reject/done"
+          }
         }
       }
     },
     "securitySchemes": {
-      "bearerAuth": { "type": "http", "scheme": "bearer" }
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
+      }
     }
   }
 }

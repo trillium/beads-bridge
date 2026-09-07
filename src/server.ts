@@ -180,6 +180,9 @@ app.get('/help', (_req: Request, res: Response) => {
     `  GET ${BASE}/{bead-id}/close                 — close a bead`,
     `  GET ${BASE}/{bead-id}/label?add=...         — change labels`,
     `  GET ${BASE}/{store}?q=...                   — search a store`,
+    `  GET ${BASE}/fetch/{resume}/unconfirmed     — resume triage: pending bullets + workExperience`,
+    `  GET ${BASE}/fetch/{resume}/complete        — full resume markdown with green/orange ledger`,
+    `  GET ${BASE}/fetch/{resume}/job-description — posting job bead verbatim (e.g. /fetch/resumes-zak/complete)`,
     '',
     '## Decisions and consumption',
     '',
@@ -245,6 +248,45 @@ app.get('/next', (_req: Request, res: Response) => {
   res.type('text/plain').send(
     '# No queued items\n\nNo open beads with the `human` label found.\n\nFetch / to browse stores manually.'
   )
+})
+
+// GET /fetch/{resumeId}/{mode} — deterministic resume views for the voice loop.
+// Served from resume-docx get_resume_content() (src/fetch.ts via bin/fetch.ts):
+// bead-id in, plain-text out. Modes: unconfirmed (pending bullets +
+// workExperience context), complete (full markdown with green/orange ledger +
+// directions block), job-description (posting_ref job bead verbatim).
+const RESUME_DOCX_DIR = process.env.RESUME_DOCX_DIR ?? `${process.env.HOME}/code/resume-docx`
+const FETCH_MODES = ['unconfirmed', 'complete', 'job-description'] as const
+
+app.get('/fetch/:id/:mode', (req: Request, res: Response) => {
+  const id = pstr(req.params.id)
+  const mode = pstr(req.params.mode)
+  if (!/^[A-Za-z][A-Za-z0-9_-]{2,64}$/.test(id)) {
+    return res.type('text/plain').status(400).send(`unknown resume id: ${id}`)
+  }
+  if (!(FETCH_MODES as readonly string[]).includes(mode)) {
+    return res.type('text/plain').status(400)
+      .send(`unknown mode: ${mode} (want ${FETCH_MODES.join('|')})`)
+  }
+  let body: string
+  try {
+    body = execSync(`bun ${RESUME_DOCX_DIR}/bin/fetch.ts ${id} ${mode}`,
+      { encoding: 'utf8', timeout: 120000 }).trim()
+  } catch (e: unknown) {
+    const err = e as { stdout?: string; message?: string }
+    return res.type('text/plain').status(502)
+      .send(`# fetch failed: ${id}/${mode}\n\n${err.stdout?.trim() || err.message || 'error'}`)
+  }
+  res.type('text/plain').send(wrap({
+    title: `Resume ${id} — ${mode}`,
+    body,
+    meta: { id },
+    actions: [
+      `GET ${BASE}/fetch/${id}/unconfirmed      — pending bullets + workExperience context`,
+      `GET ${BASE}/fetch/${id}/complete         — full markdown with green/orange ledger`,
+      `GET ${BASE}/fetch/${id}/job-description  — posting job bead verbatim`,
+    ],
+  }))
 })
 
 // GET /{store} — list or search store
