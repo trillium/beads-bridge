@@ -13,6 +13,7 @@ import { actionsRouter } from './routes/actions'
 import { warmResume } from './resume-cache'
 import { guideRouter } from './routes/guide'
 import { printRouter } from './routes/print'
+import { pasteRouter } from './routes/paste'
 import { resumeBlurbRouter } from './routes/resume-blurb'
 
 const app = express()
@@ -32,6 +33,9 @@ app.use(probeRouter)
 app.use(actionsRouter)
 app.use(guideRouter)
 app.use(printRouter)
+app.use(express.urlencoded({ extended: false, limit: '2mb' }))
+app.use(express.json({ limit: '2mb' }))
+app.use(pasteRouter)
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 

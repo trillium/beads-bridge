@@ -662,6 +662,51 @@
           }
         }
       }
+    },
+    "/paste": {
+      "get": {
+        "operationId": "paste_form",
+        "summary": "HTML form: paste an agent block to create a bead.",
+        "responses": {
+          "200": {
+            "description": "HTML form"
+          }
+        }
+      },
+      "post": {
+        "operationId": "paste_create",
+        "summary": "Create a bead from pasted text (form or JSON).",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "store": {
+                    "type": "string",
+                    "example": "inbox"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "labels": {
+                    "type": "string",
+                    "example": "resume:resumes-zak"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Created bead id plus retrieval URL"
+          }
+        }
+      }
     }
   },
   "components": {
