@@ -23,6 +23,31 @@ const withDebug = (req: { query: unknown }, body: string) =>
 
 
 
+// GET /fetch/{resumeId}/debug — the debug state itself as a page.
+// If any fetch fails, the turn guidance sends the agent here instead of
+// guessing or blind-retrying.
+resumeRouter.get('/fetch/:id/debug', (req: Request, res: Response) => {
+  const id = String(pstr(req.params.id))
+  if (!/^[A-Za-z][A-Za-z0-9_-]{2,64}$/.test(id)) {
+    return res.type('text/plain').status(400).send(`unknown resume id: ${id}`)
+  }
+  const cbStamp = Date.now()
+  const cb = (u: string) => withCb(u, cbStamp)
+  const proto = debugBlock().trim()
+  const retry = [`unconfirmed`, `complete`, `job-description`, `done`, `findings`]
+    .map(m => `${cb(`${BASE}/fetch/${id}/${m}`)}`)
+  res.type('text/plain').send(wrap({
+    title: `Resume ${id} — debug state`,
+    noNext: true,
+    body: [`You are in a debug state because a fetch failed. Do not guess contents. Do not retry blindly more than once.`, ``,
+      proto, ``,
+      `Retry these literals one at a time, then follow the protocol above:`, ``,
+      ...retry].join('\n'),
+    meta: { id },
+    actions: retry.map(u => `GET ${u}`),
+  }))
+})
+
 // GET /fetch/{resumeId} — index for one resume: every mode URL as literals.
 // Landing here means something omitted the mode; hand back the full map.
 resumeRouter.get('/fetch/:id', async (req: Request, res: Response) => {
@@ -42,6 +67,7 @@ resumeRouter.get('/fetch/:id', async (req: Request, res: Response) => {
     ['complete', 'full markdown with green/orange ledger + directions block'],
     ['job-description', 'posting job bead verbatim'],
     ['done', 'exact output format for returning agreed changes'],
+    ['debug', 'debug state — fetch this if any other view fails'],
     ['findings', 'open verification findings (address first)'],
   ]
   // Coaching blurb lives in blurbs/resume-index.md (read per-hit so edits

@@ -29,3 +29,8 @@ Repeat context when introducing something new or hard to remember, not per quest
 Before emitting the done payload, run a participatory retro: ask the user what
 worked, what to change, and whether anything about the questioning or review
 should differ next time — incorporate the answers into the session retro section.
+
+Failure rule: if any fetch fails (timeout, error, empty body), stop the loop
+and go directly to the debug state — fetch {BASE}/fetch/{RESUME}/debug and
+follow its directions exactly. Do not guess the missing contents. Do not retry
+the failed fetch blindly more than once.

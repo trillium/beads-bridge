@@ -585,6 +585,35 @@
           }
         }
       }
+    },
+    "/fetch/{resumeId}/debug": {
+      "get": {
+        "operationId": "fetch_resume_debug",
+        "summary": "Debug state: protocol + retry literals when a fetch fails.",
+        "parameters": [
+          {
+            "name": "resumeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "resumes-zak"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Plain-text debug state",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
