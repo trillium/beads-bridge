@@ -33,4 +33,4 @@ should differ next time — incorporate the answers into the session retro secti
 Failure rule: if any fetch fails (timeout, error, empty body), stop the loop
 and go directly to the debug state — fetch {BASE}/fetch/{RESUME}/debug and
 follow its directions exactly. Do not guess the missing contents. Do not retry
-the failed fetch blindly more than once.
+the failed fetch blindly more than once. If the debug view itself fails, report the attempt log, wait a minute, retry debug once, then hand back to the user.
