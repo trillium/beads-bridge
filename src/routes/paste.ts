@@ -8,6 +8,7 @@ import { homedir } from 'os'
 import { join, dirname } from 'path'
 import { BASE } from '../config'
 import { withCb, shortCode } from '../util'
+import { isWebAgent } from '../agent-detect'
 
 export const pasteRouter = Router()
 
@@ -190,7 +191,21 @@ const run = (store: string, args: string[]): Promise<string> =>
     execFile(store, args, { timeout: 30000 }, (e, so, se) =>
       e ? reject(new Error(String(se || e.message))) : resolve(so)))
 
-pasteRouter.get('/paste', async (_req: Request, res: Response) => {
+pasteRouter.get('/paste', async (req: Request, res: Response) => {
+  // Agents get the contract as text; browsers get the form UI.
+  if (isWebAgent(req.get('user-agent'), req.get('accept'))) {
+    const items = await inboxItems()
+    return void res.type('text').send([
+      `# paste endpoint (agent contract)`,
+      ``,
+      `POST /paste as JSON {text} (+ optional title) to save a paste as an inbox bead.`,
+      `Response: {id, store, url}. Exact-text resubmits return {duplicate: true}.`,
+      `GET /paste/list — inbox items as JSON. GET /paste/inbox/{id} — raw bead text.`,
+      ``,
+      `## inbox (${items.filter(i => i.open).length} open)`,
+      ...items.map(i => `- ${i.open ? '○' : '●'} ${i.id} — ${i.title.slice(0, 60)}`),
+    ].join('\n'))
+  }
   res.type('html').send(PAGE('', await inboxItems()))
 })
 

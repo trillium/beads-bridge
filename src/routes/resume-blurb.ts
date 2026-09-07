@@ -6,6 +6,7 @@ import { BASE } from '../config'
 import { staleRoster, refreshRoster, rosterInflight } from '../resume-cache'
 import { withCb, shortCode } from '../util'
 import { guideEntries } from './guide'
+import { isWebAgent } from '../agent-detect'
 
 export const resumeBlurbRouter = Router()
 
@@ -50,6 +51,10 @@ resumeBlurbRouter.get(['/resume', '/resume/:id'], async (req: Request, res: Resp
     .replace('{{REFRESH}}', refreshList)
     .replace('{{GUIDES}}', guidesList)
     .replace('{{ROSTER}}', rosterBlock)
+  // Agents get the raw blurb as text (no HTML shell to chew through);
+  // browsers keep the copy-button page.
+  if (isWebAgent(req.get('user-agent'), req.get('accept')))
+    return void res.type('text/plain').send(blurb)
   const esc = blurb.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   res.type('text/html').send(
     `<!doctype html><html><head><meta charset=utf-8><title>Resume session blurb</title>` +
