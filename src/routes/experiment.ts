@@ -27,13 +27,16 @@ experimentRouter.get('/test', (req: Request, res: Response) => {
       `One endpoint, instances as query params. Fetch ONLY the instance you`,
       `are explicitly given — the others are off-limits until asked.`,
       ``,
-      `Example instances: ${BASE}/test?cb=1  ${BASE}/test?cb=2`,
+      `The ten instances:`,
+      ``,
+      ...Array.from({ length: 10 }, (_, i) => `${BASE}/test?cb=${i + 1}`),
       ``,
       DIRECTIVE,
     ].join('\n'))
   }
-  if (!/^[A-Za-z0-9_-]{1,16}$/.test(cb))
-    return void res.type('text/plain').status(400).send('# unknown test instance\n')
+  if (!/^(10|[1-9])$/.test(cb))
+    return void res.type('text/plain').status(400)
+      .send('# unknown test instance (want ?cb=1..10)\n')
   res.type('text/plain').send([
     `# test instance ${cb}`,
     ``,
