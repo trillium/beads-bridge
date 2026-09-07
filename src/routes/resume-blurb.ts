@@ -57,6 +57,6 @@ resumeBlurbRouter.get('/resume/:id', async (req: Request, res: Response) => {
   // Agents get the raw blurb as text; browsers use the SPA copy page.
   if (isWebAgent(req.get('user-agent'), req.get('accept')))
     return void res.type('text/plain').send(blurb)
-  return void res.redirect(`/#/resume?resume=${resume}`)
+  return void res.redirect(`/#/resume/${resume}`)
 })
 

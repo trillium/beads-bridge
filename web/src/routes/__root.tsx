@@ -17,7 +17,7 @@ function Root() {
         <Link to="/paste" className="underline">
           Paste
         </Link>
-        <Link to="/resume" search={{ resume: 'resumes-zak' }} className="underline">
+        <Link to="/resume/$resumeId" params={{ resumeId: 'resumes-zak' }} className="underline">
           Resume
         </Link>
         <span className="ml-auto">

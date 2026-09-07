@@ -11,7 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as PasteRouteImport } from './routes/paste'
-import { Route as ResumeRouteImport } from './routes/resume'
+import { Route as ResumeResumeIdRouteImport } from './routes/resume.$resumeId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -23,40 +23,40 @@ const PasteRoute = PasteRouteImport.update({
   path: '/paste',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ResumeRoute = ResumeRouteImport.update({
-  id: '/resume',
-  path: '/resume',
+const ResumeResumeIdRoute = ResumeResumeIdRouteImport.update({
+  id: '/resume/$resumeId',
+  path: '/resume/$resumeId',
   getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/paste': typeof PasteRoute
-  '/resume': typeof ResumeRoute
+  '/resume/$resumeId': typeof ResumeResumeIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/paste': typeof PasteRoute
-  '/resume': typeof ResumeRoute
+  '/resume/$resumeId': typeof ResumeResumeIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/paste': typeof PasteRoute
-  '/resume': typeof ResumeRoute
+  '/resume/$resumeId': typeof ResumeResumeIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/paste' | '/resume'
+  fullPaths: '/' | '/paste' | '/resume/$resumeId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/paste' | '/resume'
-  id: '__root__' | '/' | '/paste' | '/resume'
+  to: '/' | '/paste' | '/resume/$resumeId'
+  id: '__root__' | '/' | '/paste' | '/resume/$resumeId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   PasteRoute: typeof PasteRoute
-  ResumeRoute: typeof ResumeRoute
+  ResumeResumeIdRoute: typeof ResumeResumeIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -75,11 +75,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PasteRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/resume': {
-      id: '/resume'
-      path: '/resume'
-      fullPath: '/resume'
-      preLoaderRoute: typeof ResumeRouteImport
+    '/resume/$resumeId': {
+      id: '/resume/$resumeId'
+      path: '/resume/$resumeId'
+      fullPath: '/resume/$resumeId'
+      preLoaderRoute: typeof ResumeResumeIdRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -88,7 +88,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   PasteRoute: PasteRoute,
-  ResumeRoute: ResumeRoute,
+  ResumeResumeIdRoute: ResumeResumeIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

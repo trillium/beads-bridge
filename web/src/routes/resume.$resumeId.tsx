@@ -1,16 +1,13 @@
 import { useState } from 'react'
-import { createFileRoute, useSearch } from '@tanstack/react-router'
+import { createFileRoute, useParams } from '@tanstack/react-router'
 import { Button, Note } from '../components/ui'
 
-export const Route = createFileRoute('/resume')({
-  validateSearch: (search: Record<string, unknown>) => ({
-    resume: typeof search.resume === 'string' ? search.resume : 'resumes-zak',
-  }),
+export const Route = createFileRoute('/resume/$resumeId')({
   component: Resume,
 })
 
 function Resume() {
-  const { resume: resumeParam } = useSearch({ from: '/resume' })
+  const { resumeId: resumeParam } = useParams({ from: '/resume/$resumeId' })
   const [resumeId, setResumeId] = useState(resumeParam)
   const [blurb, setBlurb] = useState('')
   const [status, setStatus] = useState('')
