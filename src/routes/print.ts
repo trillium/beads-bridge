@@ -7,7 +7,7 @@ import { promisify } from 'util'
 import { readdirSync, statSync } from 'fs'
 import { join } from 'path'
 import { BASE, RESUME_DOCX_DIR } from '../config'
-import { pstr, withCb, shortCode } from '../util'
+import { pstr } from '../util'
 import { wrap } from '../wrap'
 
 export const printRouter = Router()
@@ -46,8 +46,6 @@ printRouter.get('/print/:id', async (req: Request, res: Response) => {
   if (!/^[A-Za-z][A-Za-z0-9_-]{2,64}$/.test(id)) {
     return res.type('text/plain').status(400).send(`unknown resume id: ${id}`)
   }
-  const cbStamp = shortCode()
-  const cb = (u: string) => withCb(u, cbStamp)
   const scope = await resumeScope(id)
   const pdf = newestPdf(scope)
   if (!pdf) return res.type('text/plain').status(404).send(`no snapshot PDF found for ${id}`)
@@ -84,6 +82,6 @@ printRouter.get('/print/:id', async (req: Request, res: Response) => {
     noNext: true,
     body: lines.join('\n'),
     meta: { id },
-    actions: [`GET ${cb(`${BASE}/fetch/${id}/complete`)} — resume content`],
+    actions: [`GET ${BASE}/fetch/${id}/complete — resume content`],
   }))
 })

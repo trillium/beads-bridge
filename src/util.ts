@@ -41,13 +41,3 @@ export function extractLinks(body: string): string[] {
 // Cache buster: every URL we emit carries ?cb=<page-load-ms> so downstream
 // fetchers (ChatGPT) can never serve a stale cached copy. The server ignores
 // it — only `fresh` and `debug` change behavior.
-// Short cache-buster: 4 alphanumeric chars (upper+lower), minted once per page.
-// Same role as a timestamp stamp at a fraction of the tokens.
-const CB_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-export const shortCode = (n = 4): string => {
-  let out = ''
-  for (let i = 0; i < n; i++) out += CB_ALPHABET[Math.floor(Math.random() * CB_ALPHABET.length)]
-  return out
-}
-export const withCb = (url: string, code: string): string =>
-  url.includes('?') ? `${url}&cb=${code}` : `${url}?cb=${code}`

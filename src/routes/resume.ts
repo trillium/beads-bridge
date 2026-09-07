@@ -5,7 +5,7 @@ import { readFileSync } from 'fs'
 import path from 'path'
 import { BASE, FETCH_MODES } from '../config'
 import { fetchCache, FETCH_TTL_MS, inflight, refreshFetch, staleRoster, refreshRoster, rosterInflight } from '../resume-cache'
-import { pstr, withCb, shortCode } from '../util'
+import { pstr } from '../util'
 import { wrap } from '../wrap'
 import { guideEntries } from './guide'
 
@@ -31,11 +31,9 @@ resumeRouter.get('/fetch/:id/debug', (req: Request, res: Response) => {
   if (!/^[A-Za-z][A-Za-z0-9_-]{2,64}$/.test(id)) {
     return res.type('text/plain').status(400).send(`unknown resume id: ${id}`)
   }
-  const cbStamp = shortCode()
-  const cb = (u: string) => withCb(u, cbStamp)
   const proto = debugBlock().trim()
   const retry = [`unconfirmed`, `complete`, `job-description`, `done`, `findings`]
-    .map(m => `${cb(`${BASE}/fetch/${id}/${m}`)}`)
+    .map(m => `${BASE}/fetch/${id}/${m}`)
   res.type('text/plain').send(wrap({
     title: `Resume ${id} — debug state`,
     noNext: true,
@@ -79,23 +77,21 @@ resumeRouter.get('/fetch/:id', async (req: Request, res: Response) => {
       .join('\n').trim()
       .replaceAll('{BASE}', BASE).replaceAll('{RESUME}', id)
   } catch { coaching = `Work the ${id} resume: fetch job-description, then unconfirmed, one bullet at a time.` }
-  const cbStamp = shortCode()
-  const cb = (u: string) => withCb(u, cbStamp)
   const indexBody = [coaching, ``,
       `Pick a view — fetch its URL exactly as written:`, ``,
-      ...modes.map(([m, d]) => `${cb(`${BASE}/fetch/${id}/${m}`)}  — ${d}`),
-      `${cb(`${BASE}/print/${id}`)}  — print page setup + layout verdict`,
+      ...modes.map(([m, d]) => `${BASE}/fetch/${id}/${m}  — ${d}`),
+      `${BASE}/print/${id}  — print page setup + layout verdict`,
       ``, `Guidance — doctrine for this loop (fetch any literal):`, ``,
-      ...guideEntries().map(([u, d]) => `${cb(u)}  — ${d}`),
+      ...guideEntries().map(([u, d]) => `${u}  — ${d}`),
       ...(beadUrls.length ? [``, `Deeper context — full beads (fetch any literal):`, ``,
-        `${cb(`${BASE}/beads/${beadUrls.map(u => u.split('/').pop()).join('+')}`)}  — everything at once`,
-        ``, ...beadUrls.map(u => cb(u))] : [])].join('\n')
+        `${BASE}/beads/${beadUrls.map(u => u.split('/').pop()).join('+')}  — everything at once`,
+        ``, ...beadUrls] : [])].join('\n')
   res.type('text/plain').send(wrap({
     title: `Resume ${id} — views`,
     noNext: true,
     body: withDebug(req, indexBody),
     meta: { id },
-    actions: modes.map(([m]) => `GET ${cb(`${BASE}/fetch/${id}/${m}`)}`),
+    actions: modes.map(([m]) => `GET ${BASE}/fetch/${id}/${m}`),
   }))
 })
 
@@ -138,10 +134,6 @@ resumeRouter.get('/fetch/:id/:mode', async (req: Request, res: Response) => {
       inflight.delete(key)
     }
   }
-  const cbStamp = shortCode()
-  // Bust downstream caches: every literal URL in this body gets ?cb=<page-ms>.
-  body = body.replace(/(https:\/\/[^\s)'"<>]+)/g, (u) =>
-    /[?&]cb=/.test(u) ? u : withCb(u, cbStamp))
   body = withDebug(req, body)
   res.type('text/plain').send(wrap({
     title: `Resume ${id} — ${mode}`,
@@ -149,9 +141,9 @@ resumeRouter.get('/fetch/:id/:mode', async (req: Request, res: Response) => {
     body,
     meta: { id },
     actions: [
-      `GET ${withCb(`${BASE}/fetch/${id}/unconfirmed`, cbStamp)}      — pending bullets + workExperience context`,
-      `GET ${withCb(`${BASE}/fetch/${id}/complete`, cbStamp)}         — full markdown with green/orange ledger`,
-      `GET ${withCb(`${BASE}/fetch/${id}/job-description`, cbStamp)}  — posting job bead verbatim`,
+      `GET ${BASE}/fetch/${id}/unconfirmed      — pending bullets + workExperience context`,
+      `GET ${BASE}/fetch/${id}/complete         — full markdown with green/orange ledger`,
+      `GET ${BASE}/fetch/${id}/job-description  — posting job bead verbatim`,
     ],
   }))
 })

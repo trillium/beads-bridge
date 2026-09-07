@@ -4,7 +4,6 @@ import { readFileSync } from 'fs'
 import path from 'path'
 import { BASE } from '../config'
 import { staleRoster, refreshRoster, rosterInflight } from '../resume-cache'
-import { withCb, shortCode } from '../util'
 import { guideEntries } from './guide'
 
 export const resumeBlurbRouter = Router()
@@ -27,19 +26,17 @@ resumeBlurbRouter.get('/resume', async (req: Request, res: Response) => {
     catch { beadUrls = [] }
     finally { rosterInflight.delete(resume) }
   }
-  const cbStamp = shortCode()
-  const cb = (u: string) => withCb(u, cbStamp)
   const blurb = [
     `# Resume working session — ${resume}`,
     ``,
     `Fetch these six pages EXACTLY as written below. Do not modify, shorten,`,
     `or compose these URLs — fetch each literal:`,
     ``,
-    ...urls.map((u, i) => `${i + 1}. ${cb(u)}`),
+    ...urls.map((u, i) => `${i + 1}. ${u}`),
     ``,
     `Guidance doctrine for this loop (fetch any literal when you need it):`,
     ``,
-    ...guideEntries().map(([u, d]) => `${cb(u)}  — ${d}`),
+    ...guideEntries().map(([u, d]) => `${u}  — ${d}`),
     ``,
     `What they are:`,
     `- unconfirmed — pending bullets only, each with its workExperience context (frame + role + siblings). This is what needs work.`,
@@ -58,9 +55,9 @@ resumeBlurbRouter.get('/resume', async (req: Request, res: Response) => {
       `Deeper context — full beads. Fetch any of these literals to query that bead.`,
       `For everything at once, fetch this single literal:`,
       ``,
-      `${cb(`${BASE}/beads/${beadUrls.map(u => u.split('/').pop()).join('+')}`)}`,
+      `${BASE}/beads/${beadUrls.map(u => u.split('/').pop()).join('+')}`,
       ``,
-      ...beadUrls.map(u => cb(u)),
+      ...beadUrls,
     ] : [
       ``,
       `(Bead roster unavailable — ask the user for the bead id, or fetch the complete view.)`,
