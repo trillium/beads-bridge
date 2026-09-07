@@ -54,7 +54,7 @@ ${msg ? `<p><b>${msg}</b></p>` : ``}
 store, title, and labels from the content itself.</p>
 <div id="formwrap">
 <form id="pasteform">
-<textarea id="pastetext" rows="20" cols="70" placeholder="paste the agent block here"></textarea><br><br>
+<textarea id="pastetext" rows="20" cols="70" placeholder="paste the agent block here" autofocus></textarea><br><br>
 <button type="submit" id="savebtn">Save paste</button>
 </form>
 </div>
@@ -67,24 +67,54 @@ document.getElementById('pasteform').addEventListener('submit', function (e) {
   e.preventDefault();
   var btn = document.getElementById('savebtn');
   if (btn.disabled) return;
+  var box = document.getElementById('pastetext');
+  if (!box.value.trim()) {
+    document.getElementById('result').innerHTML = '<p><b>Nothing to save — no bead was recorded.</b> Paste text first.</p>';
+    box.focus();
+    return;
+  }
   btn.disabled = true;
   document.getElementById('formwrap').style.display = 'none';
   document.getElementById('loading').style.display = 'block';
+  var renderItems = function (items) {
+    var open = items.filter(function (i) { return i.open; }).length;
+    var html = '<h3>Inbox (' + open + ' open)</h3><ul>' +
+      (items.map(function (i) {
+        return '<li>' + (i.open ? '○' : '●') + ' <a href="/paste/inbox/' + i.id + '">' + i.id + '</a> — ' +
+          i.title.slice(0, 40) + '</li>';
+      }).join('') || '<li><i>empty</i></li>') + '</ul>';
+    document.getElementById('panel').innerHTML = html;
+  };
   fetch('/paste', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: 'text=' + encodeURIComponent(document.getElementById('pastetext').value)
-  }).then(function () { window.location.reload(); })
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+    body: 'text=' + encodeURIComponent(box.value)
+  }).then(function (r) {
+    if (!r.ok) throw new Error('server returned ' + r.status);
+    return r.json();
+  })
+  .then(function (data) {
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('formwrap').style.display = 'block';
+    btn.disabled = false;
+    var box = document.getElementById('pastetext');
+    box.value = '';
+    box.focus();
+    document.getElementById('result').innerHTML = data.duplicate
+      ? '<p>Duplicate — already saved as <a href="/paste/inbox/' + data.id + '">' + data.id + '</a>.</p>'
+      : '<p>Saved bead <a href="/paste/inbox/' + data.id + '">' + data.id + '</a>.</p>';
+    fetch('/paste/list').then(function (r) { return r.json(); }).then(renderItems);
+  })
   .catch(function (err) {
     document.getElementById('loading').style.display = 'none';
     document.getElementById('formwrap').style.display = 'block';
     btn.disabled = false;
-    document.getElementById('result').innerHTML = '<p><b>Save failed:</b> ' + err + ' — try again.</p>';
+    document.getElementById('result').innerHTML = '<p><b>Save failed — no bead was recorded.</b> ' + err + '. Your text is still in the box; try again.</p>';
   });
 });
 </script>
 </div>
-<div style="width:280px;border-left:1px solid #ccc;padding-left:16px">
+<div id="panel" style="width:280px;border-left:1px solid #ccc;padding-left:16px">
 <h3>Inbox (${items.filter(i => i.open).length} open)</h3>
 <ul>
 ${items.map(i => `<li>${i.open ? '○' : '●'} <a href="/paste/inbox/${i.id}">${i.id}</a> — ${i.title.slice(0, 40)}</li>`).join('\n') || '<li><i>empty</i></li>'}
@@ -135,6 +165,11 @@ pasteRouter.post('/paste', async (req: Request, res: Response) => {
   } catch (e) {
     res.status(500).type('text').send(`paste failed: ${(e as Error).message}`)
   }
+})
+
+// JSON inbox list for live panel refresh.
+pasteRouter.get('/paste/list', async (_req: Request, res: Response) => {
+  res.json(await inboxItems())
 })
 
 // Raw bead text for the integrator agent.
