@@ -30,6 +30,11 @@ const GUIDES: Record<string, { file: string; title: string; blurb: string }> = {
     title: 'Story discovery session brief',
     blurb: 'If investigating stories, read this: project list, method, completion test, output format',
   },
+  'labels': {
+    file: join(CV, '..', '..', 'beads-bridge', 'blurbs', 'label-taxonomy.md'),
+    title: 'Label taxonomy for discoverable beads',
+    blurb: 'How agents apply project:/resume:/story:/verification: labels so the triage agent runs clean',
+  },
   'refine': {
     file: join(CV, '.claude', 'commands', 'evaluate.md'),
     title: 'Refinement rubric (KEEP/REWRITE/CUT verdicts)',
