@@ -52,18 +52,35 @@ const PAGE = (msg: string, items: InboxItem[]) => `<!doctype html><html><body>
 ${msg ? `<p><b>${msg}</b></p>` : ``}
 <p>Paste the block and submit — nothing else to fill in. The integrator tool discovers
 store, title, and labels from the content itself.</p>
-<form method="post" action="/paste" id="pasteform">
-<textarea name="text" rows="20" cols="70" placeholder="paste the agent block here"></textarea><br><br>
+<div id="formwrap">
+<form id="pasteform">
+<textarea id="pastetext" rows="20" cols="70" placeholder="paste the agent block here"></textarea><br><br>
 <button type="submit" id="savebtn">Save paste</button>
-<span id="saving" style="display:none">Saving…</span>
 </form>
+</div>
+<div id="loading" style="display:none">
+<p><b>Saving…</b> creating your bead, one moment.</p>
+</div>
+<div id="result"></div>
 <script>
-document.getElementById('pasteform').addEventListener('submit', function () {
+document.getElementById('pasteform').addEventListener('submit', function (e) {
+  e.preventDefault();
   var btn = document.getElementById('savebtn');
-  if (btn.disabled) return false;
+  if (btn.disabled) return;
   btn.disabled = true;
-  btn.textContent = 'Saving…';
-  document.getElementById('saving').style.display = 'inline';
+  document.getElementById('formwrap').style.display = 'none';
+  document.getElementById('loading').style.display = 'block';
+  fetch('/paste', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'text=' + encodeURIComponent(document.getElementById('pastetext').value)
+  }).then(function () { window.location.reload(); })
+  .catch(function (err) {
+    document.getElementById('loading').style.display = 'none';
+    document.getElementById('formwrap').style.display = 'block';
+    btn.disabled = false;
+    document.getElementById('result').innerHTML = '<p><b>Save failed:</b> ' + err + ' — try again.</p>';
+  });
 });
 </script>
 </div>
