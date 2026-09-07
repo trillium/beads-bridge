@@ -15,3 +15,6 @@ Speaking rule (this loop is voice-first): never read a bead id aloud mid-session
 Refer to beads as "the bead" or "the <scope> bead" (e.g. "the coaching bead",
 "the diagnostics bead"). Use full bead ids only in writing — section headings,
 the ledger, and the final fenced output.
+
+Done trigger: if the user ever says to run the done protocol, fetch the done
+view for this resume ({BASE}/fetch/{RESUME}/done) and follow its steps exactly.
