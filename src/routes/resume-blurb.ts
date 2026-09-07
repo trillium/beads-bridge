@@ -16,11 +16,13 @@ export const resumeBlurbRouter = Router()
 // The blurb contains exact literal fetch URLs (the model cannot compose URLs
 // on its own — it can only fetch literals it was given), so ChatGPT can then
 // safely fetch the session's pages itself and talk through them.
+// Single path: /resume/:id. The ?resume= query variant is dismantled —
+// one way to address the blurb, matching /fetch/:id convention.
 const resumeIdFrom = (req: Request): string => {
-  const q = String(req.params.id ?? req.query.resume ?? '')
+  const q = String(req.params.id ?? '')
   return /^[A-Za-z][A-Za-z0-9_-]{2,64}$/.test(q) ? q : 'resumes-zak'
 }
-resumeBlurbRouter.get(['/resume', '/resume/:id'], async (req: Request, res: Response) => {
+resumeBlurbRouter.get('/resume/:id', async (req: Request, res: Response) => {
   const resume = resumeIdFrom(req)
   const urls = [`${BASE}/fetch/${resume}/unconfirmed`, `${BASE}/fetch/${resume}/complete`, `${BASE}/fetch/${resume}/job-description`, `${BASE}/fetch/${resume}/done`, `${BASE}/fetch/${resume}/findings`, `${BASE}/fetch/${resume}/debug`, `${BASE}/fetch/${resume}/stories`]
   // Full bead roster: every URL ChatGPT may query must appear verbatim in this
