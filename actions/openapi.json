@@ -393,6 +393,36 @@
           }
         }
       }
+    },
+    "/fetch/{resumeId}/done": {
+      "get": {
+        "operationId": "fetch_resume_done",
+        "summary": "Resume done-format: exact output contract for returning agreed changes.",
+        "description": "Machine-readable rules (## {bead-id} sections) plus this session's pending bead ids.",
+        "parameters": [
+          {
+            "name": "resumeId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "resumes-zak"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Plain-text done-format blurb",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

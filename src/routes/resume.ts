@@ -93,7 +93,7 @@ resumeRouter.get('/fetch/:id/:mode', async (req: Request, res: Response) => {
 resumeRouter.get('/resume', async (req: Request, res: Response) => {
   const q = String(req.query.resume ?? '')
   const resume = /^[A-Za-z][A-Za-z0-9_-]{2,64}$/.test(q) ? q : 'resumes-zak'
-  const urls = [`${BASE}/fetch/${resume}/unconfirmed`, `${BASE}/fetch/${resume}/complete`, `${BASE}/fetch/${resume}/job-description`]
+  const urls = [`${BASE}/fetch/${resume}/unconfirmed`, `${BASE}/fetch/${resume}/complete`, `${BASE}/fetch/${resume}/job-description`, `${BASE}/fetch/${resume}/done`]
   // Full bead roster: every URL ChatGPT may query must appear verbatim in this
   // blurb (the model can only fetch literals it was given — it cannot compose them).
   let beadUrls: string[] = []
@@ -106,7 +106,7 @@ resumeRouter.get('/resume', async (req: Request, res: Response) => {
   const blurb = [
     `# Resume working session — ${resume}`,
     ``,
-    `Fetch these three pages EXACTLY as written below. Do not modify, shorten,`,
+    `Fetch these four pages EXACTLY as written below. Do not modify, shorten,`,
     `or compose these URLs — fetch each literal:`,
     ``,
     ...urls.map((u, i) => `${i + 1}. ${u}`),
@@ -115,6 +115,7 @@ resumeRouter.get('/resume', async (req: Request, res: Response) => {
     `- unconfirmed — pending bullets only, each with its workExperience context (frame + role + siblings). This is what needs work.`,
     `- complete — full resume markdown with a green/orange ledger plus a directions block listing the orange items.`,
     `- job-description — the posting job bead verbatim (role, duties, requirements).`,
+    `- done — the exact output format to use when returning agreed changes.`,
     ``,
     `Then talk me through the orange (pending) bullets one at a time by voice.`,
     `When we agree on new wording for a bullet, output it as a markdown section`,
