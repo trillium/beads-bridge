@@ -53,9 +53,11 @@ printRouter.get('/print/:id', async (req: Request, res: Response) => {
   if (!pdf) return res.type('text/plain').status(404).send(`no snapshot PDF found for ${id}`)
   let rep: LayoutReport
   try {
+    // layout-check exits non-zero on defects but still prints valid JSON —
+    // use stdout whenever present, whatever the exit code.
     const { stdout } = await execFileAsync('bun',
       [`${RESUME_DOCX_DIR}/layout-check.ts`, pdf, '--max-pages', '1', '--json'],
-      { encoding: 'utf8', timeout: 120000 })
+      { encoding: 'utf8', timeout: 120000 }).catch((e: { stdout?: string }) => ({ stdout: e.stdout ?? '' }))
     rep = JSON.parse(stdout)
   } catch (e: unknown) {
     const err = e as Error
