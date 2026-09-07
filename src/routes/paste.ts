@@ -52,10 +52,20 @@ const PAGE = (msg: string, items: InboxItem[]) => `<!doctype html><html><body>
 ${msg ? `<p><b>${msg}</b></p>` : ``}
 <p>Paste the block and submit — nothing else to fill in. The integrator tool discovers
 store, title, and labels from the content itself.</p>
-<form method="post" action="/paste">
+<form method="post" action="/paste" id="pasteform">
 <textarea name="text" rows="20" cols="70" placeholder="paste the agent block here"></textarea><br><br>
-<button type="submit">Save paste</button>
+<button type="submit" id="savebtn">Save paste</button>
+<span id="saving" style="display:none">Saving…</span>
 </form>
+<script>
+document.getElementById('pasteform').addEventListener('submit', function () {
+  var btn = document.getElementById('savebtn');
+  if (btn.disabled) return false;
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  document.getElementById('saving').style.display = 'inline';
+});
+</script>
 </div>
 <div style="width:280px;border-left:1px solid #ccc;padding-left:16px">
 <h3>Inbox (${items.filter(i => i.open).length} open)</h3>
