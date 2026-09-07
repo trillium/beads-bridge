@@ -643,6 +643,25 @@
           }
         }
       }
+    },
+    "/guide/discovery": {
+      "get": {
+        "operationId": "guide_discovery",
+        "summary": "Guide: story discovery session brief.",
+        "description": "If investigating stories, read this first.",
+        "responses": {
+          "200": {
+            "description": "Guide markdown",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

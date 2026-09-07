@@ -25,6 +25,11 @@ const GUIDES: Record<string, { file: string; title: string; blurb: string }> = {
     title: 'How to question the user about work/projects',
     blurb: 'Clarifying-question workflow that extracts proof without fabricating',
   },
+  'discovery': {
+    file: join(CV, '..', '..', 'resume-docx', 'docs', 'story-discovery-brief.md'),
+    title: 'Story discovery session brief',
+    blurb: 'If investigating stories, read this: project list, method, completion test, output format',
+  },
   'refine': {
     file: join(CV, '.claude', 'commands', 'evaluate.md'),
     title: 'Refinement rubric (KEEP/REWRITE/CUT verdicts)',

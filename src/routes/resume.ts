@@ -89,6 +89,7 @@ resumeRouter.get('/fetch/:id', async (req: Request, res: Response) => {
       ...['unconfirmed', 'complete', 'findings'].map(m => `${BASE}/fetch/${id}/${m}?fresh=1  — refresh ${m}`),
       `${BASE}/print/${id}  — print page setup + layout verdict`,
       ``, `Guidance — doctrine for this loop (fetch any literal):`, ``,
+      `If investigating stories, read ${cb(`${BASE}/guide/discovery`)}`, ``,
       ...guideEntries().map(([u, d]) => `${cb(u)}  — ${d}`),
       ...(beadUrls.length ? [``, `Deeper context — full beads (fetch any literal):`, ``,
         `${cb(`${BASE}/beads/${beadUrls.map(u => u.split('/').pop()).join('+')}`)}  — everything at once`,
