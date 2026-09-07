@@ -1,9 +1,10 @@
 import express, { Request, Response, NextFunction, RequestHandler } from 'express'
 import { execSync } from 'child_process'
-import { readFileSync, writeFileSync } from 'fs'
-import { randomBytes } from 'crypto'
+import { readFileSync } from 'fs'
 import path from 'path'
-import yaml from 'js-yaml'
+import { PORT, BASE, toolKey, STORES, storeAbout } from './config'
+import { qstr, pstr, cacheTag, bd, storeFromId } from './util'
+import { wrap } from './wrap'
 
 const app = express()
 
@@ -12,127 +13,6 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
   console.log(`${new Date().toISOString()} ${req.method} ${req.originalUrl} UA:${ua}`)
   next()
 })
-const PORT = 3737
-
-// Tool-bridge auth: a bearer token stored outside the repo. First run mints one.
-const TOOLKEY_PATH = `${process.env.HOME}/.config/pai/beads-bridge-toolkey`
-const toolKey = (() => {
-  if (process.env.BEADS_BRIDGE_TOOLKEY) return process.env.BEADS_BRIDGE_TOOLKEY
-  try { return readFileSync(TOOLKEY_PATH, 'utf8').trim() } catch { /* mint below */ }
-  const k = `bk_${randomBytes(24).toString('base64url')}`
-  writeFileSync(TOOLKEY_PATH, k, { mode: 0o600 })
-  return k
-})()
-
-const BASE = 'https://__FUNNEL_HOST__'
-const cacheTag = () => Math.random().toString(36).slice(2, 10)
-
-// Coerce a possibly-array/object query value to a single string.
-const qstr = (v: unknown): string | undefined =>
-  typeof v === 'string' ? v : Array.isArray(v) ? v[0] : undefined
-
-// Express 5 types route params as string | string[]; coerce to one string.
-const pstr = (v: unknown) => (Array.isArray(v) ? (v[0] ?? '') : String(v ?? ''))
-
-// Extract http(s) URLs and bead-ids from bead text → absolute links for research.
-function extractLinks(body: string): string[] {
-  const out = new Set<string>()
-  const urlRe = /https?:\/\/[^\s)\]"'<>]+/g
-  for (const m of body.matchAll(urlRe)) out.add(m[0])
-  const idRe = /\b([a-z][a-z0-9]+-[a-z0-9]{3,})\b/g
-  for (const m of body.matchAll(idRe)) {
-    const id = m[1]
-    if (storeFromId(id)) out.add(`${BASE}/${id}`)
-  }
-  out.delete(BASE)
-  return [...out]
-}
-
-// ── Store registry ────────────────────────────────────────────────────────────
-
-interface StoreEntry {
-  path: string
-  about?: string
-}
-
-interface StoresConfig {
-  stores: Record<string, StoreEntry>
-}
-
-const storesConfig = yaml.load(
-  readFileSync(`${process.env.HOME}/.config/pai/stores.yaml`, 'utf8')
-) as StoresConfig
-
-const STORES = Object.keys(storesConfig.stores)
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function bd(store: string, args: string): string {
-  try {
-    return execSync(`${store} ${args}`, { encoding: 'utf8', timeout: 10000 }).trim()
-  } catch (e: unknown) {
-    const err = e as { stdout?: string; message?: string }
-    return err.stdout?.trim() || err.message || 'error'
-  }
-}
-
-function storeFromId(id: string): string | null {
-  return STORES.find(s => id.startsWith(s + '-')) ?? null
-}
-
-interface WrapOptions {
-  title: string
-  body: string
-  actions?: string[]
-  meta?: { store?: string; id?: string }
-}
-
-function wrap({ title, body, actions = [], meta = {} }: WrapOptions): string {
-  const lines: string[] = []
-  lines.push(`# ${title}`)
-  lines.push('')
-  if (meta.store) lines.push(`STORE: ${meta.store}`)
-  if (meta.id)    lines.push(`BEAD: ${meta.id}`)
-  lines.push('')
-  lines.push(body)
-  if (actions.length) {
-    lines.push('')
-    lines.push('## Next')
-    for (const a of actions) lines.push(`  ${a}`)
-  }
-  if (meta.id && meta.store) {
-    const id = meta.id
-    lines.push('')
-    lines.push('## Paste block — copy the whole block; one paste drives everything')
-    lines.push('```')
-    for (const u of [
-      `GET ${BASE}/${id}                    — view bead + comments (read)`,
-      `GET ${BASE}/${id}/label?add=triaged  — reviewed; hidden from /next`,
-      `GET ${BASE}/${id}/label?add=ready    — decided; downstream acts`,
-      `GET ${BASE}/${id}/approve            — approve; comment + close`,
-      `GET ${BASE}/${id}/reject             — reject; comment, stays open`,
-      `GET ${BASE}/${id}/done               — handled; comment + close`,
-      `GET ${BASE}/${id}/close              — close without comment`,
-      `GET ${BASE}/${id}/comment?text=PUT_YOUR_WORDS_HERE`,
-      `GET ${BASE}/${id}/note?text=PUT_YOUR_WORDS_HERE`,
-    ]) lines.push(u)
-    lines.push('```')
-    lines.push('(If a ?text= URL is rejected by the fetch safety filter, retry the SAME')
-    lines.push(' words using the short form ?t=...; if that fails too, give the URL with')
-    lines.push(' your words filled in to the user to paste verbatim.)')
-    const links = extractLinks(body)
-    if (links.length) {
-      lines.push('')
-      lines.push('## Research links — found in this bead')
-      for (const l of links) lines.push(`  ${l}`)
-    }
-  }
-  lines.push('')
-  lines.push('---')
-  const next = `${BASE}/next?cache=${cacheTag()}`
-  lines.push(`Fetch [the next item](${next}) — exact URL: ${next}`)
-  return lines.join('\n')
-}
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -336,7 +216,7 @@ app.get('/:store', (req: Request, res: Response, next: NextFunction) => {
     ? bd(store, `search "${q}"`)
     : bd(store, 'list')
 
-  const about = storesConfig.stores[store]?.about ?? ''
+  const about = storeAbout(store)
   res.type('text/plain').send(wrap({
     title: `${store} — ${about}`,
     body: raw || '(empty)',
