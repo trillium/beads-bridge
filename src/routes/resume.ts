@@ -80,6 +80,8 @@ resumeRouter.get('/fetch/:id', async (req: Request, res: Response) => {
   const indexBody = [coaching, ``,
       `Pick a view — fetch its URL exactly as written:`, ``,
       ...modes.map(([m, d]) => `${BASE}/fetch/${id}/${m}  — ${d}`),
+      ``, `Refresh literals — same views, forced fresh (fetch if a stamp looks stale):`, ``,
+      ...['unconfirmed', 'complete', 'findings'].map(m => `${BASE}/fetch/${id}/${m}?fresh=1  — refresh ${m}`),
       `${BASE}/print/${id}  — print page setup + layout verdict`,
       ``, `Guidance — doctrine for this loop (fetch any literal):`, ``,
       ...guideEntries().map(([u, d]) => `${u}  — ${d}`),
