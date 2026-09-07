@@ -10,3 +10,8 @@ Never compose URLs — fetch only the literals on this page.
 Placeholders (filled by the server, do not edit the braces):
 - {BASE} — public bridge root, e.g. https://__FUNNEL_HOST__
 - {RESUME} — the resume bead id for this session
+
+Speaking rule (this loop is voice-first): never read a bead id aloud mid-session.
+Refer to beads as "the bead" or "the <scope> bead" (e.g. "the coaching bead",
+"the diagnostics bead"). Use full bead ids only in writing — section headings,
+the ledger, and the final fenced output.
