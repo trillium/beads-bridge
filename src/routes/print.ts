@@ -7,7 +7,7 @@ import { promisify } from 'util'
 import { readdirSync, statSync } from 'fs'
 import { join } from 'path'
 import { BASE, RESUME_DOCX_DIR } from '../config'
-import { pstr, withCb } from '../util'
+import { pstr, withCb, shortCode } from '../util'
 import { wrap } from '../wrap'
 
 export const printRouter = Router()
@@ -46,7 +46,7 @@ printRouter.get('/print/:id', async (req: Request, res: Response) => {
   if (!/^[A-Za-z][A-Za-z0-9_-]{2,64}$/.test(id)) {
     return res.type('text/plain').status(400).send(`unknown resume id: ${id}`)
   }
-  const cbStamp = Date.now()
+  const cbStamp = shortCode()
   const cb = (u: string) => withCb(u, cbStamp)
   const scope = await resumeScope(id)
   const pdf = newestPdf(scope)

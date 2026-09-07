@@ -4,7 +4,7 @@ import { readFileSync } from 'fs'
 import path from 'path'
 import { BASE } from '../config'
 import { staleRoster, refreshRoster, rosterInflight } from '../resume-cache'
-import { withCb } from '../util'
+import { withCb, shortCode } from '../util'
 import { guideEntries } from './guide'
 
 export const resumeBlurbRouter = Router()
@@ -27,7 +27,7 @@ resumeBlurbRouter.get('/resume', async (req: Request, res: Response) => {
     catch { beadUrls = [] }
     finally { rosterInflight.delete(resume) }
   }
-  const cbStamp = Date.now()
+  const cbStamp = shortCode()
   const cb = (u: string) => withCb(u, cbStamp)
   const blurb = [
     `# Resume working session — ${resume}`,

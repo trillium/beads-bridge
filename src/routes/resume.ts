@@ -5,7 +5,7 @@ import { readFileSync } from 'fs'
 import path from 'path'
 import { BASE, FETCH_MODES } from '../config'
 import { fetchCache, FETCH_TTL_MS, inflight, refreshFetch, staleRoster, refreshRoster, rosterInflight } from '../resume-cache'
-import { pstr, withCb } from '../util'
+import { pstr, withCb, shortCode } from '../util'
 import { wrap } from '../wrap'
 import { guideEntries } from './guide'
 
@@ -31,7 +31,7 @@ resumeRouter.get('/fetch/:id/debug', (req: Request, res: Response) => {
   if (!/^[A-Za-z][A-Za-z0-9_-]{2,64}$/.test(id)) {
     return res.type('text/plain').status(400).send(`unknown resume id: ${id}`)
   }
-  const cbStamp = Date.now()
+  const cbStamp = shortCode()
   const cb = (u: string) => withCb(u, cbStamp)
   const proto = debugBlock().trim()
   const retry = [`unconfirmed`, `complete`, `job-description`, `done`, `findings`]
@@ -79,7 +79,7 @@ resumeRouter.get('/fetch/:id', async (req: Request, res: Response) => {
       .join('\n').trim()
       .replaceAll('{BASE}', BASE).replaceAll('{RESUME}', id)
   } catch { coaching = `Work the ${id} resume: fetch job-description, then unconfirmed, one bullet at a time.` }
-  const cbStamp = Date.now()
+  const cbStamp = shortCode()
   const cb = (u: string) => withCb(u, cbStamp)
   const indexBody = [coaching, ``,
       `Pick a view — fetch its URL exactly as written:`, ``,
@@ -138,7 +138,7 @@ resumeRouter.get('/fetch/:id/:mode', async (req: Request, res: Response) => {
       inflight.delete(key)
     }
   }
-  const cbStamp = Date.now()
+  const cbStamp = shortCode()
   // Bust downstream caches: every literal URL in this body gets ?cb=<page-ms>.
   body = body.replace(/(https:\/\/[^\s)'"<>]+)/g, (u) =>
     /[?&]cb=/.test(u) ? u : withCb(u, cbStamp))

@@ -7,7 +7,7 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { BASE } from '../config'
 import { wrap } from '../wrap'
-import { withCb } from '../util'
+import { withCb, shortCode } from '../util'
 
 export const guideRouter = Router()
 
@@ -42,7 +42,7 @@ export const guideEntries = (): [string, string][] =>
 guideRouter.get('/guide', (_req: Request, res: Response) => {
   const lines = Object.entries(GUIDES).map(
     ([name, g]) => `${BASE}/guide/${name}  — ${g.title} (${g.blurb})`)
-  const cbStamp = Date.now()
+  const cbStamp = shortCode()
   res.type('text/plain').send(wrap({
     title: 'Guidance pages',
     noNext: true,
