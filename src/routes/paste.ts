@@ -98,15 +98,31 @@ var doSave = function (auto) {
   btn.disabled = true;
   document.getElementById('formwrap').style.display = 'none';
   document.getElementById('loading').style.display = 'block';
+  var esc = function (s) {
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  };
+  var itemHtml = function (i) {
+    return '<details data-id="' + i.id + '"><summary>' + (i.open ? '○' : '●') + ' ' + i.id +
+      ' — ' + esc(i.title.slice(0, 40)) + '</summary>' +
+      '<div class="peekbody"><i>expanding…</i></div>' +
+      '<div><a href="/paste/inbox/' + i.id + '">open raw</a></div></details>';
+  };
   var renderItems = function (items) {
     var open = items.filter(function (i) { return i.open; }).length;
-    var html = '<h3>Inbox (' + open + ' open)</h3><ul>' +
-      (items.map(function (i) {
-        return '<li>' + (i.open ? '○' : '●') + ' <a href="/paste/inbox/' + i.id + '">' + i.id + '</a> — ' +
-          i.title.slice(0, 40) + '</li>';
-      }).join('') || '<li><i>empty</i></li>') + '</ul>';
-    document.getElementById('panel').innerHTML = html;
+    document.getElementById('panel').innerHTML =
+      '<h3>Inbox (' + open + ' open)</h3>' +
+      (items.map(itemHtml).join('') || '<p><i>empty</i></p>');
   };
+  // Lazy peek: fetch bead text on first expand, cache in the node.
+  document.getElementById('panel').addEventListener('toggle', function (e) {
+    var d = e.target;
+    if (d.tagName !== 'DETAILS' || !d.open || d.dataset.loaded) return;
+    d.dataset.loaded = '1';
+    fetch('/paste/inbox/' + d.dataset.id)
+      .then(function (r) { return r.text(); })
+      .then(function (t) { d.querySelector('.peekbody').innerHTML = '<pre>' + esc(t.slice(0, 2000)) + '</pre>'; })
+      .catch(function (err) { d.querySelector('.peekbody').innerHTML = '<i>peek failed: ' + esc(String(err)) + '</i>'; });
+  }, true);
   fetch('/paste', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
@@ -142,9 +158,7 @@ document.getElementById('pasteform').addEventListener('submit', function (e) {
 </div>
 <div id="panel" style="width:280px;border-left:1px solid #ccc;padding-left:16px">
 <h3>Inbox (${items.filter(i => i.open).length} open)</h3>
-<ul>
-${items.map(i => `<li>${i.open ? '○' : '●'} <a href="/paste/inbox/${i.id}">${i.id}</a> — ${i.title.slice(0, 40)}</li>`).join('\n') || '<li><i>empty</i></li>'}
-</ul>
+${items.map(i => `<details data-id="${i.id}"><summary>${i.open ? '○' : '●'} ${i.id} — ${i.title.slice(0, 40).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</summary><div class="peekbody"><i>expanding…</i></div><div><a href="/paste/inbox/${i.id}">open raw</a></div></details>`).join('\n') || '<p><i>empty</i></p>'}
 </div>
 </div>
 </body></html>`
