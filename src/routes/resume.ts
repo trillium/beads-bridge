@@ -1,6 +1,7 @@
 // Resume voice-loop routes: /fetch/{resumeId}/{mode} + /resume assistance page.
 // MUST be mounted before the /:store and /:id routes (Express matches in order).
 import { Router, Request, Response } from 'express'
+import { execSync } from 'child_process'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { BASE, RESUME_DOCX_DIR, FETCH_MODES } from '../config'
@@ -73,6 +74,14 @@ resumeRouter.get('/resume', (req: Request, res: Response) => {
   const q = String(req.query.resume ?? '')
   const resume = /^[A-Za-z][A-Za-z0-9_-]{2,64}$/.test(q) ? q : 'resumes-zak'
   const urls = [`${BASE}/fetch/${resume}/unconfirmed`, `${BASE}/fetch/${resume}/complete`, `${BASE}/fetch/${resume}/job-description`]
+  // Full bead roster: every URL ChatGPT may query must appear verbatim in this
+  // blurb (the model can only fetch literals it was given — it cannot compose them).
+  let beadUrls: string[] = []
+  try {
+    const raw = execSync(`bun ${RESUME_DOCX_DIR}/bin/fetch.ts ${resume} urls`,
+      { encoding: 'utf8', timeout: 120000 }).trim()
+    beadUrls = raw.split('\n').map(l => l.trim()).filter(Boolean)
+  } catch { beadUrls = [] }
   const blurb = [
     `# Resume working session — ${resume}`,
     ``,
@@ -90,6 +99,15 @@ resumeRouter.get('/resume', (req: Request, res: Response) => {
     `When we agree on new wording for a bullet, output it as a markdown section`,
     `headed exactly ## {bead-id} (for example ## resume_bullets-bqk) with the new`,
     `bead text as the section body. Omit unchanged bullets entirely.`,
+    ...(beadUrls.length ? [
+      ``,
+      `Deeper context — full beads. Fetch any of these literals to query that bead:`,
+      ``,
+      ...beadUrls,
+    ] : [
+      ``,
+      `(Bead roster unavailable — ask the user for the bead id, or fetch the complete view.)`,
+    ]),
   ].join('\n')
   const esc = blurb.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
   res.type('text/html').send(
