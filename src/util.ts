@@ -38,6 +38,15 @@ export function extractLinks(body: string): string[] {
   return [...out]
 }
 
+// Strip a leading YAML frontmatter block (--- ... ---) from a blurb so
+// variable contracts never leak into served pages. No frontmatter → unchanged.
+export function stripFrontmatter(md: string): string {
+  if (!md.startsWith('---')) return md
+  const end = md.indexOf('\n---', 3)
+  if (end === -1) return md
+  return md.slice(end + 4).replace(/^\r?\n/, '')
+}
+
 // Cache buster: every URL we emit carries ?cb=<page-load-ms> so downstream
 // fetchers (ChatGPT) can never serve a stale cached copy. The server ignores
 // it — only `fresh` and `debug` change behavior.
