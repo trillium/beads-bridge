@@ -3,15 +3,16 @@
 // directly. Mounted before readRouter's /:store catchall so /mcp isn't
 // swallowed by a param route.
 import { Router } from 'express'
-import type { Request, Response } from 'express'
-import { createMcpHandler } from 'mcp-handler'
+import { createMcpHandler, withMcpAuth } from 'mcp-handler'
 import { z } from 'zod'
-import { STORES } from '../config'
+import { BASE, STORES } from '../config'
 import { bd, storeFromId } from '../util'
 import { beadText, mapLimit } from '../lib/exec'
 import { bundleIds } from './beads'
 import { runList } from './query/store'
 import { cleanLabel } from './query/params'
+import { mountFetch } from '../lib/express-fetch'
+import { lookupAccess, mcpResource } from '../lib/oauth'
 
 export const mountOrder = -20
 export const mcpRouter = Router()
@@ -185,30 +186,25 @@ const mcpHandler = createMcpHandler((server) => {
   )
 })
 
-// mcp-handler speaks Fetch Request/Response; Express speaks IncomingMessage.
-// Rebuild a Fetch request (body parsers already ran, so re-serialize) and
-// pipe the Fetch response back onto the Express response.
-mcpRouter.all('/mcp', async (req: Request, res: Response) => {
-  try {
-    const host = req.get('host') ?? 'localhost'
-    const proto = req.protocol ?? 'http'
-    const headers = new Headers()
-    for (const h of ['accept', 'content-type', 'mcp-session-id', 'last-event-id', 'mcp-protocol-version', 'authorization']) {
-      const v = req.get(h)
-      if (v) headers.set(h, v)
-    }
-    const init: RequestInit = { method: req.method, headers }
-    if (req.method !== 'GET' && req.method !== 'HEAD' && req.body !== undefined) {
-      init.body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? {})
-      if (!headers.has('content-type')) headers.set('content-type', 'application/json')
-    }
-    const out = await mcpHandler(new Request(`${proto}://${host}${req.originalUrl}`, init))
-    res.status(out.status)
-    out.headers.forEach((v, k) => {
-      if (!['content-length', 'connection', 'transfer-encoding'].includes(k.toLowerCase())) res.setHeader(k, v)
-    })
-    res.send(Buffer.from(await out.arrayBuffer()))
-  } catch {
-    res.status(500).json({ jsonrpc: '2.0', id: null, error: { code: -32603, message: 'Internal server error' } })
-  }
-})
+// Bearer gate: ChatGPT completes OAuth against /oauth/*, then presents the
+// token here. withMcpAuth answers 401/403 with RFC 9728 challenges itself.
+// Unauthenticated callers get discovery instead of tools.
+const authedMcpHandler = withMcpAuth(
+  mcpHandler,
+  (req, bearerToken) => {
+    if (!bearerToken) return undefined
+    const rec = lookupAccess(bearerToken)
+    if (!rec || rec.resource !== mcpResource(BASE)) return undefined
+    return { token: rec.token, clientId: rec.clientId, scopes: rec.scope }
+  },
+  {
+    required: true,
+    resourceMetadataPath: '/.well-known/oauth-protected-resource/mcp',
+    // Origin only: withMcpAuth appends resourceMetadataPath to build the
+    // challenge URL (passing the full resource would double the /mcp path).
+    resourceUrl: BASE,
+  },
+)
+
+// mcp-handler speaks Fetch Request/Response; adapt at the boundary.
+mountFetch(mcpRouter, '/mcp', authedMcpHandler)

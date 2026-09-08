@@ -11,6 +11,7 @@ import { loadRoutes } from './routes/load-routes'
 import { isWebAgent } from './agent-detect'
 import { recordHit } from './routes/activity'
 import { trackAction, shutdownAnalytics } from './lib/analytics'
+import { oauthSetupHint } from './routes/oauth'
 
 const app = express()
 
@@ -39,7 +40,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   const tagged = req as Request & { accessVerdict?: string }
   const ip = (req.ip ?? '').replace(/^::ffff:/, '')
   const ua = req.get('user-agent') ?? ''
-  if (req.path === '/mcp' || req.path.startsWith('/.well-known/')) tagged.accessVerdict = 'ALLOW:mcp'
+  if (req.path === '/mcp' || req.path.startsWith('/.well-known/') || req.path.startsWith('/oauth/')) tagged.accessVerdict = 'ALLOW:mcp'
   else if (TAILNET.test(ip)) tagged.accessVerdict = 'ALLOW:tailnet'
   else if (LOOPBACK.test(req.ip ?? '')) tagged.accessVerdict = 'ALLOW:localhost'
   else if (APPROVED_AGENT_UA.test(ua)) tagged.accessVerdict = 'ALLOW:agent-ua'
@@ -72,6 +73,7 @@ async function start() {
     console.log(`  local:   http://localhost:${PORT}`)
     console.log(`  tailnet: http://${TAILNET_IP}:${PORT}`)
     console.log(`  funnel:  ${BASE} (public; use this in ChatGPT blurbs)`)
+    console.log(`  oauth setup key: ${oauthSetupHint()} (paste into the approval page once)`)
   })
 }
 
