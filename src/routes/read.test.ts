@@ -10,8 +10,9 @@ describe('bundleIds', () => {
   it('drops invalid ids, trims, dedupes', () => {
     assert.deepEqual(bundleIds([' task-9omwr ', 'nope', 'a', 'task-9omwr', 'has space', 'UPPER-xy1']), ['task-9omwr'])
   })
-  it('rejects path-like and child ids', () => {
-    assert.deepEqual(bundleIds(['project-hpm.1', '../x', 'a/b']), [])
+  it('rejects path-like ids but keeps dotted children', () => {
+    assert.deepEqual(bundleIds(['../x', 'a/b']), [])
+    assert.deepEqual(bundleIds(['task-9omwr.1']), ['task-9omwr.1'])
   })
   it('caps at 40', () => {
     const many = Array.from({ length: 60 }, (_, i) => `task-a${String(i).padStart(2, '0')}`)

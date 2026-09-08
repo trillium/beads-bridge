@@ -16,7 +16,8 @@ export const beadsRouter = Router()
 const bundleCache = new Map<string, { at: number; body: string }>()
 const BUNDLE_TTL_MS = 90_000
 const bundleWarming = new Set<string>()
-const BEAD_ID_RE = /^[A-Za-z][A-Za-z0-9_-]{2,64}$/
+// Dotted numeric suffixes are child beads (task-2nwlw.1) — bundleable.
+const BEAD_ID_RE = /^[A-Za-z][A-Za-z0-9_-]{2,64}(\.\d+)?$/
 
 export function bundleIds(raw: string[]): string[] {
   return [...new Set(raw.map((x) => x.trim()).filter(Boolean))]

@@ -64,6 +64,10 @@ describe('storeFromId', () => {
     assert.equal(storeFromId('resumes-zak'), 'resumes')
     assert.equal(storeFromId('task-9omwr'), 'task')
   })
+  it('resolves override prefixes and dotted children', () => {
+    assert.equal(storeFromId('project-u0v'), 'projects')
+    assert.equal(storeFromId('task-2nwlw.1'), 'task')
+  })
   it('returns null for unknown prefixes', () => {
     assert.equal(storeFromId('nope-123'), null)
     assert.equal(storeFromId(''), null)

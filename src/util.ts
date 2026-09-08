@@ -20,7 +20,16 @@ export function bd(store: string, args: string): string {
   }
 }
 
+// Stores whose bead prefix differs from the store name (prefix is set at
+// DB init, not derived) — checked before the generic `<store>-` rule.
+const PREFIX_OVERRIDES: Record<string, string> = {
+  'project-': 'projects',
+}
+
 export function storeFromId(id: string): string | null {
+  for (const [prefix, store] of Object.entries(PREFIX_OVERRIDES)) {
+    if (id.startsWith(prefix) && STORES.includes(store)) return store
+  }
   return STORES.find(s => id.startsWith(s + '-')) ?? null
 }
 
