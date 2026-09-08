@@ -17,6 +17,7 @@ import { writeFeedback } from '../lib/feedback'
 import { editBead } from '../lib/edit'
 import { formatWhoami, loadProfile, serverVersion, updateProfile } from '../lib/whoami'
 import { scratchAppend, scratchClear, scratchRead } from '../lib/scratchpad'
+import { pickStores, gatherCandidates, sampleIndices, formatPicks } from '../lib/random'
 import { mountFetch } from '../lib/express-fetch'
 import { lookupAccess, mcpResource } from '../lib/oauth'
 import { withCompatRequest } from '../lib/mcp-compat'
@@ -380,6 +381,28 @@ const mcpHandler = createMcpHandler((server) => {
       } catch (e) {
         return err(`scratchpad failed: ${e instanceof Error ? e.message : String(e)}`)
       }
+    },
+  )
+
+  // Random pick across the open work queues — something to do or revisit.
+  // Uniform sample; call again to reshuffle. Read-only.
+  server.registerTool(
+    'random',
+    {
+      title: 'Random pick',
+      description: 'Pick random open beads to do or revisit — uniform sample across task, stories, resume_bullets, inbox, workflows. Narrow with store, take up to 5.',
+      inputSchema: z.object({
+        store: z.string().optional().describe('Single store to pick from'),
+        count: z.number().int().min(1).max(5).optional().describe('How many (default 1)'),
+      }),
+    },
+    async ({ store, count }: { store?: string; count?: number }) => {
+      const stores = pickStores(store?.trim() || undefined)
+      if (!Array.isArray(stores)) return err(stores.error)
+      const { candidates, pool } = gatherCandidates(stores)
+      if (!candidates.length) return ok('# random pick\n\nNo open beads in scope — queues are clear.')
+      const picks = sampleIndices(candidates.length, count ?? 1).map((i) => candidates[i])
+      return ok(formatPicks(picks, pool))
     },
   )
 })
