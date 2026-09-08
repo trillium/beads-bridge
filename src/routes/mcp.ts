@@ -12,6 +12,7 @@ import { bundleIds } from './beads'
 import { runList } from './query/store'
 import { cleanLabel, LABEL_RE } from './query/params'
 import { createBead, validateCreateLabels } from '../lib/create'
+import { beadConnections, formatConnections } from '../lib/connections'
 import { mountFetch } from '../lib/express-fetch'
 import { lookupAccess, mcpResource } from '../lib/oauth'
 import { withCompatRequest } from '../lib/mcp-compat'
@@ -227,6 +228,21 @@ const mcpHandler = createMcpHandler((server) => {
       } catch (e) {
         return err(`create failed: ${e instanceof Error ? e.message : String(e)}`)
       }
+    },
+  )
+
+  // One bead's full connection graph: typed deps both ways, hierarchy,
+  // same-label beads, mentioned ids. Replaces four manual steps.
+  server.registerTool(
+    'bead_connections',
+    {
+      title: 'Bead connections',
+      description: 'All beads connected to one bead: dependencies, dependents, children, parent, same project/resume labels, mentioned ids.',
+      inputSchema: z.object({ id: z.string().describe('Bead id, e.g. resumes-zak') }),
+    },
+    async ({ id }: { id: string }) => {
+      const set = await beadConnections(id.trim())
+      return 'error' in set ? err(set.error) : ok(formatConnections(set))
     },
   )
 })
