@@ -3,8 +3,12 @@
   "version": "1.0.0",
   "description": "",
   "main": "index.js",
+  "packageManager": "pnpm@12.3.4",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "bun src/server.ts",
+    "start": "bun src/server.ts",
+    "test": "bun test src/util.test.ts src/wrap.test.ts src/routes/read.test.ts src/routes/sections.test.ts src/routes/entrypoints.test.ts src/routes/debug-state.test.ts",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [],
   "author": "",
@@ -18,7 +22,6 @@
     "@types/express": "^5.0.6",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^26.4.1",
-    "tsx": "^4.23.13",
     "typescript": "^7.0.2"
   }
 }
