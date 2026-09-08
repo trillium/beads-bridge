@@ -3,7 +3,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { join, dirname } from 'path'
 import { randomBytes } from 'crypto'
-import yaml from 'js-yaml'
+import * as yaml from 'js-yaml'
 
 // Minimal .env loader (no dependency): KEY=value per line, # comments.
 // The tailnet hostname/IP live ONLY in .env (gitignored) — never in code.
