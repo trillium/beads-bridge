@@ -10,7 +10,8 @@ import { bd, storeFromId } from '../util'
 import { beadText, mapLimit } from '../lib/exec'
 import { bundleIds } from './beads'
 import { runList } from './query/store'
-import { cleanLabel } from './query/params'
+import { cleanLabel, LABEL_RE } from './query/params'
+import { createBead, validateCreateLabels } from '../lib/create'
 import { mountFetch } from '../lib/express-fetch'
 import { lookupAccess, mcpResource } from '../lib/oauth'
 import { withCompatRequest } from '../lib/mcp-compat'
@@ -183,6 +184,49 @@ const mcpHandler = createMcpHandler((server) => {
       if (add) results.push(bd(store, `label add ${clean} ${add}`))
       if (remove) results.push(bd(store, `label remove ${clean} ${remove}`))
       return ok(results.join('\n'))
+    },
+  )
+
+  // No GET equivalent (the fetcher bridge is read/decide-only): create a
+  // bead. Labels are caller-chosen and validated like query labels — use
+  // project:<slug> to attach to a project, resume:<id> for scope.
+  // See /guide/labels for the taxonomy.
+  server.registerTool(
+    'bead_create',
+    {
+      title: 'Create bead',
+      description: 'Create a new bead in a store. Labels attach it: project:<slug> links to a project, resume:<id> scopes it to a resume.',
+      inputSchema: z.object({
+        store: z.string().describe('Store name, e.g. task, stories, brain'),
+        title: z.string().min(1).max(200).describe('Bead title'),
+        description: z.string().max(4000).optional().describe('Body text'),
+        labels: z.array(z.string()).max(10).optional().describe('Labels, e.g. project:parlay — invalid ones are rejected'),
+        parent: z.string().optional().describe('Parent bead id for hierarchy'),
+      }),
+    },
+    async ({ store, title, description, labels, parent }: {
+      store: string; title: string; description?: string; labels?: string[]; parent?: string
+    }) => {
+      if (!STORES.includes(store)) return err(`unknown store: ${store} (known: ${STORES.join(', ')})`)
+      if (parent?.trim()) {
+        const pstore = storeFromId(parent.trim())
+        if (!pstore) return err(`unknown parent bead id: ${parent}`)
+        if (pstore !== store) return err(`parent lives in ${pstore}, not ${store}`)
+      }
+      const { ok: valid, bad } = validateCreateLabels(labels)
+      if (bad.length) return err(`bad label: ${bad.join(', ')} (match ${LABEL_RE}, max 64 chars)`)
+      try {
+        const { id, detail } = await createBead({
+          store,
+          title,
+          description,
+          labels: valid,
+          parent: parent?.trim() || undefined,
+        })
+        return ok([`# created ${id} (STORE: ${store})`, '', `Labels: ${valid.join(', ') || '(none)'}`, '', detail].join('\n'))
+      } catch (e) {
+        return err(`create failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
     },
   )
 })
