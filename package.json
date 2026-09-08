@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "bun src/server.ts",
     "start": "bun src/server.ts",
-    "test": "bun test src/util.test.ts src/wrap.test.ts src/routes/read.test.ts src/routes/sections.test.ts src/routes/entrypoints.test.ts src/routes/debug-state.test.ts",
+    "test": "bun test src/util.test.ts src/wrap.test.ts src/lib/analytics.test.ts src/routes/read.test.ts src/routes/sections.test.ts src/routes/entrypoints.test.ts src/routes/debug-state.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [],
@@ -19,6 +19,7 @@
     "express": "^5.2.1",
     "js-yaml": "^5.4.1",
     "mcp-handler": "^2.1.1",
+    "posthog-node": "^5.51.7",
     "zod": "^4.5.4"
   },
   "devDependencies": {

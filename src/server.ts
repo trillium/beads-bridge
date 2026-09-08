@@ -10,6 +10,7 @@ import { warmResume } from './resume-cache'
 import { loadRoutes } from './routes/load-routes'
 import { isWebAgent } from './agent-detect'
 import { recordHit } from './routes/activity'
+import { trackAction, shutdownAnalytics } from './lib/analytics'
 
 const app = express()
 
@@ -20,6 +21,10 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     const verdict = (req as Request & { accessVerdict?: string }).accessVerdict ?? 'ALLOW:legacy'
     const ms = Date.now() - start
     try { recordHit(req.method, req.originalUrl, res.statusCode, ms) } catch { /* memory only — never fail a response */ }
+    try {
+      const client = verdict.startsWith('ALLOW:') ? verdict.slice('ALLOW:'.length) : verdict.startsWith('DENY') ? 'denied' : verdict
+      trackAction({ method: req.method, originalUrl: req.originalUrl, status: res.statusCode, ms, client })
+    } catch { /* analytics must never fail a response */ }
     console.log(`${new Date().toISOString()} ${verdict} ${res.statusCode} ${req.method} ${req.originalUrl} ip=${req.ip} ua=${ua} ${ms}ms`)
   })
   next()
@@ -67,6 +72,12 @@ async function start() {
     console.log(`  local:   http://localhost:${PORT}`)
     console.log(`  tailnet: http://${TAILNET_IP}:${PORT}`)
     console.log(`  funnel:  ${BASE} (public; use this in ChatGPT blurbs)`)
+  })
+}
+
+for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+  process.on(sig, () => {
+    void shutdownAnalytics().finally(() => process.exit(0))
   })
 }
 
