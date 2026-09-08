@@ -13,6 +13,7 @@ import { runList } from './query/store'
 import { cleanLabel } from './query/params'
 import { mountFetch } from '../lib/express-fetch'
 import { lookupAccess, mcpResource } from '../lib/oauth'
+import { withCompatRequest } from '../lib/mcp-compat'
 
 export const mountOrder = -20
 export const mcpRouter = Router()
@@ -207,4 +208,6 @@ const authedMcpHandler = withMcpAuth(
 )
 
 // mcp-handler speaks Fetch Request/Response; adapt at the boundary.
-mountFetch(mcpRouter, '/mcp', authedMcpHandler)
+// Sparse 2026 envelopes (ChatGPT) are backfilled first so the SDK's
+// strict envelope validation passes; everything else flows through.
+mountFetch(mcpRouter, '/mcp', (fetchReq) => withCompatRequest(fetchReq).then((r) => authedMcpHandler(r)))
