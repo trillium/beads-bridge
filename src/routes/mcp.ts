@@ -15,6 +15,7 @@ import { createBead, validateCreateLabels } from '../lib/create'
 import { beadConnections, formatConnections } from '../lib/connections'
 import { writeFeedback } from '../lib/feedback'
 import { editBead } from '../lib/edit'
+import { formatWhoami, loadProfile, serverVersion, updateProfile } from '../lib/whoami'
 import { mountFetch } from '../lib/express-fetch'
 import { lookupAccess, mcpResource } from '../lib/oauth'
 import { withCompatRequest } from '../lib/mcp-compat'
@@ -295,6 +296,61 @@ const mcpHandler = createMcpHandler((server) => {
       }
     },
   )
+
+  // Agent orientation: server identity plus the caller's own auth context.
+  // Token values are never echoed — only client id, scopes, and expiry.
+  server.registerTool(
+    'whoami',
+    {
+      title: 'Who am I here',
+      description: 'Your identity on this bridge: the server, your OAuth client id and scopes, the operator profile, and what you can do.',
+      inputSchema: z.object({}),
+    },
+    async (
+      _args: Record<string, never>,
+      ctx?: { http?: { authInfo?: { token: string; clientId: string; scopes: string[] } } },
+    ) => {
+      const auth = ctx?.http?.authInfo
+      const rec = auth?.token ? lookupAccess(auth.token) : null
+      return ok(formatWhoami({
+        server: 'beads-bridge',
+        version: serverVersion(),
+        base: BASE,
+        auth: auth
+          ? {
+            clientId: auth.clientId,
+            scopes: auth.scopes ?? [],
+            expiresAt: rec?.expiresAt,
+            audience: rec?.resource,
+          }
+          : undefined,
+        operator: loadProfile(),
+        stores: STORES,
+      }))
+    },
+  )
+
+  // Operator profile editing for whoami (merge; empty string clears).
+  server.registerTool(
+    'identity_update',
+    {
+      title: 'Update operator identity',
+      description: 'Set operator profile fields shown by whoami: name, role, timezone, notes.',
+      inputSchema: z.object({
+        name: z.string().max(500).optional(),
+        role: z.string().max(500).optional(),
+        timezone: z.string().max(500).optional(),
+        notes: z.string().max(500).optional(),
+      }),
+    },
+    async (patch: { name?: string; role?: string; timezone?: string; notes?: string }) => {
+      const { profile, bad } = updateProfile(patch as Record<string, unknown>)
+      if (bad.length) return err(`unknown identity fields: ${bad.join(', ')} (want name, role, timezone, notes)`)
+      const lines = Object.entries(profile).map(([k, v]) => `${k}: ${v}`)
+      return ok(['# operator identity updated', '', ...(lines.length ? lines : ['(empty)'])].join('\n'))
+    },
+  )
+
 })
 
 // Bearer gate: ChatGPT completes OAuth against /oauth/*, then presents the
