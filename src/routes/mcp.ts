@@ -14,6 +14,7 @@ import { cleanLabel, LABEL_RE } from './query/params'
 import { createBead, validateCreateLabels } from '../lib/create'
 import { beadConnections, formatConnections } from '../lib/connections'
 import { writeFeedback } from '../lib/feedback'
+import { editBead } from '../lib/edit'
 import { mountFetch } from '../lib/express-fetch'
 import { lookupAccess, mcpResource } from '../lib/oauth'
 import { withCompatRequest } from '../lib/mcp-compat'
@@ -243,6 +244,31 @@ const mcpHandler = createMcpHandler((server) => {
     async ({ id }: { id: string }) => {
       const set = await beadConnections(id.trim())
       return 'error' in set ? err(set.error) : ok(formatConnections(set))
+    },
+  )
+
+  // Revise an existing bead's title and/or description (scriptable update).
+  server.registerTool(
+    'bead_edit',
+    {
+      title: 'Edit bead',
+      description: 'Revise a bead\'s title and/or description. Give at least one.',
+      inputSchema: z.object({
+        id: z.string().describe('Bead id'),
+        title: z.string().min(1).max(200).optional().describe('New title'),
+        description: z.string().max(4000).optional().describe('New description'),
+      }),
+    },
+    async ({ id, title, description }: { id: string; title?: string; description?: string }) => {
+      const clean = id.trim()
+      const store = storeFromId(clean)
+      if (!store) return err(`unknown bead id: ${id}`)
+      try {
+        const { detail } = await editBead({ store, id: clean, title, description })
+        return ok([`# updated ${clean} (STORE: ${store})`, '', detail].join('\n'))
+      } catch (e) {
+        return err(`edit failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
     },
   )
 
