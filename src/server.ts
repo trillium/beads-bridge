@@ -22,6 +22,13 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     const verdict = (req as Request & { accessVerdict?: string }).accessVerdict ?? 'ALLOW:legacy'
     const ms = Date.now() - start
     try { recordHit(req.method, req.originalUrl, res.statusCode, ms) } catch { /* memory only — never fail a response */ }
+    // Failing /mcp payloads (no auth headers) — MCP_DEBUG=1 only, for
+    // diagnosing connector interop without a debugger attached.
+    if (process.env.MCP_DEBUG && req.path === '/mcp' && res.statusCode >= 400) {
+      try {
+        console.log(`mcp-debug ${res.statusCode} ct=${req.get('content-type') ?? '-'} accept=${req.get('accept') ?? '-'} body=${JSON.stringify(req.body).slice(0, 800)}`)
+      } catch { /* never fail a response */ }
+    }
     try {
       const client = verdict.startsWith('ALLOW:') ? verdict.slice('ALLOW:'.length) : verdict.startsWith('DENY') ? 'denied' : verdict
       trackAction({ method: req.method, originalUrl: req.originalUrl, status: res.statusCode, ms, client })
