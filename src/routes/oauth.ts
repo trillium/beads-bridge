@@ -127,9 +127,10 @@ oauthRouter.post('/oauth/register', (req: Request, res: Response) => {
 
 // ── Approval UI ──────────────────────────────────────────────────────────────
 
-function approvePage(tx: string, clientLabel: string, redirectHost: string, scope: string[], needsKey: boolean): string {
+function approvePage(tx: string, clientLabel: string, redirectHost: string, scope: string[], needsKey: boolean, error?: string): string {
   return `<!doctype html><html><head><meta charset="utf8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Approve beads-bridge</title></head><body style="font-family:system-ui;max-width:40rem;margin:3rem auto;padding:0 1rem">` +
     `<h1>Approve beads-bridge access?</h1>` +
+    (error ? `<p style="color:#a00"><b>${esc(error)}</b> — try again, this page still works.</p>` : '') +
     `<p><b>${esc(clientLabel)}</b> wants full bead access (scope: ${esc(scope.join(' ') || 'mcp')}). Tokens it receives can read, comment, and decide on beads.</p>` +
     `<p>After approval you are sent back to <b>${esc(redirectHost)}</b>. ChatGPT keeps a token until you revoke it (delete <code>~/.config/pai/beads-bridge-oauth.json</code> on the bridge host).</p>` +
     `<form method="post" action="/oauth/authorize">` +
@@ -197,18 +198,23 @@ oauthRouter.post('/oauth/authorize', (req: Request, res: Response) => {
   pruneTx()
   const body = (req.body ?? {}) as Record<string, unknown>
   const str = (v: unknown): string => (typeof v === 'string' ? v : '')
+  // Failed attempts must NOT burn the transaction: a wrong setup key
+  // re-renders the form so the user can just retry.
   const tx = pending.get(str(body.tx))
   if (!tx) return void res.type('text/plain').status(400).send('approval expired — restart from ChatGPT')
-  pending.delete(str(body.tx))
   if (str(body.decision) !== 'approve') {
+    pending.delete(str(body.tx))
     return void redirectError(res, tx.redirectUri, 'access_denied', tx.state, 'user denied the request')
   }
-  if (!checkApproval(approvalCookie(req))) {
-    if (!setupKeyMatches(str(body.setup_key))) {
-      return void res.type('text/plain').status(403).send('wrong setup key — find it with: cat ' + setupKeyPath())
-    }
-    setApprovalCookie(res, grantApproval())
+  if (!checkApproval(approvalCookie(req)) && !setupKeyMatches(str(body.setup_key))) {
+    let redirectHost = tx.redirectUri
+    try { redirectHost = new URL(tx.redirectUri).host } catch { /* keep raw */ }
+    return void res.type('text/html').status(403).send(
+      approvePage(str(body.tx), tx.clientName ?? tx.clientId, redirectHost, tx.scope, true, 'wrong setup key'),
+    )
   }
+  if (!checkApproval(approvalCookie(req))) setApprovalCookie(res, grantApproval())
+  pending.delete(str(body.tx))
   const { code } = mintCode({
     clientId: tx.clientId,
     redirectUri: tx.redirectUri,
