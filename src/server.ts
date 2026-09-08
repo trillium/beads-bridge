@@ -9,6 +9,7 @@ import { wrap } from './wrap'
 import { warmResume } from './resume-cache'
 import { loadRoutes } from './routes/load-routes'
 import { isWebAgent } from './agent-detect'
+import { recordHit } from './routes/activity'
 
 const app = express()
 
@@ -17,7 +18,9 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   res.on('finish', () => {
     const ua = req.get('user-agent')?.slice(0, 80) ?? '-'
     const verdict = (req as Request & { accessVerdict?: string }).accessVerdict ?? 'ALLOW:legacy'
-    console.log(`${new Date().toISOString()} ${verdict} ${res.statusCode} ${req.method} ${req.originalUrl} ip=${req.ip} ua=${ua} ${Date.now() - start}ms`)
+    const ms = Date.now() - start
+    try { recordHit(req.method, req.originalUrl, res.statusCode, ms) } catch { /* memory only — never fail a response */ }
+    console.log(`${new Date().toISOString()} ${verdict} ${res.statusCode} ${req.method} ${req.originalUrl} ip=${req.ip} ua=${ua} ${ms}ms`)
   })
   next()
 })
