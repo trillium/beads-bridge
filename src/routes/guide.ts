@@ -1,7 +1,8 @@
 // Guidance routes: agent-level resume doctrine as fetchable literals.
 // The voice loop references these by URL (ChatGPT can only fetch literals
 // it was given), so the doctrine ships as pages, not pasted prose.
-import { Router, Request, Response } from 'express'
+import { Router } from 'express'
+import type { Request, Response } from 'express'
 import { readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'

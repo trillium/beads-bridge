@@ -1,6 +1,7 @@
 // Paste routes: user pastes agent output blocks into a form (or POSTs JSON),
 // each paste lands as a bead in the chosen store for later AI integration.
-import { Router, Request, Response } from 'express'
+import { Router } from 'express'
+import type { Request, Response } from 'express'
 import { execFile } from 'child_process'
 import { createHash } from 'crypto'
 import { readFileSync, writeFileSync, mkdirSync } from 'fs'

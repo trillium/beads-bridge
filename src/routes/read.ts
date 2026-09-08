@@ -1,6 +1,7 @@
 // Read routes: /, /help, /next, /:store, /:id. Mounted after the resume
 // router so literal /fetch/* and /resume win over the param routes.
-import { Router, Request, Response, NextFunction } from 'express'
+import { Router } from 'express'
+import type { Request, Response, NextFunction } from 'express'
 import { execSync } from 'child_process'
 import { readFileSync } from 'fs'
 import path from 'path'

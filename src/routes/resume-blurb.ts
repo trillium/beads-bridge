@@ -1,5 +1,6 @@
 // /resume — user-facing assistance page (copyable ChatGPT blurb).
-import { Router, Request, Response } from 'express'
+import { Router } from 'express'
+import type { Request, Response } from 'express'
 import { readFileSync } from 'fs'
 import path from 'path'
 import { BASE } from '../config'

@@ -1,4 +1,5 @@
-import express, { Request, Response, NextFunction, RequestHandler } from 'express'
+import express from 'express'
+import type { Request, Response, NextFunction, RequestHandler } from 'express'
 import { execSync } from 'child_process'
 import { readFileSync } from 'fs'
 import path from 'path'

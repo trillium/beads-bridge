@@ -1,6 +1,7 @@
 // Tool bridge — structured JSON writes for GPT Actions/Assistants
 // (bearer-token auth, idempotent mutations, closed label vocabulary).
-import express, { Router, Request, Response, NextFunction, RequestHandler } from 'express'
+import express, { Router } from 'express'
+import type { Request, Response, NextFunction, RequestHandler } from 'express'
 import { execSync } from 'child_process'
 import { readFileSync } from 'fs'
 import path from 'path'

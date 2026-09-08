@@ -1,6 +1,7 @@
 // Bead decision verbs over GET (pass web-fetch safety filters):
 // comment, note, approve, reject, done, close, label.
-import { Router, Request, Response, NextFunction } from 'express'
+import { Router } from 'express'
+import type { Request, Response, NextFunction } from 'express'
 import { BASE } from '../config'
 import { qstr, pstr, bd, storeFromId } from '../util'
 import { wrap } from '../wrap'

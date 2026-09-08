@@ -12,7 +12,7 @@ import { join, basename } from 'path'
 export async function loadRoutes(app: Express): Promise<void> {
   const dir = __dirname
   const files = readdirSync(dir)
-    .filter((f) => f.endsWith('.ts') && f !== 'load-routes.ts')
+    .filter((f) => f.endsWith('.ts') && f !== 'load-routes.ts' && !f.endsWith('.test.ts'))
     .sort()
   const mounted: { file: string; order: number; routers: Router[] }[] = []
   for (const file of files) {

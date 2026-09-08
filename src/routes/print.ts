@@ -1,7 +1,8 @@
 // GET /print/{resumeId} — print page setup + layout verdict for a resume.
 // Separate route (not a fetch mode): paper, margins, budget, defects, and
 // what to do about them. Backed by layout-check.ts on the newest snapshot PDF.
-import { Router, Request, Response } from 'express'
+import { Router } from 'express'
+import type { Request, Response } from 'express'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { readdirSync, statSync } from 'fs'

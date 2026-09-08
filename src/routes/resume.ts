@@ -1,6 +1,7 @@
 // Resume voice-loop routes: /fetch/{resumeId}/{mode} + /resume assistance page.
 // MUST be mounted before the /:store and /:id routes (Express matches in order).
-import { Router, Request, Response } from 'express'
+import { Router } from 'express'
+import type { Request, Response } from 'express'
 import { readFileSync } from 'fs'
 import path from 'path'
 import { BASE, FETCH_MODES } from '../config'

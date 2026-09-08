@@ -1,5 +1,6 @@
 // Probe harness — empirically test web-fetch fidelity (T1–T9, A–F, S1).
-import { Router, Request, Response } from 'express'
+import { Router } from 'express'
+import type { Request, Response } from 'express'
 import { BASE } from '../config'
 import { cacheTag } from '../util'
 

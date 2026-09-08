@@ -1,6 +1,7 @@
 // Experiment routes: one endpoint, instances as query params, to test whether
 // a live session honors per-instance fetch gating across turns.
-import { Router, Request, Response } from 'express'
+import { Router } from 'express'
+import type { Request, Response } from 'express'
 import { execFile } from 'child_process'
 import { BASE } from '../config'
 
