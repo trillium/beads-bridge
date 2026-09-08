@@ -16,6 +16,7 @@ import { beadConnections, formatConnections } from '../lib/connections'
 import { writeFeedback } from '../lib/feedback'
 import { editBead } from '../lib/edit'
 import { formatWhoami, loadProfile, serverVersion, updateProfile } from '../lib/whoami'
+import { scratchAppend, scratchClear, scratchRead } from '../lib/scratchpad'
 import { mountFetch } from '../lib/express-fetch'
 import { lookupAccess, mcpResource } from '../lib/oauth'
 import { withCompatRequest } from '../lib/mcp-compat'
@@ -351,6 +352,36 @@ const mcpHandler = createMcpHandler((server) => {
     },
   )
 
+  // Scratchpad: timestamped scratch entries in one flat file.
+  server.registerTool(
+    'scratchpad',
+    {
+      title: 'Scratchpad',
+      description: 'Append, read back, or clear timestamped scratch notes. Working memory across turns.',
+      inputSchema: z.object({
+        action: z.enum(['append', 'read', 'clear']),
+        text: z.string().max(2000).optional().describe('Entry text for append'),
+        limit: z.number().int().min(1).max(100).optional().describe('Entries back for read (default 20)'),
+      }),
+    },
+    async ({ action, text, limit }: { action: 'append' | 'read' | 'clear'; text?: string; limit?: number }) => {
+      try {
+        if (action === 'append') {
+          if (!text?.trim()) return err('append needs text')
+          const { entries } = scratchAppend(text)
+          return ok(`Noted (entry ${entries}).`)
+        }
+        if (action === 'clear') {
+          const { cleared } = scratchClear()
+          return ok(`Scratchpad cleared (${cleared} ${cleared === 1 ? 'entry' : 'entries'} removed).`)
+        }
+        const { entries, total } = scratchRead(limit ?? 20)
+        return ok([`# scratchpad (${total} ${total === 1 ? 'entry' : 'entries'})`, '', ...entries].join('\n'))
+      } catch (e) {
+        return err(`scratchpad failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    },
+  )
 })
 
 // Bearer gate: ChatGPT completes OAuth against /oauth/*, then presents the
