@@ -86,8 +86,7 @@ const mcpHandler = createMcpHandler((server) => {
       if (!STORES.includes(store)) return err(`unknown store: ${store} (known: ${STORES.join(', ')})`)
       const all = (label ?? []).map(cleanLabel).filter((x): x is string => !!x).slice(0, 10)
       const orLabels = (any ?? []).map(cleanLabel).filter((x): x is string => !!x).slice(0, 10)
-      if (!all.length && !orLabels.length && !title)
-        return err('empty query — give at least one of: label, any, title')
+      // No filters means list-all (up to limit) — store discovery is a feature.
       const { rows, error } = runList(store, all, orLabels, {
         exclude: (exclude ?? []).map(cleanLabel).filter((x): x is string => !!x).slice(0, 10),
         title: title?.slice(0, 120),

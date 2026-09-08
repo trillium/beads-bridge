@@ -36,18 +36,7 @@ singleQueryRouter.get('/q/:store', (req: Request, res: Response, next: NextFunct
       meta: { store },
     }))
   }
-  if (!all.length && !any.length && !strParam(req.query.title) && !strParam(req.query.desc) && !strParam(req.query.notes)) {
-    const msg = `# empty query\n\nGive at least one: ?label=a&label=b (AND), ?any=c (OR), ?title=.., ?desc=.., ?notes=..\nExample: ${BASE}/q/resume_bullets?label=project:parlay&limit=20`
-    return res.type('text/plain').status(400).send(wrap({
-      title: `Query failed — ${store}`,
-      noNext: true,
-      body: msg + failureDebug(
-        [{ label: `GET ${selfUrl}`, ok: false, detail: 'empty query — no label, title, desc, or notes given' }],
-        [selfUrl, `${BASE}/${store}`],
-      ),
-      meta: { store },
-    }))
-  }
+  // No filters means list-all (up to limit) — store discovery is a feature.
   const limit = Math.min(50, Math.max(1, parseInt(strParam(req.query.limit) ?? '20', 10) || 20))
   const status = strParam(req.query.status)?.slice(0, 64)
   const { rows, error } = runList(store, all, any, {
