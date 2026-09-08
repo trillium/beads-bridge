@@ -8,7 +8,7 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { BASE, fillTokens } from '../config'
 import { wrap } from '../wrap'
-import { withCb, shortCode } from '../util'
+import { withCb, shortCode, stripFrontmatter } from '../util'
 
 export const guideRouter = Router()
 
@@ -42,6 +42,16 @@ const GUIDES: Record<string, { file: string; title: string; blurb: string }> = {
     title: 'Refinement rubric (KEEP/REWRITE/CUT verdicts)',
     blurb: 'X-Y-Z compliance, validity check, AI-slop flags, grandma test',
   },
+  'followups': {
+    file: join(BBRIDGE, 'blurbs', 'guide-followups.md'),
+    title: 'Follow-up refresh bank (voice-driven mid-session refresh)',
+    blurb: 'Bank once, then "query follow-up N" — live resolved/newly-stale deltas without copy/paste',
+  },
+  'durable-object': {
+    file: join(BBRIDGE, 'blurbs', 'action-object.md'),
+    title: 'Durable object format (fileable action objects)',
+    blurb: '10 required sections; Source names its exact bead or the object is not fileable',
+  },
 }
 
 export const guideUrls = () =>
@@ -72,7 +82,7 @@ guideRouter.get('/guide/:name', (req: Request, res: Response) => {
       `unknown guide: ${name} (want ${Object.keys(GUIDES).join('|')})`)
   }
   try {
-    const body = fillTokens(readFileSync(g.file, 'utf8'))
+    const body = stripFrontmatter(fillTokens(readFileSync(g.file, 'utf8')))
     res.type('text/plain').send(wrap({
       title: `Guide: ${g.title}`,
       noNext: true,
