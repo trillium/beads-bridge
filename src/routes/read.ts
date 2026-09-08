@@ -6,7 +6,8 @@ import { execSync } from 'child_process'
 import { readFileSync } from 'fs'
 import path from 'path'
 import { BASE, STORES, storeAbout, fillTokens } from '../config'
-import { qstr, pstr, bd, storeFromId, cacheTag } from '../util'
+import { qstr, pstr, bd, storeFromId, cacheTag, stripFrontmatter } from '../util'
+import { readSection } from './sections'
 import { wrap } from '../wrap'
 import { isWebAgent } from '../agent-detect'
 
@@ -23,6 +24,7 @@ readRouter.get('/', (req: Request, res: Response) => {
   try {
     const prompt = fillTokens(readFileSync(path.join(__dirname, '..', '..', 'prompt.md'), 'utf8'))
       .replace('<server-issued-tag>', cacheTag())
+      .replace('__DURABLE_OBJECT_FORMAT__', durableObjectFormat())
     res.type('text/markdown').send(prompt)
   } catch {
     res.type('text/plain').send('# Beads Bridge\n\nMissing prompt.md. See /help for the action reference.')
@@ -78,6 +80,7 @@ readRouter.get('/help', (_req: Request, res: Response) => {
     'using the short form `?t=...`. If that is rejected too, do not block on it: record the',
     'decision with the no-payload verb (approve/reject/done) and state the reasoning in chat.',
   ]
+  lines.push('', ...readSection('durable-emit').split('\n'))
   res.type('text/plain').send(lines.join('\n'))
 })
 

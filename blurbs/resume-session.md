@@ -1,6 +1,15 @@
+---
+vars:
+  RESUME: string         # resume bead id, e.g. resumes-zak
+  COUNT: integer         # number of page literals in URLS
+  URLS: numbered-list    # fetch literals, numbered from 1
+  REFRESH: numbered-list # forced-fresh re-fetch literals, numbered after URLS
+  GUIDES: text           # guidance doctrine link lines
+  ROSTER: text           # deeper-context bead literals + everything-at-once bundle
+---
 # Resume working session — {{RESUME}}
 
-Fetch these seven pages EXACTLY as written below. Do not modify, shorten,
+Fetch these {{COUNT}} pages EXACTLY as written below. Do not modify, shorten,
 or compose these URLs — fetch each literal:
 
 {{URLS}}
@@ -19,7 +28,13 @@ What they are:
 - job-description — the posting job bead verbatim (role, duties, requirements).
 - done — the exact output format to use when returning agreed changes.
 - findings — open verification findings; check these FIRST before bullet work.
-- debug — if ANY fetch fails, go here immediately and follow the debug state directions.
+- stories — story records: the evidence layer beneath bullets.
+- scope-refinement — project scope refinement: everything backing this resume for the job description, JD first, no labels needed. Start here for promote/demote work — resolve its stale set before bullet decisions.
+- followups — mid-session refresh bank: say "query follow-up N" for live newly-resolved / newly-stale deltas.
+- last-turn — previous turn: requests the last agent made plus resolves provided since.
+- debug — failed fetches drop into debug themselves with a prefilled block; if a page itself won't load, go here and follow the directions.
+
+{{DURABLE_EMIT}}
 
 Then talk me through the orange (pending) bullets one at a time by voice.
 When we agree on new wording for a bullet, output it as a markdown section

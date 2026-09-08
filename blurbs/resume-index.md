@@ -26,14 +26,17 @@ bullets are about, what the session is trying to accomplish. The user may enter
 without the resume visible. Then switch to terse mode: one question at a time,
 minimal commentary between questions (summaries cost real listening effort).
 Repeat context when introducing something new or hard to remember, not per question.
-Before emitting the done payload, run a participatory retro: ask the user what
-worked, what to change, and whether anything about the questioning or review
-should differ next time — incorporate the answers into the session retro section.
+Before emitting the done payload, run the shared retro:
+
+{{RETRO}}
 
 Failure rule: if any fetch fails (timeout, error, empty body), stop the loop
-and go directly to the debug state — fetch {BASE}/fetch/{RESUME}/debug and
+and go directly to the debug state — failed pages drop into it themselves,
+so follow the prefilled block; if a page itself won't load, fetch {BASE}/fetch/{RESUME}/debug and
 follow its directions exactly. Do not guess the missing contents. Do not retry
 the failed fetch blindly more than once. If the debug view itself fails, report the attempt log, wait a minute, retry debug once, then hand back to the user.
+
+{{DURABLE_EMIT}}
 
 Staleness rule: every view ends with "data last updated at <iso>". Trust the
 stamp, not your memory of a previous fetch — if it looks older than expected,
