@@ -13,6 +13,7 @@ import { runList } from './query/store'
 import { cleanLabel, LABEL_RE } from './query/params'
 import { createBead, validateCreateLabels } from '../lib/create'
 import { beadConnections, formatConnections } from '../lib/connections'
+import { writeFeedback } from '../lib/feedback'
 import { mountFetch } from '../lib/express-fetch'
 import { lookupAccess, mcpResource } from '../lib/oauth'
 import { withCompatRequest } from '../lib/mcp-compat'
@@ -243,6 +244,30 @@ const mcpHandler = createMcpHandler((server) => {
     async ({ id }: { id: string }) => {
       const set = await beadConnections(id.trim())
       return 'error' in set ? err(set.error) : ok(formatConnections(set))
+    },
+  )
+
+  // Flat-file feedback: free text plus query/time context in frontmatter.
+  // Writes under ~/data/feedback (FEEDBACK_DIR overrides) — never the repo.
+  server.registerTool(
+    'bead_feedback',
+    {
+      title: 'Submit feedback',
+      description: 'File feedback about a bead, a query, or the bridge itself. Say what happened, what you expected, and paste the query that prompted it.',
+      inputSchema: z.object({
+        text: z.string().min(1).max(4000).describe('The feedback itself'),
+        kind: z.string().max(40).optional().describe('Rough kind: bug, confusion, praise, request, note'),
+        bead: z.string().optional().describe('Bead id this is about, if any'),
+        query: z.string().max(500).optional().describe('The query or action that prompted this'),
+      }),
+    },
+    async ({ text, kind, bead, query }: { text: string; kind?: string; bead?: string; query?: string }) => {
+      try {
+        const { filename } = writeFeedback({ text, kind, bead, query })
+        return ok(`Feedback filed as ${filename}`)
+      } catch (e) {
+        return err(`feedback failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
     },
   )
 })
