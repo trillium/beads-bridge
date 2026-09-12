@@ -22,17 +22,19 @@ import { mountFetch } from '../lib/express-fetch'
 import { lookupAccess, mcpResource } from '../lib/oauth'
 import { withCompatRequest } from '../lib/mcp-compat'
 import { captureEntry, formatFlow, formatProjectList, formatResolve, formatVerify, listProjectsScoped, requestDispatch, resolveProject, runFlow, upsertTask, verifyWork } from '../lib/relay'
+import { formatRelayStatus, relayStatus, withRelayStatus } from '../lib/relay-status'
 
 export const mountOrder = -20
 export const mcpRouter = Router()
 
 const text = (t: string) => ({ type: 'text' as const, text: t })
-const ok = (t: string) => ({ content: [text(t)] })
-const err = (t: string) => ({ content: [text(t)], isError: true as const })
+const ok = (t: string, bare = false) => ({ content: [text(bare ? t : withRelayStatus(t))] })
+const err = (t: string, bare = false) => ({ content: [text(bare ? t : withRelayStatus(t))], isError: true as const })
 
 async function showBead(id: string): Promise<string> {
   const store = storeFromId(id)
   if (!store) return `unknown bead id: ${id}`
+  relayStatus.markVerified(id.trim())
   const [body, comments] = await Promise.all([
     beadText(store, ['show', id]),
     beadText(store, ['comments', id]),
@@ -116,6 +118,7 @@ const mcpHandler = createMcpHandler((server) => {
       const store = storeFromId(id.trim())
       if (!store) return err(`unknown bead id: ${id}`)
       if (!t.trim()) return err('Missing text.')
+      relayStatus.touch({ id: id.trim(), kind: 'note', title: t.trim().slice(0, 120) })
       return ok(bd(store, `comment ${id.trim()} "${t.replace(/"/g, '\\"')}"`))
     },
   )
@@ -131,6 +134,7 @@ const mcpHandler = createMcpHandler((server) => {
       const store = storeFromId(id.trim())
       if (!store) return err(`unknown bead id: ${id}`)
       if (!t.trim()) return err('Missing text.')
+      relayStatus.touch({ id: id.trim(), kind: 'note', title: t.trim().slice(0, 120) })
       return ok(bd(store, `note ${id.trim()} "${t.replace(/"/g, '\\"')}"`))
     },
   )
@@ -154,17 +158,21 @@ const mcpHandler = createMcpHandler((server) => {
       if (decision === 'approve') {
         const out = bd(store, `comment ${clean} "Approved via beads-bridge ${ts}"`)
         bd(store, `close ${clean}`)
+        relayStatus.markDone(clean) ?? relayStatus.touch({ id: clean, kind: 'completion', title: `Approved + closed ${clean}`, state: 'done' })
         return ok(`Approved + closed ${clean}\n${out}`)
       }
       if (decision === 'reject') {
         const out = bd(store, `comment ${clean} "Rejected via beads-bridge ${ts}"`)
+        relayStatus.touch({ id: clean, kind: 'note', title: `Rejected ${clean} — needs human`, state: 'waiting' })
         return ok(`Rejected ${clean}\n${out}`)
       }
       if (decision === 'done') {
         const out = bd(store, `comment ${clean} "Handled via beads-bridge ${ts}"`)
         bd(store, `close ${clean}`)
+        relayStatus.markDone(clean) ?? relayStatus.touch({ id: clean, kind: 'completion', title: `Handled + closed ${clean}`, state: 'done' })
         return ok(`Handled + closed ${clean}\n${out}`)
       }
+      relayStatus.markDone(clean) ?? relayStatus.touch({ id: clean, kind: 'completion', title: `Closed ${clean}`, state: 'done' })
       return ok(`Closed ${clean}\n${bd(store, `close ${clean}`)}`)
     },
   )
@@ -189,6 +197,7 @@ const mcpHandler = createMcpHandler((server) => {
       const results: string[] = []
       if (add) results.push(bd(store, `label add ${clean} ${add}`))
       if (remove) results.push(bd(store, `label remove ${clean} ${remove}`))
+      relayStatus.touch({ id: clean, kind: 'note', title: `labels updated ${clean}` })
       return ok(results.join('\n'))
     },
   )
@@ -229,8 +238,10 @@ const mcpHandler = createMcpHandler((server) => {
           labels: valid,
           parent: parent?.trim() || undefined,
         })
+        relayStatus.touch({ id, kind: 'task', title })
         return ok([`# created ${id} (STORE: ${store})`, '', `Labels: ${valid.join(', ') || '(none)'}`, '', detail].join('\n'))
       } catch (e) {
+        relayStatus.touch({ id: `new:${store}`, kind: 'failure', title: `create failed in ${store}: ${title}`, state: 'failed' })
         return err(`create failed: ${e instanceof Error ? e.message : String(e)}`)
       }
     },
@@ -246,6 +257,7 @@ const mcpHandler = createMcpHandler((server) => {
       inputSchema: z.object({ id: z.string().describe('Bead id, e.g. resumes-zak') }),
     },
     async ({ id }: { id: string }) => {
+      relayStatus.markVerified(id.trim())
       const set = await beadConnections(id.trim())
       return 'error' in set ? err(set.error) : ok(formatConnections(set))
     },
@@ -269,8 +281,10 @@ const mcpHandler = createMcpHandler((server) => {
       if (!store) return err(`unknown bead id: ${id}`)
       try {
         const { detail } = await editBead({ store, id: clean, title, description })
+        relayStatus.touch({ id: clean, kind: 'note', title: title ?? `edited ${clean}` })
         return ok([`# updated ${clean} (STORE: ${store})`, '', detail].join('\n'))
       } catch (e) {
+        relayStatus.touch({ id: clean, kind: 'failure', title: `edit failed ${clean}`, state: 'failed' })
         return err(`edit failed: ${e instanceof Error ? e.message : String(e)}`)
       }
     },
@@ -408,6 +422,7 @@ const mcpHandler = createMcpHandler((server) => {
   )
 
   server.registerTool(
+<<<<<<< HEAD
     'relay_resolve_project',
     {
       title: 'Resolve project',
@@ -462,6 +477,7 @@ const mcpHandler = createMcpHandler((server) => {
     async ({ text, kind, project, store }: { text: string; kind: 'observation' | 'idea' | 'friction' | 'correction' | 'knowledge'; project?: string; store?: string }) => {
       try {
         const r = await captureEntry({ text, kind, project, store })
+        relayStatus.touch({ id: r.id, kind: 'task', title: text.slice(0, 120) })
         return ok([`# captured ${r.id} (STORE: ${r.store})`, ``, r.slug ? `Project: ${r.slug}${r.promoted ? ' (promoted backlog → foreground)' : ''}` : `Project: (none)`, ``, r.detail].join('\n'))
       } catch (e) {
         return err(`capture failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -485,6 +501,7 @@ const mcpHandler = createMcpHandler((server) => {
     async ({ title, description, project, labels, allow_update }: { title: string; description?: string; project?: string; labels?: string[]; allow_update?: boolean }) => {
       try {
         const r = await upsertTask({ title, description, project, labels, allowUpdate: allow_update ?? true })
+        relayStatus.touch({ id: r.id, kind: 'task', title })
         return ok([`# ${r.mode} ${r.id} (STORE: task)`, ``, r.slug ? `Project: ${r.slug}${r.promoted ? ' (promoted backlog → foreground)' : ''}` : `Project: (none)`, ``, r.detail].join('\n'))
       } catch (e) {
         return err(`upsert failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -508,6 +525,7 @@ const mcpHandler = createMcpHandler((server) => {
     async ({ instruction, task_id, task_title, project, target }: { instruction: string; task_id?: string; task_title?: string; project?: string; target?: string }) => {
       try {
         const r = await requestDispatch({ instruction, taskId: task_id, taskTitle: task_title, project, target })
+        relayStatus.touch({ id: r.id, kind: 'dispatch', title: instruction.slice(0, 120), state: 'waiting' })
         return ok([`# dispatch requested ${r.id} (STORE: task)`, ``, r.taskRef ? `Task: ${r.taskRef}` : `Task: (none attached)`, r.slug ? `Project: ${r.slug}` : `Project: (none)`, ``, `Status: requested — not executed. An external agent must claim it.`, ``, r.detail].join('\n'))
       } catch (e) {
         return err(`dispatch failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -528,6 +546,8 @@ const mcpHandler = createMcpHandler((server) => {
     async ({ query, store }: { query: string; store?: string }) => {
       try {
         const r = await verifyWork(query, store?.trim() || undefined)
+        if (r.found) for (const h of r.hits) relayStatus.markVerified(h.id) ?? relayStatus.touch({ id: h.id, kind: 'verify', title: h.title, state: 'done' })
+        else relayStatus.touch({ id: query.trim().slice(0, 80), kind: 'verify', title: query.trim().slice(0, 120), needsVerify: true })
         return ok(formatVerify(r.found, r.hits, r.detail))
       } catch (e) {
         return err(`verify failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -551,10 +571,32 @@ const mcpHandler = createMcpHandler((server) => {
     },
     async ({ instruction, task_title, task_description, project_hint, dispatch_instruction, dry_run }: { instruction: string; task_title: string; task_description?: string; project_hint?: string; dispatch_instruction?: string; dry_run?: boolean }) => {
       try {
-        return ok(formatFlow(await runFlow({ instruction, taskTitle: task_title, taskDescription: task_description, projectHint: project_hint, dispatchInstruction: dispatch_instruction, dryRun: dry_run ?? false })))
+        const r = await runFlow({ instruction, taskTitle: task_title, taskDescription: task_description, projectHint: project_hint, dispatchInstruction: dispatch_instruction, dryRun: dry_run ?? false })
+        if (r.taskId) relayStatus.touch({ id: r.taskId, kind: 'task', title: task_title })
+        if (r.dispatchId) relayStatus.touch({ id: r.dispatchId, kind: 'dispatch', title: `dispatch for ${r.taskId ?? task_title}`, state: 'waiting' })
+        return ok(formatFlow(r))
       } catch (e) {
         return err(`flow failed: ${e instanceof Error ? e.message : String(e)}`)
       }
+    },
+  )
+
+  server.registerTool(
+    'relay_status',
+    {
+      title: 'Relay status',
+      description: 'Ephemeral relay-status projection: recently touched tasks, dispatches, verifications, failures, completions with last_touched_at and state. Beads stores stay authoritative. Followup lines name the next read to make in the same turn when something is stale, failed, or needs verification.',
+      inputSchema: z.object({
+        mark_verified: z.string().optional().describe('Bead id just re-read — clears its follow-up'),
+        pin: z.string().optional().describe('Bead id to pin (exempt from age-out)'),
+        unpin: z.string().optional().describe('Bead id to unpin'),
+      }),
+    },
+    async ({ mark_verified, pin, unpin }: { mark_verified?: string; pin?: string; unpin?: string }) => {
+      if (mark_verified?.trim()) relayStatus.markVerified(mark_verified.trim())
+      if (pin?.trim()) relayStatus.pin(pin.trim(), true)
+      if (unpin?.trim()) relayStatus.pin(unpin.trim(), false)
+      return ok(formatRelayStatus(), true)
     },
   )
 })
