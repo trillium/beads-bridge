@@ -422,7 +422,6 @@ const mcpHandler = createMcpHandler((server) => {
   )
 
   server.registerTool(
-<<<<<<< HEAD
     'relay_resolve_project',
     {
       title: 'Resolve project',
