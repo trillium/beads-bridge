@@ -23,6 +23,9 @@ import { lookupAccess, mcpResource } from '../lib/oauth'
 import { withCompatRequest } from '../lib/mcp-compat'
 import { captureEntry, formatFlow, formatProjectList, formatResolve, formatVerify, listProjectsScoped, requestDispatch, resolveProject, runFlow, upsertTask, verifyWork } from '../lib/relay'
 import { formatRelayStatus, relayStatus, withRelayStatus } from '../lib/relay-status'
+import { relayCatchup } from '../lib/catchup'
+import { attentionNext } from '../lib/attention'
+import { inspectRead, inspectReadMany, inspectSearch, inspectTree } from '../lib/inspect'
 
 export const mountOrder = -20
 export const mcpRouter = Router()
@@ -576,6 +579,76 @@ const mcpHandler = createMcpHandler((server) => {
         return ok(formatFlow(r))
       } catch (e) {
         return err(`flow failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    },
+  )
+
+  server.registerTool(
+    'relay_catchup',
+    {
+      title: 'Relay catchup',
+      description: 'Reconstruct recently-relevant work: re-reads every recently-touched bead live from the authoritative stores. Ephemeral awareness rebuilds here; stores stay authoritative. Same-turn chaining: follow the followup lines.',
+      inputSchema: z.object({
+        limit: z.number().int().min(1).max(8).optional().describe('Max touched items to re-read (default 8)'),
+      }),
+    },
+    async ({ limit }: { limit?: number }) => {
+      try {
+        return ok(await relayCatchup(limit ?? 8))
+      } catch (e) {
+        return err(`catchup failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    },
+  )
+
+  server.registerTool(
+    'relay_attention_next',
+    {
+      title: 'Smallest next action',
+      description: 'One smallest useful next action when stuck: failed writes first, then unverified touches, stale items, waiting dispatches, else the live thread. Read-only; names the exact tool call to make.',
+      inputSchema: z.object({}),
+    },
+    async (_args: Record<string, never>) => {
+      try {
+        return ok(await attentionNext())
+      } catch (e) {
+        return err(`attention failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    },
+  )
+
+  server.registerTool(
+    'relay_inspect',
+    {
+      title: 'Inspect Bridge source',
+      description: 'Read-only self-inspection of the Beads Bridge implementation: tree, literal search, bounded single read, bounded read-many. Never modifies or executes. Chunks capped near 16KB; logs, locks, minified, and generated files are excluded.',
+      inputSchema: z.object({
+        action: z.enum(['tree', 'search', 'read', 'read_many']).describe('tree | search | read | read_many'),
+        path: z.string().max(200).optional().describe('Repo-relative path for tree/read (default .)'),
+        pattern: z.string().max(200).optional().describe('Literal search text for search'),
+        paths: z.array(z.string().max(200)).max(5).optional().describe('Files for read_many (max 5)'),
+        offset: z.number().int().min(1).optional().describe('First line for read (default 1)'),
+        limit: z.number().int().min(1).max(300).optional().describe('Lines/entries cap'),
+      }),
+    },
+    async ({ action, path, pattern, paths, offset, limit }: {
+      action: 'tree' | 'search' | 'read' | 'read_many'; path?: string; pattern?: string;
+      paths?: string[]; offset?: number; limit?: number
+    }) => {
+      try {
+        if (action === 'tree') return ok(inspectTree(path ?? '.', 3, limit ?? 200))
+        if (action === 'search') {
+          if (!pattern?.trim()) return err('search needs pattern')
+          return ok(inspectSearch(pattern, path ?? '.', limit ?? 30))
+        }
+        if (action === 'read') {
+          if (!path?.trim()) return err('read needs path')
+          return ok(inspectRead(path, offset ?? 1, limit ?? 120))
+        }
+        if (!paths?.length) return err('read_many needs paths')
+        return ok(inspectReadMany(paths))
+      } catch (e) {
+        return err(`inspect failed: ${e instanceof Error ? e.message : String(e)}`)
       }
     },
   )
