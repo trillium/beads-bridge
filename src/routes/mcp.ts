@@ -21,6 +21,7 @@ import { pickStores, gatherCandidates, sampleIndices, formatPicks } from '../lib
 import { mountFetch } from '../lib/express-fetch'
 import { lookupAccess, mcpResource } from '../lib/oauth'
 import { withCompatRequest } from '../lib/mcp-compat'
+import { captureEntry, formatFlow, formatProjectList, formatResolve, formatVerify, listProjectsScoped, requestDispatch, resolveProject, runFlow, upsertTask, verifyWork } from '../lib/relay'
 
 export const mountOrder = -20
 export const mcpRouter = Router()
@@ -403,6 +404,157 @@ const mcpHandler = createMcpHandler((server) => {
       if (!candidates.length) return ok('# random pick\n\nNo open beads in scope — queues are clear.')
       const picks = sampleIndices(candidates.length, count ?? 1).map((i) => candidates[i])
       return ok(formatPicks(picks, pool))
+    },
+  )
+
+  server.registerTool(
+    'relay_resolve_project',
+    {
+      title: 'Resolve project',
+      description: 'Resolve natural language against foreground/backlog projects. Resolve before creating or routing work. Backlog matches are explicitly flagged. Mentioning a backlog project does not promote it.',
+      inputSchema: z.object({
+        text: z.string().min(1).max(500).describe('Natural-language work description'),
+        limit: z.number().int().min(1).max(10).optional().describe('Max candidates (default 5)'),
+      }),
+    },
+    async ({ text, limit }: { text: string; limit?: number }) => {
+      try {
+        return ok(formatResolve(await resolveProject(text, limit ?? 5)))
+      } catch (e) {
+        return err(`resolve failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    },
+  )
+
+  server.registerTool(
+    'relay_list_projects',
+    {
+      title: 'List projects',
+      description: 'Inspect foreground projects or search the full backlog. Backlog hits are explicitly marked. Foreground starts empty; projects leave backlog through the promotion workflow.',
+      inputSchema: z.object({
+        scope: z.enum(['foreground', 'backlog', 'all']).optional().describe('Scope (default all)'),
+        query: z.string().max(120).optional().describe('Title/slug search text'),
+        limit: z.number().int().min(1).max(50).optional().describe('Max rows (default 20)'),
+      }),
+    },
+    async ({ scope, query, limit }: { scope?: 'foreground' | 'backlog' | 'all'; query?: string; limit?: number }) => {
+      try {
+        const s = scope ?? 'all'
+        return ok(formatProjectList(await listProjectsScoped(s, query, limit ?? 20), s))
+      } catch (e) {
+        return err(`list failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    },
+  )
+
+  server.registerTool(
+    'relay_capture',
+    {
+      title: 'Capture to project',
+      description: 'Persist an observation, idea, friction, correction, or knowledge into the routed store with the project label. Creating a bead for a backlog project promotes it to foreground. The relay never executes work.',
+      inputSchema: z.object({
+        text: z.string().min(1).max(4000).describe('The observation/idea/friction/correction/knowledge'),
+        kind: z.enum(['observation', 'idea', 'friction', 'correction', 'knowledge']),
+        project: z.string().max(120).optional().describe('Project id, slug, or name'),
+        store: z.string().max(40).optional().describe('Store override (default routes by kind)'),
+      }),
+    },
+    async ({ text, kind, project, store }: { text: string; kind: 'observation' | 'idea' | 'friction' | 'correction' | 'knowledge'; project?: string; store?: string }) => {
+      try {
+        const r = await captureEntry({ text, kind, project, store })
+        return ok([`# captured ${r.id} (STORE: ${r.store})`, ``, r.slug ? `Project: ${r.slug}${r.promoted ? ' (promoted backlog → foreground)' : ''}` : `Project: (none)`, ``, r.detail].join('\n'))
+      } catch (e) {
+        return err(`capture failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    },
+  )
+
+  server.registerTool(
+    'relay_upsert_task',
+    {
+      title: 'Create or update task',
+      description: 'Create a task, or update the duplicate when one already exists. Duplicate detection runs before every create. Updating a task for a backlog project promotes it to foreground.',
+      inputSchema: z.object({
+        title: z.string().min(1).max(200).describe('Task title'),
+        description: z.string().max(4000).optional().describe('Task body'),
+        project: z.string().max(120).optional().describe('Project id, slug, or name'),
+        labels: z.array(z.string()).max(10).optional().describe('Extra labels'),
+        allow_update: z.boolean().optional().describe('Update duplicate instead of creating (default true)'),
+      }),
+    },
+    async ({ title, description, project, labels, allow_update }: { title: string; description?: string; project?: string; labels?: string[]; allow_update?: boolean }) => {
+      try {
+        const r = await upsertTask({ title, description, project, labels, allowUpdate: allow_update ?? true })
+        return ok([`# ${r.mode} ${r.id} (STORE: task)`, ``, r.slug ? `Project: ${r.slug}${r.promoted ? ' (promoted backlog → foreground)' : ''}` : `Project: (none)`, ``, r.detail].join('\n'))
+      } catch (e) {
+        return err(`upsert failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    },
+  )
+
+  server.registerTool(
+    'relay_dispatch_request',
+    {
+      title: 'Request dispatch',
+      description: 'Request external execution of a task without executing it. Writes a structured dispatch request bead for an external agent to claim. The relay never executes work itself.',
+      inputSchema: z.object({
+        instruction: z.string().min(1).max(4000).describe('What the external agent should do'),
+        task_id: z.string().max(80).optional().describe('Existing task bead id'),
+        task_title: z.string().max(200).optional().describe('Task title to attach to'),
+        project: z.string().max(120).optional().describe('Project id, slug, or name'),
+        target: z.string().max(200).optional().describe('Target agent or queue'),
+      }),
+    },
+    async ({ instruction, task_id, task_title, project, target }: { instruction: string; task_id?: string; task_title?: string; project?: string; target?: string }) => {
+      try {
+        const r = await requestDispatch({ instruction, taskId: task_id, taskTitle: task_title, project, target })
+        return ok([`# dispatch requested ${r.id} (STORE: task)`, ``, r.taskRef ? `Task: ${r.taskRef}` : `Task: (none attached)`, r.slug ? `Project: ${r.slug}` : `Project: (none)`, ``, `Status: requested — not executed. An external agent must claim it.`, ``, r.detail].join('\n'))
+      } catch (e) {
+        return err(`dispatch failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    },
+  )
+
+  server.registerTool(
+    'relay_verify',
+    {
+      title: 'Verify prior work',
+      description: 'Locate prior work by bead id or text and report persistence and current state, polled live from the authoritative durable stores.',
+      inputSchema: z.object({
+        query: z.string().min(1).max(500).describe('Bead id or search text'),
+        store: z.string().max(40).optional().describe('Single store to check'),
+      }),
+    },
+    async ({ query, store }: { query: string; store?: string }) => {
+      try {
+        const r = await verifyWork(query, store?.trim() || undefined)
+        return ok(formatVerify(r.found, r.hits, r.detail))
+      } catch (e) {
+        return err(`verify failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    },
+  )
+
+  server.registerTool(
+    'relay_flow',
+    {
+      title: 'Relay flow',
+      description: 'Atomic resolve → create/update-task → request-dispatch → promote flow. Steps persist coherently or the result clearly reports partial failure with what landed and what did not. Dry-run checks duplicates without writing.',
+      inputSchema: z.object({
+        instruction: z.string().min(1).max(2000).describe('Overall human intent for step reporting'),
+        task_title: z.string().min(1).max(200).describe('Task title to create or update'),
+        task_description: z.string().max(4000).optional().describe('Task body'),
+        project_hint: z.string().max(120).optional().describe('Project id, slug, or name'),
+        dispatch_instruction: z.string().max(4000).optional().describe('Dispatch instruction (skips dispatch when omitted)'),
+        dry_run: z.boolean().optional().describe('Resolve and duplicate-check only (default false)'),
+      }),
+    },
+    async ({ instruction, task_title, task_description, project_hint, dispatch_instruction, dry_run }: { instruction: string; task_title: string; task_description?: string; project_hint?: string; dispatch_instruction?: string; dry_run?: boolean }) => {
+      try {
+        return ok(formatFlow(await runFlow({ instruction, taskTitle: task_title, taskDescription: task_description, projectHint: project_hint, dispatchInstruction: dispatch_instruction, dryRun: dry_run ?? false })))
+      } catch (e) {
+        return err(`flow failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
     },
   )
 })

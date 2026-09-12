@@ -99,7 +99,7 @@ export function formatWhoami(info: WhoamiInfo): string {
   lines.push(
     ``,
     `stores: ${info.stores.length} queryable (${info.stores.join(', ')})`,
-    `you can: read (show, bundle, query, connections), write (comment, note, label, decision, create, feedback)`,
+    `you can: read (show, bundle, query, connections), write (comment, note, label, decision, create, feedback), relay (resolve/list projects, capture, upsert task, dispatch request, verify, flow)`,
     `tool catalog: your tools/list snapshot — this server re-serves it fresh every request`,
   )
   return lines.join('\n')
