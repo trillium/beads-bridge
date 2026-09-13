@@ -3,7 +3,18 @@
 // (Importing batch pulls STORES from config, so run with FUNNEL_BASE set.)
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { formatBatch, runBatch, validateBatch, type BatchFns } from './batch'
+import {
+  buildCrossStoreEdgeText,
+  canonicalEdgeType,
+  crossStoreEdgePresent,
+  formatBatch,
+  isKnownEdgeType,
+  runBatch,
+  validateBatch,
+  XSTORE_EDGE_MARKER,
+  type BatchFns,
+} from './batch'
+import { extractLinks } from '../util'
 import type { CreateInput } from './create'
 
 interface Fake extends BatchFns {
@@ -137,11 +148,24 @@ describe('validateBatch', () => {
       /unknown store/,
     )
   })
-  it('rejects cross-store edges', () => {
+  it('rejects cross-store parent (hierarchy stays in one store)', () => {
     assert.throws(
-      () => validateBatch({ beads: [{ name: 'a', store: 'task', title: 'A' }, { name: 'b', store: 'brain', title: 'B', depends_on: ['a'] }] }),
-      /stay in one store/,
+      () => validateBatch({ beads: [{ name: 'a', store: 'task', title: 'A' }, { name: 'b', store: 'brain', title: 'B', parent: 'a' }] }),
+      /parent.*stays in one store/,
     )
+  })
+  it('allows cross-store depends_on and relations', () => {
+    const { beads, relations } = validateBatch({
+      beads: [
+        { name: 'a', store: 'task', title: 'A' },
+        { name: 'b', store: 'brain', title: 'B', depends_on: ['a'] },
+      ],
+      relations: [{ from: 'b', to: 'a', type: 'related' }],
+    })
+    assert.equal(beads.length, 2)
+    assert.equal(relations.length, 1)
+    assert.equal(relations[0].store, 'brain')
+    assert.equal(relations[0].type, 'related')
   })
   it('rejects bad relation types', () => {
     assert.throws(
@@ -149,7 +173,99 @@ describe('validateBatch', () => {
       /bad type/,
     )
   })
+  it('accepts Brain cross-store vocabulary and normalizes aliases', () => {
+    assert.ok(isKnownEdgeType('derived-from'))
+    assert.ok(isKnownEdgeType('recorded-in'))
+    assert.ok(!isKnownEdgeType('implements'))
+    assert.deepEqual(canonicalEdgeType('source'), { requested: 'source', canonical: 'discovered-from' })
+    assert.deepEqual(canonicalEdgeType('provenance'), { requested: 'provenance', canonical: 'discovered-from' })
+    assert.deepEqual(canonicalEdgeType('derived-from'), { requested: 'derived-from', canonical: 'caused-by' })
+    assert.deepEqual(canonicalEdgeType('destination'), { requested: 'destination', canonical: 'relates-to' })
+    assert.deepEqual(canonicalEdgeType('recorded-in'), { requested: 'recorded-in', canonical: 'relates-to' })
+    assert.deepEqual(canonicalEdgeType('related'), { requested: 'related', canonical: 'related' })
+    assert.deepEqual(canonicalEdgeType('supersedes'), { requested: 'supersedes', canonical: 'supersedes' })
+    const { relations } = validateBatch({
+      beads: [{ name: 'a', store: 'task', title: 'A' }],
+      relations: [{ from: 'a', to: 'a', type: 'derived-from' }],
+    })
+    assert.equal(relations[0].requested, 'derived-from')
+    assert.equal(relations[0].type, 'caused-by')
+  })
   it('rejects empty batches', () => {
     assert.throws(() => validateBatch({ beads: [] }), /empty/)
+  })
+})
+
+describe('cross-store mention-links', () => {
+  it('edge text carries the marker plus both bare ids', () => {
+    const text = buildCrossStoreEdgeText('task-t1ab', 'brain-hs3l', 'derived-from', 'brain')
+    assert.ok(text.includes(XSTORE_EDGE_MARKER))
+    assert.ok(text.includes('task-t1ab') && text.includes('brain-hs3l'))
+    assert.ok(text.includes('derived-from'))
+    assert.ok(crossStoreEdgePresent(`noise\n${text}\nnoise`, 'brain-hs3l'))
+    assert.ok(!crossStoreEdgePresent('unrelated comments', 'brain-hs3l'))
+  })
+  it('edge text is traversable: extractLinks finds the foreign id', () => {
+    const text = buildCrossStoreEdgeText('task-t1ab', 'brain-hs3l', 'related', 'brain')
+    assert.ok(extractLinks(text).some((l) => l.endsWith('/brain-hs3l')))
+  })
+  it('wires cross-store deps/relations verbatim and flags xstore receipts', async () => {
+    const f = fake()
+    const r = await runBatch({
+      beads: [
+        { name: 'a', store: 'task', title: 'A' },
+        { name: 'b', store: 'brain', title: 'B', depends_on: ['task-zzz99'] },
+      ],
+      relations: [{ from: 'b', to: 'a', type: 'derived-from' }],
+    }, f)
+    assert.equal(r.complete, true)
+    // depends_on keeps the default blocks edge; the relation keeps the
+    // requested Brain vocabulary verbatim on the cross-store leg.
+    const dep = r.edges.find((e) => e.type === 'blocks')!
+    const rel = r.edges.find((e) => e.type === 'derived-from')!
+    assert.ok(dep.xstore && rel.xstore)
+    assert.ok(r.edges.every((e) => e.ok && e.verified))
+    // Fake saw the resolved canonical ids on both legs.
+    assert.ok(f.edges.some((e) => e.store === 'brain' && e.from === 'brain-t2' && e.to === 'task-zzz99'))
+    assert.ok(f.edges.some((e) => e.store === 'brain' && e.from === 'brain-t2' && e.to === 'task-t1' && e.type === 'derived-from'))
+    const text = formatBatch(r)
+    assert.ok(text.includes('# batch — complete'))
+    assert.ok(text.includes('cross-store mention-link'))
+  })
+  it('normalizes aliases on same-store legs and notes it', async () => {
+    const f = fake()
+    const r = await runBatch({
+      beads: [{ name: 'a', store: 'task', title: 'A' }],
+      relations: [{ from: 'a', to: 'a', type: 'source' }],
+    }, f)
+    assert.equal(r.complete, true)
+    assert.equal(r.edges[0].type, 'discovered-from')
+    assert.equal(r.edges[0].xstore, false)
+    assert.ok(r.edges[0].detail.includes('requested "source" stored as "discovered-from"'))
+    assert.deepEqual(f.edges, [{ store: 'task', from: 'task-t1', to: 'task-t1', type: 'discovered-from' }])
+  })
+  it('cross-store edge failure is an explicit partial failure, never silent', async () => {
+    const f = fake()
+    f.addEdge = async (store: string, from: string, to: string) => {
+      if (to === 'task-zzz99') throw new Error('mention write failed: store unavailable')
+      f.edges.push({ store, from, to })
+      return `linked ${from} -> ${to}`
+    }
+    const r = await runBatch({
+      beads: [
+        { name: 'a', store: 'task', title: 'A' },
+        { name: 'b', store: 'brain', title: 'B' },
+      ],
+      relations: [{ from: 'b', to: 'task-zzz99', type: 'supersedes' }],
+    }, f)
+    assert.equal(r.complete, false)
+    assert.equal(r.edges.length, 1)
+    assert.equal(r.edges[0].ok, false)
+    assert.equal(r.edges[0].xstore, true)
+    assert.deepEqual(r.failures.map((x) => x.target), ['edge b→task-zzz99'])
+    assert.ok(r.failures[0].error.includes('mention write failed'))
+    const text = formatBatch(r)
+    assert.ok(text.includes('# batch — partial failure'))
+    assert.ok(text.includes('FAILED'))
   })
 })

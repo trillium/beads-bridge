@@ -308,7 +308,7 @@ const mcpHandler = createMcpHandler((server) => {
     'bead_batch_create',
     {
       title: 'Create bead graph',
-      description: `Create a whole bead graph atomically (max ${MAX_BATCH_BEADS} beads): named intra-batch refs, parent/child, dependencies, typed relations (${(DEP_TYPES as readonly string[]).join('|')}). Refs must point to earlier beads; edges stay in one store.`,
+      description: `Create a whole bead graph atomically (max ${MAX_BATCH_BEADS} beads): named intra-batch refs, parent/child, dependencies, typed relations (${(DEP_TYPES as readonly string[]).join('|')} plus cross-store Brain vocabulary: source|provenance|derived-from|destination|recorded-in). Refs must point to earlier beads; parent stays in one store, deps/relations may span stores (cross-store legs land as typed mention-links, verified + traversable).`,
       inputSchema: z.object({
         beads: z.array(z.object({
           name: z.string().min(1).max(64).describe('Intra-batch name, e.g. root — later beads refer to it'),
@@ -316,14 +316,14 @@ const mcpHandler = createMcpHandler((server) => {
           title: z.string().min(1).max(200).describe('Bead title'),
           description: z.string().max(4000).optional().describe('Body text'),
           labels: z.array(z.string()).max(10).optional().describe('Labels — invalid ones reject the batch'),
-          parent: z.string().optional().describe('Parent: earlier batch name or canonical bead id (same store)'),
-          depends_on: z.array(z.string()).max(20).optional().describe('Dependencies: earlier batch names or bead ids (same store)'),
+          parent: z.string().optional().describe('Parent: earlier batch name or canonical bead id (same store as the bead)'),
+          depends_on: z.array(z.string()).max(20).optional().describe('Dependencies: earlier batch names or bead ids (any store; cross-store legs land as mention-links)'),
         })).min(1).max(MAX_BATCH_BEADS).describe('Beads in commit order'),
         relations: z.array(z.object({
           from: z.string().describe('Batch name or bead id'),
           to: z.string().describe('Batch name or bead id'),
-          type: z.string().describe(`Edge type: ${(DEP_TYPES as readonly string[]).join('|')}`),
-        })).max(40).optional().describe('Generic typed relations (from depends-on/relates-to to, same store)'),
+          type: z.string().describe(`Edge type: ${(DEP_TYPES as readonly string[]).join('|')} plus source|provenance|derived-from|destination|recorded-in`),
+        })).max(40).optional().describe('Generic typed relations (any store; cross-store legs land as verified mention-links)'),
       }),
     },
     async ({ beads, relations }: {
