@@ -12,6 +12,7 @@ import { bundleIds } from './beads'
 import { runList } from './query/store'
 import { cleanLabel, LABEL_RE } from './query/params'
 import { createBead, validateCreateLabels } from '../lib/create'
+import { DEP_TYPES, MAX_BATCH_BEADS, formatBatch, runBatch } from '../lib/batch'
 import { beadConnections, formatConnections } from '../lib/connections'
 import { writeFeedback } from '../lib/feedback'
 import { editBead } from '../lib/edit'
@@ -275,6 +276,58 @@ const mcpHandler = createMcpHandler((server) => {
       } catch (e) {
         relayStatus.touch({ id: `new:${store}`, kind: 'failure', title: `create failed in ${store}: ${title}`, state: 'failed' })
         return err(`create failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    },
+  )
+
+  // Atomic multi-bead graph creation: one call creates a whole bead graph.
+  // Later beads refer to earlier ones by intra-batch name (resolved to
+  // canonical IDs at commit); parent/child, depends_on, and generic typed
+  // relations are declared in the batch. Validation failures reject the
+  // whole batch before any write; runtime failures report exactly what
+  // landed and what did not. Only report success from the returned receipt —
+  // report IDs verbatim from tool output, never from inference.
+  server.registerTool(
+    'bead_batch_create',
+    {
+      title: 'Create bead graph',
+      description: `Create a whole bead graph atomically (max ${MAX_BATCH_BEADS} beads): named intra-batch refs, parent/child, dependencies, typed relations (${(DEP_TYPES as readonly string[]).join('|')}). Refs must point to earlier beads; edges stay in one store.`,
+      inputSchema: z.object({
+        beads: z.array(z.object({
+          name: z.string().min(1).max(64).describe('Intra-batch name, e.g. root — later beads refer to it'),
+          store: z.string().describe('Store name, e.g. task'),
+          title: z.string().min(1).max(200).describe('Bead title'),
+          description: z.string().max(4000).optional().describe('Body text'),
+          labels: z.array(z.string()).max(10).optional().describe('Labels — invalid ones reject the batch'),
+          parent: z.string().optional().describe('Parent: earlier batch name or canonical bead id (same store)'),
+          depends_on: z.array(z.string()).max(20).optional().describe('Dependencies: earlier batch names or bead ids (same store)'),
+        })).min(1).max(MAX_BATCH_BEADS).describe('Beads in commit order'),
+        relations: z.array(z.object({
+          from: z.string().describe('Batch name or bead id'),
+          to: z.string().describe('Batch name or bead id'),
+          type: z.string().describe(`Edge type: ${(DEP_TYPES as readonly string[]).join('|')}`),
+        })).max(40).optional().describe('Generic typed relations (from depends-on/relates-to to, same store)'),
+      }),
+    },
+    async ({ beads, relations }: {
+      beads: { name: string; store: string; title: string; description?: string; labels?: string[]; parent?: string; depends_on?: string[] }[]
+      relations?: { from: string; to: string; type: string }[]
+    }) => {
+      for (const b of beads) {
+        if (!STORES.includes(b.store)) return err(`unknown store: ${b.store} (known: ${STORES.join(', ')})`)
+      }
+      try {
+        const r = await runBatch({ beads, relations })
+        for (const bead of r.beads) {
+          relayStatus.touch({ id: bead.id, kind: 'task', title: bead.name })
+          if (!bead.verified) relayStatus.touch({ id: bead.id, kind: 'verify', title: bead.name, needsVerify: true })
+        }
+        for (const f of r.failures) {
+          relayStatus.touch({ id: f.target, kind: 'failure', title: `batch: ${f.target} — ${f.error.slice(0, 120)}`, state: 'failed' })
+        }
+        return r.complete ? ok(formatBatch(r)) : err(formatBatch(r))
+      } catch (e) {
+        return err(`batch rejected (nothing written): ${e instanceof Error ? e.message : String(e)}`)
       }
     },
   )
