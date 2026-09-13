@@ -28,6 +28,7 @@ import { formatRelayStatus, relayStatus, withRelayStatus } from '../lib/relay-st
 import { relayCatchup } from '../lib/catchup'
 import { attentionNext } from '../lib/attention'
 import { inspectRead, inspectReadMany, inspectSearch, inspectTree } from '../lib/inspect'
+import { formatProbeResult, runDelayProbe, validateCorrelationId, validateDelaySeconds } from '../lib/delay-probe'
 
 export const mountOrder = -20
 export const mcpRouter = Router()
@@ -504,6 +505,30 @@ const mcpHandler = createMcpHandler((server) => {
       if (!candidates.length) return ok('# random pick\n\nNo open beads in scope — queues are clear.')
       const picks = sampleIndices(candidates.length, count ?? 1).map((i) => candidates[i])
       return ok(formatPicks(picks, pool))
+    },
+  )
+
+  // Delay probe for the inbox-z55u timeout experiment: sleeps exactly
+  // delay_seconds (capped), then echoes the correlation id. No shell, no
+  // stores, no side effects — pure latency plus an idempotency echo so
+  // late first responses are never mistaken for retry responses.
+  server.registerTool(
+    'timeout_probe',
+    {
+      title: 'Timeout probe',
+      description: 'Wait delay_seconds (max 300s), then echo the correlation id with timings. For measuring when a tool call is considered stale.',
+      inputSchema: z.object({
+        delay_seconds: z.number().describe('Seconds to wait before responding (0-300)'),
+        correlation_id: z.string().max(128).optional().describe('Caller-supplied id, echoed back; minted when omitted'),
+      }),
+    },
+    async ({ delay_seconds, correlation_id }: { delay_seconds: number; correlation_id?: string }) => {
+      const d = validateDelaySeconds(delay_seconds)
+      if (!d.ok) return err(d.error)
+      const c = validateCorrelationId(correlation_id)
+      if (!c.ok) return err(c.error)
+      const r = await runDelayProbe({ delaySeconds: d.delay, correlationId: c.id })
+      return ok(formatProbeResult(r), true)
     },
   )
 
