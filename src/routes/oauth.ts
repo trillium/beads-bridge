@@ -90,9 +90,14 @@ const protectedHandler = protectedResourceHandler({ authServerUrls: [ISSUER], re
 mountFetch(oauthRouter, '/.well-known/oauth-protected-resource', protectedHandler)
 mountFetch(oauthRouter, '/.well-known/oauth-protected-resource/mcp', protectedHandler)
 
-oauthRouter.get('/.well-known/oauth-authorization-server', (_req: Request, res: Response) => {
+const authorizationHandler = (_req: Request, res: Response) => {
   res.json(buildAuthorizationServerMetadata(ISSUER))
-})
+}
+// RFC 8414 §3.2 path insertion: MCP clients probing resource
+// https://host/mcp may request the issuer metadata at the suffixed path.
+// Serve both, mirroring the protected-resource mounts above.
+oauthRouter.get('/.well-known/oauth-authorization-server', authorizationHandler)
+oauthRouter.get('/.well-known/oauth-authorization-server/mcp', authorizationHandler)
 
 // ── Dynamic client registration (RFC 7591, public clients) ──────────────────
 
