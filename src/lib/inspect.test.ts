@@ -47,6 +47,11 @@ describe('inspectReadMany', () => {
     assert.match(out, /# inspect read-many \(2 files\)/)
     assert.match(out, /## package\.json/)
   })
+  it('denies traversal per file but still reads the valid ones', () => {
+    const out = inspectReadMany(['../../etc/passwd', 'package.json'])
+    assert.match(out, /denied \(escapes the Bridge checkout\)/)
+    assert.match(out, /## package\.json/)
+  })
   it('caps file count and rejects empties', () => {
     assert.match(inspectReadMany([]), /denied/)
     const many = ['package.json', 'package.json', 'package.json', 'package.json', 'package.json', 'package.json', 'package.json']

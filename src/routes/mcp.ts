@@ -6,7 +6,7 @@ import { Router } from 'express'
 import { createMcpHandler, withMcpAuth } from 'mcp-handler'
 import { z } from 'zod'
 import { BASE, STORES } from '../config'
-import { bd, storeFromId } from '../util'
+import { storeFromId } from '../util'
 import { beadText, mapLimit } from '../lib/exec'
 import { bundleIds } from './beads'
 import { runList } from './query/store'
@@ -22,6 +22,7 @@ import { mountFetch } from '../lib/express-fetch'
 import { lookupAccess, mcpResource } from '../lib/oauth'
 import { withCompatRequest } from '../lib/mcp-compat'
 import { captureEntry, formatFlow, formatProjectList, formatResolve, formatVerify, listProjectsScoped, requestDispatch, resolveProject, runFlow, upsertTask, verifyWork } from '../lib/relay'
+import { closeBead, commentBead, formatReceipt, labelBead, noteBead } from '../lib/mutate'
 import { formatRelayStatus, relayStatus, withRelayStatus } from '../lib/relay-status'
 import { relayCatchup } from '../lib/catchup'
 import { attentionNext } from '../lib/attention'
@@ -109,20 +110,29 @@ const mcpHandler = createMcpHandler((server) => {
     },
   )
 
-  // GET /{id}/comment and /{id}/note equivalents.
+  // GET /{id}/comment and /{id}/note equivalents. Shell-free argv —
+  // $, backticks, quotes, and newlines pass through literally.
   server.registerTool(
     'bead_comment',
     {
       title: 'Comment on bead',
-      description: 'Add a comment (same as GET /{id}/comment)',
+      description: 'Add a comment (same as GET /{id}/comment). Only report success when this call returns a receipt — report IDs verbatim from tool output, never from inference.',
       inputSchema: z.object({ id: z.string(), text: z.string().describe('Comment text') }),
     },
     async ({ id, text: t }: { id: string; text: string }) => {
-      const store = storeFromId(id.trim())
+      const clean = id.trim()
+      const store = storeFromId(clean)
       if (!store) return err(`unknown bead id: ${id}`)
       if (!t.trim()) return err('Missing text.')
-      relayStatus.touch({ id: id.trim(), kind: 'note', title: t.trim().slice(0, 120) })
-      return ok(bd(store, `comment ${id.trim()} "${t.replace(/"/g, '\\"')}"`))
+      try {
+        const r = await commentBead(store, clean, t)
+        relayStatus.touch({ id: r.id, kind: 'note', title: t.trim().slice(0, 120) })
+        if (!r.verified) relayStatus.touch({ id: r.id, kind: 'verify', title: t.trim().slice(0, 120), needsVerify: true })
+        return ok(formatReceipt(r))
+      } catch (e) {
+        relayStatus.touch({ id: clean, kind: 'failure', title: `comment failed ${clean}`, state: 'failed' })
+        return err(`comment failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
     },
   )
 
@@ -130,15 +140,23 @@ const mcpHandler = createMcpHandler((server) => {
     'bead_note',
     {
       title: 'Note on bead',
-      description: 'Append a note (same as GET /{id}/note)',
+      description: 'Append a note (same as GET /{id}/note). Only report success when this call returns a receipt — report IDs verbatim from tool output, never from inference.',
       inputSchema: z.object({ id: z.string(), text: z.string().describe('Note text') }),
     },
     async ({ id, text: t }: { id: string; text: string }) => {
-      const store = storeFromId(id.trim())
+      const clean = id.trim()
+      const store = storeFromId(clean)
       if (!store) return err(`unknown bead id: ${id}`)
       if (!t.trim()) return err('Missing text.')
-      relayStatus.touch({ id: id.trim(), kind: 'note', title: t.trim().slice(0, 120) })
-      return ok(bd(store, `note ${id.trim()} "${t.replace(/"/g, '\\"')}"`))
+      try {
+        const r = await noteBead(store, clean, t)
+        relayStatus.touch({ id: r.id, kind: 'note', title: t.trim().slice(0, 120) })
+        if (!r.verified) relayStatus.touch({ id: r.id, kind: 'verify', title: t.trim().slice(0, 120), needsVerify: true })
+        return ok(formatReceipt(r))
+      } catch (e) {
+        relayStatus.touch({ id: clean, kind: 'failure', title: `note failed ${clean}`, state: 'failed' })
+        return err(`note failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
     },
   )
 
@@ -147,7 +165,7 @@ const mcpHandler = createMcpHandler((server) => {
     'bead_decision',
     {
       title: 'Decide bead',
-      description: 'approve/reject/done/close a bead (same as GET /{id}/approve etc.)',
+      description: 'approve/reject/done/close a bead (same as GET /{id}/approve etc.). Only report success when this call returns a receipt — report IDs verbatim from tool output, never from inference.',
       inputSchema: z.object({
         id: z.string(),
         decision: z.enum(['approve', 'reject', 'done', 'close']),
@@ -158,25 +176,31 @@ const mcpHandler = createMcpHandler((server) => {
       const store = storeFromId(clean)
       if (!store) return err(`unknown bead id: ${id}`)
       const ts = new Date().toISOString()
-      if (decision === 'approve') {
-        const out = bd(store, `comment ${clean} "Approved via beads-bridge ${ts}"`)
-        bd(store, `close ${clean}`)
-        relayStatus.markDone(clean) ?? relayStatus.touch({ id: clean, kind: 'completion', title: `Approved + closed ${clean}`, state: 'done' })
-        return ok(`Approved + closed ${clean}\n${out}`)
+      try {
+        if (decision === 'approve') {
+          const c = await commentBead(store, clean, `Approved via beads-bridge ${ts}`)
+          const k = await closeBead(store, clean)
+          relayStatus.markDone(clean) ?? relayStatus.touch({ id: clean, kind: 'completion', title: `Approved + closed ${clean}`, state: 'done' })
+          return ok([formatReceipt({ ...c, operation: 'approved' }), '', formatReceipt({ ...k, operation: 'closed' })].join('\n'))
+        }
+        if (decision === 'reject') {
+          const c = await commentBead(store, clean, `Rejected via beads-bridge ${ts}`)
+          relayStatus.touch({ id: clean, kind: 'note', title: `Rejected ${clean} — needs human`, state: 'waiting' })
+          return ok(formatReceipt({ ...c, operation: 'rejected' }))
+        }
+        if (decision === 'done') {
+          const c = await commentBead(store, clean, `Handled via beads-bridge ${ts}`)
+          const k = await closeBead(store, clean)
+          relayStatus.markDone(clean) ?? relayStatus.touch({ id: clean, kind: 'completion', title: `Handled + closed ${clean}`, state: 'done' })
+          return ok([formatReceipt({ ...c, operation: 'handled' }), '', formatReceipt({ ...k, operation: 'closed' })].join('\n'))
+        }
+        const k = await closeBead(store, clean)
+        relayStatus.markDone(clean) ?? relayStatus.touch({ id: clean, kind: 'completion', title: `Closed ${clean}`, state: 'done' })
+        return ok(formatReceipt(k))
+      } catch (e) {
+        relayStatus.touch({ id: clean, kind: 'failure', title: `${decision} failed ${clean}`, state: 'failed' })
+        return err(`${decision} failed: ${e instanceof Error ? e.message : String(e)}`)
       }
-      if (decision === 'reject') {
-        const out = bd(store, `comment ${clean} "Rejected via beads-bridge ${ts}"`)
-        relayStatus.touch({ id: clean, kind: 'note', title: `Rejected ${clean} — needs human`, state: 'waiting' })
-        return ok(`Rejected ${clean}\n${out}`)
-      }
-      if (decision === 'done') {
-        const out = bd(store, `comment ${clean} "Handled via beads-bridge ${ts}"`)
-        bd(store, `close ${clean}`)
-        relayStatus.markDone(clean) ?? relayStatus.touch({ id: clean, kind: 'completion', title: `Handled + closed ${clean}`, state: 'done' })
-        return ok(`Handled + closed ${clean}\n${out}`)
-      }
-      relayStatus.markDone(clean) ?? relayStatus.touch({ id: clean, kind: 'completion', title: `Closed ${clean}`, state: 'done' })
-      return ok(`Closed ${clean}\n${bd(store, `close ${clean}`)}`)
     },
   )
 
@@ -185,7 +209,7 @@ const mcpHandler = createMcpHandler((server) => {
     'bead_label',
     {
       title: 'Label bead',
-      description: 'Add/remove labels (same as GET /{id}/label)',
+      description: 'Add/remove labels (same as GET /{id}/label). Only report success when this call returns a receipt — report IDs verbatim from tool output, never from inference.',
       inputSchema: z.object({
         id: z.string(),
         add: z.string().optional(),
@@ -197,11 +221,15 @@ const mcpHandler = createMcpHandler((server) => {
       const store = storeFromId(clean)
       if (!store) return err(`unknown bead id: ${id}`)
       if (!add && !remove) return err('Give add and/or remove.')
-      const results: string[] = []
-      if (add) results.push(bd(store, `label add ${clean} ${add}`))
-      if (remove) results.push(bd(store, `label remove ${clean} ${remove}`))
-      relayStatus.touch({ id: clean, kind: 'note', title: `labels updated ${clean}` })
-      return ok(results.join('\n'))
+      try {
+        const r = await labelBead(store, clean, { add, remove })
+        relayStatus.touch({ id: clean, kind: 'note', title: `labels updated ${clean}` })
+        if (!r.verified) relayStatus.touch({ id: clean, kind: 'verify', title: `labels updated ${clean}`, needsVerify: true })
+        return ok(formatReceipt(r))
+      } catch (e) {
+        relayStatus.touch({ id: clean, kind: 'failure', title: `label failed ${clean}`, state: 'failed' })
+        return err(`label failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
     },
   )
 
@@ -213,7 +241,7 @@ const mcpHandler = createMcpHandler((server) => {
     'bead_create',
     {
       title: 'Create bead',
-      description: 'Create a new bead in a store. Labels attach it: project:<slug> links to a project, resume:<id> scopes it to a resume.',
+      description: 'Create a new bead in a store. Labels attach it: project:<slug> links to a project, resume:<id> scopes it to a resume. Only report success when this call returns a receipt — report the ID verbatim from tool output, never from inference.',
       inputSchema: z.object({
         store: z.string().describe('Store name, e.g. task, stories, brain'),
         title: z.string().min(1).max(200).describe('Bead title'),
@@ -234,7 +262,7 @@ const mcpHandler = createMcpHandler((server) => {
       const { ok: valid, bad } = validateCreateLabels(labels)
       if (bad.length) return err(`bad label: ${bad.join(', ')} (match ${LABEL_RE}, max 64 chars)`)
       try {
-        const { id, detail } = await createBead({
+        const { id, detail, verified } = await createBead({
           store,
           title,
           description,
@@ -242,7 +270,8 @@ const mcpHandler = createMcpHandler((server) => {
           parent: parent?.trim() || undefined,
         })
         relayStatus.touch({ id, kind: 'task', title })
-        return ok([`# created ${id} (STORE: ${store})`, '', `Labels: ${valid.join(', ') || '(none)'}`, '', detail].join('\n'))
+        if (!verified) relayStatus.touch({ id, kind: 'verify', title, needsVerify: true })
+        return ok(formatReceipt({ operation: 'created', id, store, verified, detail }, `Labels: ${valid.join(', ') || '(none)'}`))
       } catch (e) {
         relayStatus.touch({ id: `new:${store}`, kind: 'failure', title: `create failed in ${store}: ${title}`, state: 'failed' })
         return err(`create failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -271,7 +300,7 @@ const mcpHandler = createMcpHandler((server) => {
     'bead_edit',
     {
       title: 'Edit bead',
-      description: 'Revise a bead\'s title and/or description. Give at least one.',
+      description: 'Revise a bead\'s title and/or description. Give at least one. Only report success when this call returns a receipt — report IDs verbatim from tool output, never from inference.',
       inputSchema: z.object({
         id: z.string().describe('Bead id'),
         title: z.string().min(1).max(200).optional().describe('New title'),
@@ -283,9 +312,10 @@ const mcpHandler = createMcpHandler((server) => {
       const store = storeFromId(clean)
       if (!store) return err(`unknown bead id: ${id}`)
       try {
-        const { detail } = await editBead({ store, id: clean, title, description })
+        const { detail, verified } = await editBead({ store, id: clean, title, description })
         relayStatus.touch({ id: clean, kind: 'note', title: title ?? `edited ${clean}` })
-        return ok([`# updated ${clean} (STORE: ${store})`, '', detail].join('\n'))
+        if (!verified) relayStatus.touch({ id: clean, kind: 'verify', title: title ?? `edited ${clean}`, needsVerify: true })
+        return ok(formatReceipt({ operation: 'updated', id: clean, store, verified, detail }))
       } catch (e) {
         relayStatus.touch({ id: clean, kind: 'failure', title: `edit failed ${clean}`, state: 'failed' })
         return err(`edit failed: ${e instanceof Error ? e.message : String(e)}`)

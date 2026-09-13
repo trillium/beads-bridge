@@ -23,6 +23,13 @@ describe('parseCreatedId', () => {
   it('ignores other stores and junk', () => {
     assert.equal(parseCreatedId('task', 'see brain-abc12 and nope'), null)
   })
+  it('matches dotted child ids whole, not the parent prefix (task-r11aa)', () => {
+    assert.equal(parseCreatedId('task', '✓ Created issue: task-fuk0c.1 — probe child'), 'task-fuk0c.1')
+    assert.equal(parseCreatedId('task', '✓ Created issue: task-abc12.1.2 — nested'), 'task-abc12.1.2')
+  })
+  it('does not swallow trailing non-numeric dot segments', () => {
+    assert.equal(parseCreatedId('task', 'see task-abc.5x here'), 'task-abc')
+  })
 })
 
 describe('validateCreateLabels', () => {

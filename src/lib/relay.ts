@@ -3,7 +3,8 @@ import { runList, runListAsync, showBeadAsync } from '../routes/query/store'
 import { cleanLabel, type Row } from '../routes/query/params'
 import { createBead } from './create'
 import { editBead } from './edit'
-import { bd, storeFromId } from '../util'
+import { commentBead, labelBead } from './mutate'
+import { storeFromId } from '../util'
 import { STORES } from '../config'
 
 export type ProjectState = 'foreground' | 'backlog'
@@ -218,11 +219,15 @@ export async function lookupProject(ref: string): Promise<{ row: RankRow; state:
   return { row, state: projectState(row.labels), slug: slugOf(row.labels, row.title) }
 }
 
-export function promoteProject(id: string, reason: string): { promoted: boolean; detail: string } {
-  const labeled = bd('projects', `label add ${id} state:foreground`)
-  const noted = bd('projects', `comment ${id} "Promoted to foreground ${new Date().toISOString()} — ${reason.replace(/"/g, "'").slice(0, 200)}"`)
-  const promoted = !/error|unknown|no such/i.test(labeled.slice(0, 120))
-  return { promoted, detail: `${labeled}\n${noted}`.slice(0, 600) }
+export async function promoteProject(id: string, reason: string): Promise<{ promoted: boolean; detail: string }> {
+  try {
+    const l = await labelBead('projects', id, { add: 'state:foreground' })
+    const c = await commentBead('projects', id, `Promoted to foreground ${new Date().toISOString()} — ${reason.slice(0, 200)}`)
+    const verified = l.verified && c.verified
+    return { promoted: verified, detail: `labeled state:foreground + noted promotion on ${id} (verified: ${verified})` }
+  } catch (e) {
+    return { promoted: false, detail: `promotion failed: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300) }
+  }
 }
 
 export interface CaptureInput {
@@ -258,7 +263,7 @@ export async function captureEntry(input: CaptureInput): Promise<{ id: string; s
   })
   let promoted = false
   if (projectId && wasBacklog) {
-    promoted = promoteProject(projectId, `capture ${id} in ${store}`).promoted
+    promoted = (await promoteProject(projectId, `capture ${id} in ${store}`)).promoted
   }
   return { id, store, slug, promoted, detail }
 }
@@ -295,8 +300,8 @@ export async function upsertTask(input: UpsertInput): Promise<{ mode: 'created' 
   const scoped = rows.length ? rows : runList('task', [], [], { exclude: [], status: undefined, limit: 50, allStates: true }).rows
   const dup = input.allowUpdate === false ? null : findDuplicate(title, scoped)
   let promoted = false
-  const maybePromote = () => {
-    if (projectId && wasBacklog) promoted = promoteProject(projectId, `task write for ${slug}`).promoted
+  const maybePromote = async () => {
+    if (projectId && wasBacklog) promoted = (await promoteProject(projectId, `task write for ${slug}`)).promoted
   }
   if (dup) {
     const extra = input.description?.trim()
@@ -304,19 +309,19 @@ export async function upsertTask(input: UpsertInput): Promise<{ mode: 'created' 
       try {
         await editBead({ store: 'task', id: dup.id, description: `${extra.slice(0, 3500)}` })
       } catch {
-        bd('task', `comment ${dup.id} "${extra.replace(/"/g, "'").slice(0, 500)}"`)
+        await commentBead('task', dup.id, extra.slice(0, 500))
       }
     } else {
-      bd('task', `comment ${dup.id} "Touched by relay upsert ${new Date().toISOString()}"`)
+      await commentBead('task', dup.id, `Touched by relay upsert ${new Date().toISOString()}`)
     }
-    maybePromote()
+    await maybePromote()
     const detail = await beadText('task', ['show', dup.id])
     return { mode: 'updated', id: dup.id, duplicateOf: dup.id, slug, promoted, detail: detail.slice(0, 1200) }
   }
   const extraLabels = (input.labels ?? []).map(cleanLabel).filter((x): x is string => !!x)
   const labels = [...(slug ? [`project:${slug}`] : []), ...extraLabels].slice(0, 10)
   const { id, detail } = await createBead({ store: 'task', title, description: input.description?.slice(0, 4000), labels })
-  maybePromote()
+  await maybePromote()
   return { mode: 'created', id, slug, promoted, detail }
 }
 

@@ -7,6 +7,7 @@ import { readFileSync } from 'fs'
 import path from 'path'
 import { toolKey, STORES, fillTokens } from '../config'
 import { bd, storeFromId } from '../util'
+import { runMutationSync } from '../lib/mutate'
 
 export const actionsRouter = Router()
 actionsRouter.use(express.json())
@@ -107,18 +108,29 @@ actionsRouter.get('/action/bead', requireToolKey, (req: Request, res: Response) 
   res.json({ ok: true, ...actionSummary(store, String(req.query.bead_id)) })
 })
 
+// Mutations run over shell-free argv and throw on failure — a failed write
+// answers 500, never ok:true with error text mistaken for success.
+function runWrite(res: Response, key: unknown, run: () => unknown): void {
+  let out: unknown
+  try {
+    out = idempotent(res, key, run)
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e instanceof Error ? e.message : String(e) })
+    return
+  }
+  if (out) res.json(out)
+}
+
 actionsRouter.post('/action/comment', requireToolKey, (req: Request, res: Response) => {
   const b = req.body as ToolBody
   const store = toolTarget(res, b.bead_id)
   if (!store) return
   const text = typeof b.text === 'string' ? b.text : ''
   if (!text) return res.status(400).json({ ok: false, error: 'missing text' })
-  const run = () => {
-    bd(store, `comment ${b.bead_id} "${text.replace(/"/g, '\\"')}"`)
+  runWrite(res, b.idempotency_key, () => {
+    runMutationSync(store, ['comment', String(b.bead_id), text])
     return { ok: true, ...actionSummary(store, String(b.bead_id)), wrote: 'comment' }
-  }
-  const out = idempotent(res, b.idempotency_key, run)
-  if (out) res.json(out)
+  })
 })
 
 actionsRouter.post('/action/note', requireToolKey, (req: Request, res: Response) => {
@@ -127,12 +139,10 @@ actionsRouter.post('/action/note', requireToolKey, (req: Request, res: Response)
   if (!store) return
   const text = typeof b.text === 'string' ? b.text : ''
   if (!text) return res.status(400).json({ ok: false, error: 'missing text' })
-  const run = () => {
-    bd(store, `note ${b.bead_id} "${text.replace(/"/g, '\\"')}"`)
+  runWrite(res, b.idempotency_key, () => {
+    runMutationSync(store, ['note', String(b.bead_id), text])
     return { ok: true, ...actionSummary(store, String(b.bead_id)), wrote: 'note' }
-  }
-  const out = idempotent(res, b.idempotency_key, run)
-  if (out) res.json(out)
+  })
 })
 
 function stateTransition(req: Request, res: Response, verb: string, close: boolean) {
@@ -144,14 +154,12 @@ function stateTransition(req: Request, res: Response, verb: string, close: boole
   if (before.state !== 'open') {
     return res.status(409).json({ ok: false, error: `bead is ${before.state}, not open`, ...before })
   }
-  const run = () => {
+  runWrite(res, b.idempotency_key, () => {
     const ts = new Date().toISOString()
-    bd(store, `comment ${id} "${verb} via tool bridge ${ts}"`)
-    if (close) bd(store, `close ${id}`)
+    runMutationSync(store, ['comment', id, `${verb} via tool bridge ${ts}`])
+    if (close) runMutationSync(store, ['close', id])
     return { ok: true, ...actionSummary(store, id), transitioned: verb }
-  }
-  const out = idempotent(res, b.idempotency_key, run)
-  if (out) res.json(out)
+  })
 }
 
 actionsRouter.post('/action/approve', requireToolKey, (req: Request, res: Response) => stateTransition(req, res, 'Approved', true))
@@ -171,13 +179,11 @@ actionsRouter.post('/action/label', requireToolKey, (req: Request, res: Response
       return res.status(400).json({ ok: false, error: `label '${l}' not in vocabulary: ${LABEL_VOCAB.join(', ')}` })
     }
   }
-  const run = () => {
-    if (add)    bd(store, `label add ${id} ${add}`)
-    if (remove) bd(store, `label remove ${id} ${remove}`)
+  runWrite(res, b.idempotency_key, () => {
+    if (add)    runMutationSync(store, ['label', 'add', id, add])
+    if (remove) runMutationSync(store, ['label', 'remove', id, remove])
     return { ok: true, ...actionSummary(store, id), wrote: `label ${add ? 'add:' + add : ''} ${remove ? 'remove:' + remove : ''}`.trim() }
-  }
-  const out = idempotent(res, b.idempotency_key, run)
-  if (out) res.json(out)
+  })
 })
 
 actionsRouter.get('/actions/openapi.json', (_req: Request, res: Response) => {

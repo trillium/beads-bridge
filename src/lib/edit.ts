@@ -17,7 +17,7 @@ export function buildEditArgs(id: string, input: Pick<EditInput, 'title' | 'desc
   return args.length > 2 ? args : null
 }
 
-export async function editBead(input: EditInput): Promise<{ id: string; detail: string }> {
+export async function editBead(input: EditInput): Promise<{ id: string; detail: string; verified: boolean }> {
   const args = buildEditArgs(input.id, input)
   if (!args) throw new Error('give title and/or description to change')
   try {
@@ -26,7 +26,6 @@ export async function editBead(input: EditInput): Promise<{ id: string; detail: 
     const err = e as { stdout?: unknown; message?: string }
     throw new Error((typeof err.stdout === 'string' && err.stdout.trim()) || err.message || 'update failed')
   }
-  const shown = await execStdout(input.store, ['show', input.id], 10000).catch((e: unknown) =>
-    (e as { message?: string }).message ?? 'unreadable after update')
-  return { id: input.id, detail: shown.slice(0, 1200) }
+  const shown = await execStdout(input.store, ['show', input.id], 10000).catch(() => null)
+  return { id: input.id, detail: (shown ?? 'unreadable after update').slice(0, 1200), verified: shown !== null }
 }

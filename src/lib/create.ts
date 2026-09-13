@@ -21,7 +21,9 @@ export function buildCreateArgs(input: CreateInput): string[] {
   return args
 }
 
-const ID_RE = /\b([A-Za-z][A-Za-z0-9]+-[A-Za-z0-9]{3,})\b/
+// Dotted child ids (task-fuk0c.1, .1.2, ...) must match whole — a bare
+// prefix match returns the PARENT instead of the new child (task-r11aa).
+const ID_RE = /\b([A-Za-z][A-Za-z0-9]+-[A-Za-z0-9]{3,}(?:\.\d+)*)\b/
 
 // First store-prefixed bead id in CLI output, or null.
 export function parseCreatedId(store: string, stdout: string): string | null {
@@ -42,7 +44,7 @@ export function validateCreateLabels(labels: string[] | undefined): { ok: string
   return { ok, bad }
 }
 
-export async function createBead(input: CreateInput): Promise<{ id: string; detail: string }> {
+export async function createBead(input: CreateInput): Promise<{ id: string; detail: string; verified: boolean }> {
   const title = input.title.trim().slice(0, 200)
   if (!title) throw new Error('title is required')
   const args = buildCreateArgs({
@@ -60,7 +62,6 @@ export async function createBead(input: CreateInput): Promise<{ id: string; deta
   const id = parseCreatedId(input.store, stdout)
   if (!id) throw new Error(`created but no ${input.store}-* id found in output: ${stdout.slice(0, 200)}`)
   // Closed loop: confirm the bead reads back.
-  const shown = await execStdout(input.store, ['show', id], 10000).catch((e: unknown) =>
-    (e as { message?: string }).message ?? 'unreadable after create')
-  return { id, detail: shown.slice(0, 1200) }
+  const shown = await execStdout(input.store, ['show', id], 10000).catch(() => null)
+  return { id, detail: (shown ?? 'unreadable after create').slice(0, 1200), verified: shown !== null }
 }
