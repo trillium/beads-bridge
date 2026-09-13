@@ -91,7 +91,10 @@ export function parseScope(scope: string | undefined): string[] | null {
 }
 
 // RFC 8414 metadata. Issuer has no path component, so the single root
-// well-known document serves every client.
+// well-known document serves every client. logo_uri is informational only
+// (RFC 8414 permits additional members; parsers ignore what they don't
+// need): it advertises the brand mark, but ChatGPT's connector-list icon
+// is a manual dashboard upload no code change can set.
 export function buildAuthorizationServerMetadata(issuer: string): Record<string, unknown> {
   const iss = issuer.replace(/\/$/, '')
   return {
@@ -99,6 +102,7 @@ export function buildAuthorizationServerMetadata(issuer: string): Record<string,
     authorization_endpoint: `${iss}/oauth/authorize`,
     token_endpoint: `${iss}/oauth/token`,
     registration_endpoint: `${iss}/oauth/register`,
+    logo_uri: `${iss}/favicon.svg`,
     response_types_supported: ['code'],
     grant_types_supported: ['authorization_code', 'refresh_token'],
     code_challenge_methods_supported: ['S256'],

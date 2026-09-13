@@ -106,6 +106,7 @@ describe('buildAuthorizationServerMetadata', () => {
     assert.deepEqual(m.code_challenge_methods_supported, ['S256'])
     assert.ok((m.token_endpoint_auth_methods_supported as string[]).includes('none'))
     assert.equal(m.authorization_response_iss_parameter_supported, true)
+    assert.equal(m.logo_uri, `${BASE}/favicon.svg`)
   })
 })
 

@@ -132,9 +132,13 @@ oauthRouter.post('/oauth/register', (req: Request, res: Response) => {
 
 // ── Approval UI ──────────────────────────────────────────────────────────────
 
+// Bead mark (same artwork as web/public/favicon.svg, inlined so the consent
+// page is branded even when the static dist bundle is absent). Branding only.
+const BEAD_MARK = `<svg width="28" height="28" viewBox="0 0 64 64" aria-hidden="true" style="vertical-align:-6px;margin-right:.4rem"><defs><linearGradient id="bb-g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8f46ff"/><stop offset="1" stop-color="#7e14ff"/></linearGradient></defs><rect width="64" height="64" rx="15" fill="url(#bb-g)"/><rect x="5" y="28.5" width="54" height="7" rx="3.5" fill="#ede6ff" opacity="0.5"/><circle cx="32" cy="32" r="17" fill="#ede6ff"/><circle cx="32" cy="32" r="10.5" fill="#7e14ff"/><rect x="21.5" y="29.75" width="21" height="4.5" rx="2.25" fill="#ede6ff"/></svg>`
+
 function approvePage(tx: string, clientLabel: string, redirectHost: string, scope: string[], needsKey: boolean, error?: string): string {
-  return `<!doctype html><html><head><meta charset="utf8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Approve beads-bridge</title></head><body style="font-family:system-ui;max-width:40rem;margin:3rem auto;padding:0 1rem">` +
-    `<h1>Approve beads-bridge access?</h1>` +
+  return `<!doctype html><html><head><meta charset="utf8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" type="image/svg+xml" href="/favicon.svg"><meta name="theme-color" content="#7e14ff"><title>Approve beads-bridge</title></head><body style="font-family:system-ui;max-width:40rem;margin:3rem auto;padding:0 1rem">` +
+    `<h1>${BEAD_MARK}Approve beads-bridge access?</h1>` +
     (error ? `<p style="color:#a00"><b>${esc(error)}</b> — try again, this page still works.</p>` : '') +
     `<p><b>${esc(clientLabel)}</b> wants full bead access (scope: ${esc(scope.join(' ') || 'mcp')}). Tokens it receives can read, comment, and decide on beads.</p>` +
     `<p>After approval you are sent back to <b>${esc(redirectHost)}</b>. ChatGPT keeps a token until you revoke it (delete <code>~/.config/pai/beads-bridge-oauth.json</code> on the bridge host).</p>` +
