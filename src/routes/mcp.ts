@@ -29,6 +29,22 @@ import { relayCatchup } from '../lib/catchup'
 import { attentionNext } from '../lib/attention'
 import { inspectRead, inspectReadMany, inspectSearch, inspectTree } from '../lib/inspect'
 import { formatProbeResult, runDelayProbe, validateCorrelationId, validateDelaySeconds } from '../lib/delay-probe'
+import {
+  attachHistory,
+  clampLimit,
+  cleanLabels,
+  federatedSearch,
+  formatActivity,
+  formatSearch,
+  formatSnapshot,
+  pickRetrievalStores,
+  recentActivity,
+  reconstructSnapshot,
+  SNAPSHOT_DEFAULT_CAP,
+  SNAPSHOT_DEFAULT_DEPTH,
+  SNAPSHOT_MAX_CAP,
+  SNAPSHOT_MAX_DEPTH,
+} from '../lib/retrieval'
 
 export const mountOrder = -20
 export const mcpRouter = Router()
@@ -758,6 +774,86 @@ const mcpHandler = createMcpHandler((server) => {
       } catch (e) {
         return err(`inspect failed: ${e instanceof Error ? e.message : String(e)}`)
       }
+    },
+  )
+
+  server.registerTool(
+    'retrieval_search',
+    {
+      title: 'Federated search',
+      description: 'Full-text search across all bead stores with optional store/status/label filters (same as GET /retrieval/search). Blank query lists recent beads per store.',
+      inputSchema: z.object({
+        query: z.string().max(500).describe('Full-text query — blank lists per-store beads'),
+        stores: z.array(z.string()).max(10).optional().describe('Stores to search (default all)'),
+        status: z.string().max(64).optional().describe('Status filter, e.g. open (default includes closed)'),
+        labels: z.array(z.string()).max(10).optional().describe('AND labels'),
+        limit: z.number().int().min(1).max(100).optional().describe('Max rows total (default 30)'),
+      }),
+    },
+    async ({ query, stores, status, labels, limit }: {
+      query: string; stores?: string[]; status?: string; labels?: string[]; limit?: number
+    }) => {
+      const { stores: used, unknown } = pickRetrievalStores(stores?.length ? stores : undefined)
+      if (stores?.length && !used.length) return err(`unknown stores: ${stores.join(', ')} (known: ${STORES.join(', ')})`)
+      const { rows, errors, stores: hit } = await federatedSearch(query, {
+        stores: stores?.length ? stores : undefined,
+        status: status?.slice(0, 64),
+        labels: cleanLabels(labels),
+        perStore: 20,
+        limit: limit ?? 30,
+      })
+      return ok(formatSearch(query, rows, errors, hit, unknown))
+    },
+  )
+
+  server.registerTool(
+    'retrieval_activity',
+    {
+      title: 'Recent activity',
+      description: 'Newest-first activity across all bead stores with limit/filters and compact change info (same as GET /retrieval/activity).',
+      inputSchema: z.object({
+        limit: z.number().int().min(1).max(100).optional().describe('Max rows (default 20)'),
+        stores: z.array(z.string()).max(10).optional().describe('Stores to cover (default all)'),
+        status: z.string().max(64).optional().describe('Status filter (default includes closed)'),
+        labels: z.array(z.string()).max(10).optional().describe('AND labels'),
+        since: z.string().max(64).optional().describe('Only beads updated after this date (YYYY-MM-DD or RFC3339)'),
+        history: z.boolean().optional().describe('Attach compact per-bead change info (default false)'),
+      }),
+    },
+    async ({ limit, stores, status, labels, since, history }: {
+      limit?: number; stores?: string[]; status?: string; labels?: string[]; since?: string; history?: boolean
+    }) => {
+      const { stores: used } = pickRetrievalStores(stores?.length ? stores : undefined)
+      if (stores?.length && !used.length) return err(`unknown stores: ${stores.join(', ')} (known: ${STORES.join(', ')})`)
+      const { rows, errors, stores: hit, unknownStores } = await recentActivity({
+        stores: stores?.length ? stores : undefined,
+        limit: clampLimit(limit, 20),
+        status: status?.slice(0, 64),
+        labels: cleanLabels(labels),
+        since: since?.slice(0, 64),
+      })
+      const hist = history && rows.length ? await attachHistory(rows.slice(0, Math.min(rows.length, 20)), 2) : undefined
+      return ok(formatActivity(rows, errors, hit, unknownStores, hist))
+    },
+  )
+
+  server.registerTool(
+    'retrieval_snapshot',
+    {
+      title: 'Reconstruction snapshot',
+      description: 'Bounded project/work-cluster snapshot: bead id or search phrase in; parent/child/dependency/mentioned/project relations traversed with dedupe, states and timestamps in one snapshot (same as GET /retrieval/snapshot).',
+      inputSchema: z.object({
+        input: z.string().min(1).max(500).describe('Bead id or search phrase (top hit becomes the root)'),
+        depth: z.number().int().min(0).max(SNAPSHOT_MAX_DEPTH).optional().describe(`Traversal depth (default ${SNAPSHOT_DEFAULT_DEPTH}, max ${SNAPSHOT_MAX_DEPTH})`),
+        cap: z.number().int().min(1).max(SNAPSHOT_MAX_CAP).optional().describe(`Max beads (default ${SNAPSHOT_DEFAULT_CAP}, max ${SNAPSHOT_MAX_CAP})`),
+      }),
+    },
+    async ({ input, depth, cap }: { input: string; depth?: number; cap?: number }) => {
+      const snap = await reconstructSnapshot(input, {
+        depth: depth ?? SNAPSHOT_DEFAULT_DEPTH,
+        cap: cap ?? SNAPSHOT_DEFAULT_CAP,
+      })
+      return snap.error ? err(formatSnapshot(snap)) : ok(formatSnapshot(snap))
     },
   )
 
