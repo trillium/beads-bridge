@@ -9,6 +9,7 @@ import { STORES } from '../config'
 import { storeFromId } from '../util'
 import { createBead, validateCreateLabels, type CreateInput } from './create'
 import { runMutation } from './mutate'
+import { unverifiedMessage } from './receipts'
 import { execStdout } from './exec'
 
 export const MAX_BATCH_BEADS = 20
@@ -382,7 +383,19 @@ export async function runBatch(input: BatchInput, fns: BatchFns = defaultBatchFn
   }
 
   const failedEdges = edges.filter((e) => !e.ok).map((e) => ({ target: `edge ${e.from}→${e.to}`, error: e.detail }))
-  const allFailures = [...failures, ...failedEdges]
+  // False-success guardrail: landed-but-unverified beads and ok-but-
+  // unverified edges are failures naming what is unverified — the batch is
+  // partial, never complete, until every landing reads back.
+  const unverifiedBeads = receipts
+    .filter((b) => !b.verified)
+    .map((b) => ({ target: b.name, error: unverifiedMessage({ operation: 'created', id: b.id, store: b.store }) }))
+  const unverifiedEdges = edges
+    .filter((e) => e.ok && !e.verified)
+    .map((e) => ({
+      target: `edge ${e.from}→${e.to}`,
+      error: unverifiedMessage({ operation: `edge ${e.type}`, id: `${e.fromId}→${e.toId}`, store: e.store }),
+    }))
+  const allFailures = [...failures, ...failedEdges, ...unverifiedBeads, ...unverifiedEdges]
   return { beads: receipts, edges, failures: allFailures, complete: allFailures.length === 0 }
 }
 
@@ -398,12 +411,14 @@ export function formatBatch(r: BatchResult): string {
   const edgeLines = r.edges.map((e) =>
     `- ${e.from} (${e.fromId}) --${e.type}--> ${e.to} (${e.toId}) — ${e.ok ? (e.verified ? `ok, verified${e.xstore ? ' (cross-store mention-link)' : ''}` : 'ok, UNVERIFIED — re-check') : `FAILED: ${e.detail}`}`,
   )
-  const failLines = r.failures.filter((f) => !f.target.startsWith('edge ')).map((f) => `- ${f.target}: did not land — ${f.error}`)
+  const failLines = r.failures.filter((f) => !f.target.startsWith('edge ') && !f.error.startsWith('unverified:')).map((f) => `- ${f.target}: did not land — ${f.error}`)
+  const unverifiedLines = r.failures.filter((f) => f.error.startsWith('unverified:')).map((f) => `- ${f.target}: ${f.error}`)
   return [
     head,
     ``,
     ...beadLines,
     ...(edgeLines.length ? [``, `edges:`, ...edgeLines] : []),
     ...(failLines.length ? [``, `did not land:`, ...failLines] : []),
+    ...(unverifiedLines.length ? [``, `unverified (landed but did not read back — not success):`, ...unverifiedLines] : []),
   ].join('\n')
 }

@@ -7,6 +7,7 @@ import type { Request, Response, NextFunction } from 'express'
 import { BASE } from '../config'
 import { qstr, pstr, storeFromId } from '../util'
 import { closeBead, commentBead, formatReceipt, labelBead, noteBead } from '../lib/mutate'
+import { requireVerified } from '../lib/receipts'
 import { wrap } from '../wrap'
 
 export const mountOrder = 10
@@ -29,7 +30,8 @@ verbsRouter.get('/:id/comment', async (req: Request, res: Response, next: NextFu
   if (!payload) return res.type('text/plain').status(400).send('Missing ?text= (or ?t=) param')
 
   try {
-    const r = await commentBead(store, id, payload)
+    // False-success guardrail: unverified throws → 500, never 200.
+    const r = requireVerified(await commentBead(store, id, payload))
     res.type('text/plain').send(wrap({
       title: `Commented on ${id}`,
       body: formatReceipt(r),
@@ -51,7 +53,7 @@ verbsRouter.get('/:id/note', async (req: Request, res: Response, next: NextFunct
   if (!payload) return res.type('text/plain').status(400).send('Missing ?text= (or ?t=) param')
 
   try {
-    const r = await noteBead(store, id, payload)
+    const r = requireVerified(await noteBead(store, id, payload))
     res.type('text/plain').send(wrap({
       title: `Note added to ${id}`,
       body: formatReceipt(r),
@@ -72,8 +74,8 @@ verbsRouter.get('/:id/approve', async (req: Request, res: Response, next: NextFu
 
   const ts = new Date().toISOString()
   try {
-    await commentBead(store, id, `Approved via beads-bridge ${ts}`)
-    const r = await closeBead(store, id)
+    requireVerified(await commentBead(store, id, `Approved via beads-bridge ${ts}`))
+    const r = requireVerified(await closeBead(store, id))
     res.type('text/plain').send(wrap({
       title: `Approved + closed ${id}`,
       body: formatReceipt({ ...r, operation: 'approved + closed' }),
@@ -92,7 +94,7 @@ verbsRouter.get('/:id/reject', async (req: Request, res: Response, next: NextFun
 
   const ts = new Date().toISOString()
   try {
-    const r = await commentBead(store, id, `Rejected via beads-bridge ${ts}`)
+    const r = requireVerified(await commentBead(store, id, `Rejected via beads-bridge ${ts}`))
     res.type('text/plain').send(wrap({
       title: `Rejected ${id}`,
       body: formatReceipt({ ...r, operation: 'rejected' }),
@@ -111,8 +113,8 @@ verbsRouter.get('/:id/done', async (req: Request, res: Response, next: NextFunct
 
   const ts = new Date().toISOString()
   try {
-    await commentBead(store, id, `Handled via beads-bridge ${ts}`)
-    const r = await closeBead(store, id)
+    requireVerified(await commentBead(store, id, `Handled via beads-bridge ${ts}`))
+    const r = requireVerified(await closeBead(store, id))
     res.type('text/plain').send(wrap({
       title: `Handled + closed ${id}`,
       body: formatReceipt({ ...r, operation: 'handled + closed' }),
@@ -130,7 +132,7 @@ verbsRouter.get('/:id/close', async (req: Request, res: Response, next: NextFunc
   if (!store) return next()
 
   try {
-    const r = await closeBead(store, id)
+    const r = requireVerified(await closeBead(store, id))
     res.type('text/plain').send(wrap({
       title: `Closed ${id}`,
       body: formatReceipt(r),
@@ -153,7 +155,7 @@ verbsRouter.get('/:id/label', async (req: Request, res: Response, next: NextFunc
   if (!add && !remove) return res.type('text/plain').status(400).send('Missing ?add= or ?remove= param')
 
   try {
-    const r = await labelBead(store, id, { add, remove })
+    const r = requireVerified(await labelBead(store, id, { add, remove }))
     res.type('text/plain').send(wrap({
       title: `Labels updated on ${id}`,
       body: formatReceipt(r),

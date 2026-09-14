@@ -24,6 +24,7 @@ import { lookupAccess, mcpResource } from '../lib/oauth'
 import { withCompatRequest } from '../lib/mcp-compat'
 import { captureEntry, formatFlow, formatProjectList, formatResolve, formatVerify, listProjectsScoped, requestDispatch, resolveProject, runFlow, upsertTask, verifyWork } from '../lib/relay'
 import { closeBead, commentBead, formatReceipt, labelBead, noteBead } from '../lib/mutate'
+import { unverifiedMessage } from '../lib/receipts'
 import { formatRelayStatus, relayStatus, withRelayStatus } from '../lib/relay-status'
 import { relayCatchup } from '../lib/catchup'
 import { attentionNext } from '../lib/attention'
@@ -145,7 +146,12 @@ const mcpHandler = createMcpHandler((server) => {
       try {
         const r = await commentBead(store, clean, t)
         relayStatus.touch({ id: r.id, kind: 'note', title: t.trim().slice(0, 120) })
-        if (!r.verified) relayStatus.touch({ id: r.id, kind: 'verify', title: t.trim().slice(0, 120), needsVerify: true })
+        // False-success guardrail: unverified is an error naming the bead,
+        // never a success.
+        if (!r.verified) {
+          relayStatus.touch({ id: r.id, kind: 'verify', title: t.trim().slice(0, 120), needsVerify: true })
+          return err(unverifiedMessage(r))
+        }
         return ok(formatReceipt(r))
       } catch (e) {
         relayStatus.touch({ id: clean, kind: 'failure', title: `comment failed ${clean}`, state: 'failed' })
@@ -169,7 +175,10 @@ const mcpHandler = createMcpHandler((server) => {
       try {
         const r = await noteBead(store, clean, t)
         relayStatus.touch({ id: r.id, kind: 'note', title: t.trim().slice(0, 120) })
-        if (!r.verified) relayStatus.touch({ id: r.id, kind: 'verify', title: t.trim().slice(0, 120), needsVerify: true })
+        if (!r.verified) {
+          relayStatus.touch({ id: r.id, kind: 'verify', title: t.trim().slice(0, 120), needsVerify: true })
+          return err(unverifiedMessage(r))
+        }
         return ok(formatReceipt(r))
       } catch (e) {
         relayStatus.touch({ id: clean, kind: 'failure', title: `note failed ${clean}`, state: 'failed' })
@@ -196,23 +205,41 @@ const mcpHandler = createMcpHandler((server) => {
       const ts = new Date().toISOString()
       try {
         if (decision === 'approve') {
-          const c = await commentBead(store, clean, `Approved via beads-bridge ${ts}`)
-          const k = await closeBead(store, clean)
+          const c = { ...(await commentBead(store, clean, `Approved via beads-bridge ${ts}`)), operation: 'approved' }
+          const k = { ...(await closeBead(store, clean)), operation: 'closed' }
+          const bad = [c, k].find((x) => !x.verified)
+          if (bad) {
+            relayStatus.touch({ id: clean, kind: 'verify', title: `Approved + closed ${clean}`, needsVerify: true })
+            return err(unverifiedMessage(bad))
+          }
           relayStatus.markDone(clean) ?? relayStatus.touch({ id: clean, kind: 'completion', title: `Approved + closed ${clean}`, state: 'done' })
-          return ok([formatReceipt({ ...c, operation: 'approved' }), '', formatReceipt({ ...k, operation: 'closed' })].join('\n'))
+          return ok([formatReceipt(c), '', formatReceipt(k)].join('\n'))
         }
         if (decision === 'reject') {
-          const c = await commentBead(store, clean, `Rejected via beads-bridge ${ts}`)
+          const c = { ...(await commentBead(store, clean, `Rejected via beads-bridge ${ts}`)), operation: 'rejected' }
+          if (!c.verified) {
+            relayStatus.touch({ id: clean, kind: 'verify', title: `Rejected ${clean}`, needsVerify: true })
+            return err(unverifiedMessage(c))
+          }
           relayStatus.touch({ id: clean, kind: 'note', title: `Rejected ${clean} — needs human`, state: 'waiting' })
-          return ok(formatReceipt({ ...c, operation: 'rejected' }))
+          return ok(formatReceipt(c))
         }
         if (decision === 'done') {
-          const c = await commentBead(store, clean, `Handled via beads-bridge ${ts}`)
-          const k = await closeBead(store, clean)
+          const c = { ...(await commentBead(store, clean, `Handled via beads-bridge ${ts}`)), operation: 'handled' }
+          const k = { ...(await closeBead(store, clean)), operation: 'closed' }
+          const bad = [c, k].find((x) => !x.verified)
+          if (bad) {
+            relayStatus.touch({ id: clean, kind: 'verify', title: `Handled + closed ${clean}`, needsVerify: true })
+            return err(unverifiedMessage(bad))
+          }
           relayStatus.markDone(clean) ?? relayStatus.touch({ id: clean, kind: 'completion', title: `Handled + closed ${clean}`, state: 'done' })
-          return ok([formatReceipt({ ...c, operation: 'handled' }), '', formatReceipt({ ...k, operation: 'closed' })].join('\n'))
+          return ok([formatReceipt(c), '', formatReceipt(k)].join('\n'))
         }
         const k = await closeBead(store, clean)
+        if (!k.verified) {
+          relayStatus.touch({ id: clean, kind: 'verify', title: `Closed ${clean}`, needsVerify: true })
+          return err(unverifiedMessage(k))
+        }
         relayStatus.markDone(clean) ?? relayStatus.touch({ id: clean, kind: 'completion', title: `Closed ${clean}`, state: 'done' })
         return ok(formatReceipt(k))
       } catch (e) {
@@ -242,7 +269,10 @@ const mcpHandler = createMcpHandler((server) => {
       try {
         const r = await labelBead(store, clean, { add, remove })
         relayStatus.touch({ id: clean, kind: 'note', title: `labels updated ${clean}` })
-        if (!r.verified) relayStatus.touch({ id: clean, kind: 'verify', title: `labels updated ${clean}`, needsVerify: true })
+        if (!r.verified) {
+          relayStatus.touch({ id: clean, kind: 'verify', title: `labels updated ${clean}`, needsVerify: true })
+          return err(unverifiedMessage(r))
+        }
         return ok(formatReceipt(r))
       } catch (e) {
         relayStatus.touch({ id: clean, kind: 'failure', title: `label failed ${clean}`, state: 'failed' })
@@ -288,8 +318,12 @@ const mcpHandler = createMcpHandler((server) => {
           parent: parent?.trim() || undefined,
         })
         relayStatus.touch({ id, kind: 'task', title })
-        if (!verified) relayStatus.touch({ id, kind: 'verify', title, needsVerify: true })
-        return ok(formatReceipt({ operation: 'created', id, store, verified, detail }, `Labels: ${valid.join(', ') || '(none)'}`))
+        const receipt = { operation: 'created', id, store, verified, detail }
+        if (!verified) {
+          relayStatus.touch({ id, kind: 'verify', title, needsVerify: true })
+          return err(unverifiedMessage(receipt))
+        }
+        return ok(formatReceipt(receipt, `Labels: ${valid.join(', ') || '(none)'}`))
       } catch (e) {
         relayStatus.touch({ id: `new:${store}`, kind: 'failure', title: `create failed in ${store}: ${title}`, state: 'failed' })
         return err(`create failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -384,8 +418,12 @@ const mcpHandler = createMcpHandler((server) => {
       try {
         const { detail, verified } = await editBead({ store, id: clean, title, description })
         relayStatus.touch({ id: clean, kind: 'note', title: title ?? `edited ${clean}` })
-        if (!verified) relayStatus.touch({ id: clean, kind: 'verify', title: title ?? `edited ${clean}`, needsVerify: true })
-        return ok(formatReceipt({ operation: 'updated', id: clean, store, verified, detail }))
+        const receipt = { operation: 'updated', id: clean, store, verified, detail }
+        if (!verified) {
+          relayStatus.touch({ id: clean, kind: 'verify', title: title ?? `edited ${clean}`, needsVerify: true })
+          return err(unverifiedMessage(receipt))
+        }
+        return ok(formatReceipt(receipt))
       } catch (e) {
         relayStatus.touch({ id: clean, kind: 'failure', title: `edit failed ${clean}`, state: 'failed' })
         return err(`edit failed: ${e instanceof Error ? e.message : String(e)}`)

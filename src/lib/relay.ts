@@ -4,6 +4,7 @@ import { cleanLabel, type Row } from '../routes/query/params'
 import { createBead } from './create'
 import { editBead } from './edit'
 import { commentBead, labelBead } from './mutate'
+import { requireVerified } from './receipts'
 import { storeFromId } from '../util'
 import { STORES } from '../config'
 
@@ -223,8 +224,11 @@ export async function promoteProject(id: string, reason: string): Promise<{ prom
   try {
     const l = await labelBead('projects', id, { add: 'state:foreground' })
     const c = await commentBead('projects', id, `Promoted to foreground ${new Date().toISOString()} — ${reason.slice(0, 200)}`)
-    const verified = l.verified && c.verified
-    return { promoted: verified, detail: `labeled state:foreground + noted promotion on ${id} (verified: ${verified})` }
+    if (!l.verified || !c.verified) {
+      const missing = [!l.verified ? 'label' : null, !c.verified ? 'promotion note' : null].filter((x): x is string => !!x).join(' + ')
+      return { promoted: false, detail: `promotion unverified: ${missing} on ${id} (STORE: projects) did not read back — not reporting success` }
+    }
+    return { promoted: true, detail: `labeled state:foreground + noted promotion on ${id} (verified: true)` }
   } catch (e) {
     return { promoted: false, detail: `promotion failed: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300) }
   }
@@ -255,12 +259,16 @@ export async function captureEntry(input: CaptureInput): Promise<{ id: string; s
   }
   const labels = slug ? [`project:${slug}`] : []
   const title = snippet(text.split('\n')[0].slice(0, 120) || 'captured note', 120)
-  const { id, detail } = await createBead({
+  const created = await createBead({
     store,
     title,
     description: slug ? `${text.slice(0, 3500)}\n\nproject: ${slug}` : text.slice(0, 3500),
     labels: labels.map(cleanLabel).filter((x): x is string => !!x),
   })
+  // False-success guardrail: an unverified create is an error naming the
+  // bead, never a captured success.
+  requireVerified({ operation: 'created', id: created.id, store, verified: created.verified })
+  const { id, detail } = created
   let promoted = false
   if (projectId && wasBacklog) {
     promoted = (await promoteProject(projectId, `capture ${id} in ${store}`)).promoted
@@ -307,22 +315,32 @@ export async function upsertTask(input: UpsertInput): Promise<{ mode: 'created' 
     const extra = input.description?.trim()
     if (extra) {
       try {
-        await editBead({ store: 'task', id: dup.id, description: `${extra.slice(0, 3500)}` })
-      } catch {
-        await commentBead('task', dup.id, extra.slice(0, 500))
+        const edited = await editBead({ store: 'task', id: dup.id, description: `${extra.slice(0, 3500)}` })
+        requireVerified({ operation: 'updated', id: dup.id, store: 'task', verified: edited.verified })
+      } catch (e) {
+        // editBead throws on write failure AND on unverified writes (both
+        // carry a message); fall back to a comment only for write failures.
+        // An unverified edit already names the bead — rethrow, never mask it
+        // as success via a comment.
+        if (e instanceof Error && e.message.startsWith('unverified:')) throw e
+        requireVerified(await commentBead('task', dup.id, extra.slice(0, 500)))
       }
     } else {
-      await commentBead('task', dup.id, `Touched by relay upsert ${new Date().toISOString()}`)
+      requireVerified(await commentBead('task', dup.id, `Touched by relay upsert ${new Date().toISOString()}`))
     }
     await maybePromote()
-    const detail = await beadText('task', ['show', dup.id])
-    return { mode: 'updated', id: dup.id, duplicateOf: dup.id, slug, promoted, detail: detail.slice(0, 1200) }
+    // Read-after-write with a null check: beadText degrades failures to
+    // text, so only showBeadAsync proves the bead reads back.
+    const detail = await showBeadAsync('task', dup.id)
+    requireVerified({ operation: 'updated', id: dup.id, store: 'task', verified: detail !== null })
+    return { mode: 'updated', id: dup.id, duplicateOf: dup.id, slug, promoted, detail: detail!.slice(0, 1200) }
   }
   const extraLabels = (input.labels ?? []).map(cleanLabel).filter((x): x is string => !!x)
   const labels = [...(slug ? [`project:${slug}`] : []), ...extraLabels].slice(0, 10)
-  const { id, detail } = await createBead({ store: 'task', title, description: input.description?.slice(0, 4000), labels })
+  const created = await createBead({ store: 'task', title, description: input.description?.slice(0, 4000), labels })
+  requireVerified({ operation: 'created', id: created.id, store: 'task', verified: created.verified })
   await maybePromote()
-  return { mode: 'created', id, slug, promoted, detail }
+  return { mode: 'created', id: created.id, slug, promoted, detail: created.detail }
 }
 
 export interface DispatchInput {
@@ -373,8 +391,9 @@ export async function requestDispatch(input: DispatchInput): Promise<{ id: strin
     ``,
     `relay did not execute this work. An external agent should claim it.`,
   ].filter((x): x is string => x !== null).join('\n')
-  const { id, detail } = await createBead({ store: 'task', title, description: body, labels: dispatchLabels(slug) })
-  return { id, slug, taskRef, detail }
+  const dispatched = await createBead({ store: 'task', title, description: body, labels: dispatchLabels(slug) })
+  requireVerified({ operation: 'created', id: dispatched.id, store: 'task', verified: dispatched.verified })
+  return { id: dispatched.id, slug, taskRef, detail: dispatched.detail }
 }
 
 export const VERIFY_STORES = ['task', 'stories', 'brain', 'projects', 'ideas', 'friction']
