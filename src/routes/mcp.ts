@@ -23,6 +23,7 @@ import { pickStores, gatherCandidates, sampleIndices, formatPicks } from '../lib
 import { mountFetch } from '../lib/express-fetch'
 import { lookupAccess, mcpResource } from '../lib/oauth'
 import { withCompatRequest } from '../lib/mcp-compat'
+import { withTelemetry } from '../lib/mcp-telemetry'
 import { captureEntry, editProject, formatFlow, formatProjectEdit, formatProjectList, formatResolve, formatVerify, listProjectsScoped, requestDispatch, resolveProject, runFlow, upsertTask, verifyWork } from '../lib/relay'
 import { closeBead, commentBead, formatReceipt, labelBead, noteBead } from '../lib/mutate'
 import { unverifiedMessage } from '../lib/receipts'
@@ -1046,4 +1047,7 @@ const authedMcpHandler = withMcpAuth(
 // mcp-handler speaks Fetch Request/Response; adapt at the boundary.
 // Sparse 2026 envelopes (ChatGPT) are backfilled first so the SDK's
 // strict envelope validation passes; everything else flows through.
-mountFetch(mcpRouter, '/mcp', (fetchReq) => withCompatRequest(fetchReq).then((r) => authedMcpHandler(r)))
+// Per-query telemetry wraps the whole chain (compat backfill + authed handler):
+// durable JSONL per request for lifecycle research, never failing responses.
+const telemetryMcpHandler = withTelemetry((fetchReq) => withCompatRequest(fetchReq).then((r) => authedMcpHandler(r)))
+mountFetch(mcpRouter, '/mcp', (fetchReq) => telemetryMcpHandler(fetchReq))
