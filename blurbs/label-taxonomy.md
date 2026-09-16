@@ -30,7 +30,12 @@ Owner: project-afw (bead triage pipeline). Parent: project-xat (taxonomy).
   integrator discovers store/title/labels from content, creates the real
   records with the labels above, then closes the inbox bead.
 - **projects**: `project:<slug>` on the canonical record so evidence packs
-  resolve it.
+  resolve it. Lifecycle labels: `state:foreground` (foreground; absence =
+  backlog) and `state:deprecated` (project closed/superseded; absence =
+  active). Both are independent: a project can be foreground or backlog
+  while deprecated or active. Promotion happens as the side effect of a
+  capture/task write for the project; `state:deprecated` is set and cleared
+  only through `project_edit`.
 
 ## Triage agent process
 

@@ -6,7 +6,11 @@ import {
   dispatchLabels,
   duplicateScore,
   findDuplicate,
+  formatProjectEdit,
+  lifecycleLabels,
+  lifecycleState,
   normalize,
+  planProjectEdit,
   projectState,
   rankProjects,
   scoreRow,
@@ -105,5 +109,78 @@ describe('dispatchLabels/slugify', () => {
   })
   it('slugifies titles', () => {
     assert.equal(slugify('Hello, World!'), 'hello-world')
+  })
+})
+
+describe('lifecycleState/lifecycleLabels', () => {
+  it('defaults active, deprecated on the lifecycle label', () => {
+    assert.equal(lifecycleState([]), 'active')
+    assert.equal(lifecycleState(['state:foreground']), 'active')
+    assert.equal(lifecycleState(['state:deprecated']), 'deprecated')
+    assert.equal(lifecycleState(['state:deprecated', 'state:foreground']), 'deprecated')
+  })
+  it('maps deprecated to add state:deprecated, active to remove it', () => {
+    assert.deepEqual(lifecycleLabels('deprecated'), { add: 'state:deprecated' })
+    assert.deepEqual(lifecycleLabels('active'), { remove: 'state:deprecated' })
+  })
+})
+
+describe('planProjectEdit', () => {
+  it('requires a project reference', () => {
+    assert.throws(() => planProjectEdit({ project: '   ' }), /project is required/)
+  })
+  it('requires at least one editable field', () => {
+    assert.throws(() => planProjectEdit({ project: 'parlay' }), /give title, description, note, and\/or lifecycle/)
+  })
+  it('trims title and note, keeps empty description (clears)', () => {
+    assert.deepEqual(planProjectEdit({ project: 'gas-city', title: '  T  ', description: '', note: '  n  ' }), {
+      ref: 'gas-city',
+      title: 'T',
+      description: '',
+      note: 'n',
+      lifecycle: undefined,
+    })
+  })
+  it('rejects unknown lifecycle values', () => {
+    assert.throws(
+      () => planProjectEdit({ project: 'parlay', lifecycle: 'archived' as 'active' }),
+      /unknown lifecycle: archived/,
+    )
+  })
+  it('accepts every single-field combo', () => {
+    const base = { project: 'cv-generator' }
+    assert.deepEqual(planProjectEdit({ ...base, description: 'D' }).description, 'D')
+    assert.deepEqual(planProjectEdit({ ...base, note: 'N' }).note, 'N')
+    assert.deepEqual(planProjectEdit({ ...base, lifecycle: 'deprecated' }).lifecycle, 'deprecated')
+    assert.deepEqual(planProjectEdit({ ...base, title: 'x' }).title, 'x')
+  })
+})
+
+describe('formatProjectEdit', () => {
+  const result = {
+    id: 'project-9d5',
+    slug: 'cv-generator',
+    title: 'cv-generator',
+    state: 'backlog' as const,
+    lifecycle: 'deprecated' as const,
+    steps: [
+      { name: 'update', ok: true, detail: 'title + description updated (verified)' },
+      { name: 'note', ok: true, detail: 'note appended (verified)' },
+      { name: 'lifecycle', ok: true, detail: 'set deprecated — state:deprecated added (verified)' },
+    ],
+    complete: true,
+  }
+  it('shows the project heading, resolved refs, and verified steps on success', () => {
+    const out = formatProjectEdit(result)
+    assert.match(out, /# project updated project-9d5 \(STORE: projects\)/)
+    assert.match(out, /project: cv-generator/)
+    assert.match(out, /state: backlog · lifecycle: deprecated \(state:deprecated\)/)
+    assert.match(out, /- update: ok/)
+    assert.match(out, /All steps verified — project reads back\./)
+  })
+  it('flags partial failure with a re-read warning', () => {
+    const partial = { ...result, complete: false, steps: [{ name: 'note', ok: false, detail: 'boom' }] }
+    const out = formatProjectEdit(partial)
+    assert.match(out, /Partial: 1 step\(s\) failed — re-read project-9d5 before reporting success\./)
   })
 })

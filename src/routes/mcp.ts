@@ -22,7 +22,7 @@ import { pickStores, gatherCandidates, sampleIndices, formatPicks } from '../lib
 import { mountFetch } from '../lib/express-fetch'
 import { lookupAccess, mcpResource } from '../lib/oauth'
 import { withCompatRequest } from '../lib/mcp-compat'
-import { captureEntry, formatFlow, formatProjectList, formatResolve, formatVerify, listProjectsScoped, requestDispatch, resolveProject, runFlow, upsertTask, verifyWork } from '../lib/relay'
+import { captureEntry, editProject, formatFlow, formatProjectEdit, formatProjectList, formatResolve, formatVerify, listProjectsScoped, requestDispatch, resolveProject, runFlow, upsertTask, verifyWork } from '../lib/relay'
 import { closeBead, commentBead, formatReceipt, labelBead, noteBead } from '../lib/mutate'
 import { unverifiedMessage } from '../lib/receipts'
 import { formatRelayStatus, relayStatus, withRelayStatus } from '../lib/relay-status'
@@ -645,6 +645,33 @@ const mcpHandler = createMcpHandler((server) => {
         return ok([`# captured ${r.id} (STORE: ${r.store})`, ``, r.slug ? `Project: ${r.slug}${r.promoted ? ' (promoted backlog → foreground)' : ''}` : `Project: (none)`, ``, r.detail].join('\n'))
       } catch (e) {
         return err(`capture failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    },
+  )
+
+  server.registerTool(
+    'project_edit',
+    {
+      title: 'Edit project',
+      description: 'Edit an existing project bead directly — title, description, appended note, lifecycle status (active | deprecated) — without creating task or correction beads. Project resolves by id, slug, or name. Every mutation step verifies read-after-write; only report success when this call returns the receipt. Deprecating sets state:deprecated; active clears it. Backlog/foreground state is untouched (promote through capture/upsert).',
+      inputSchema: z.object({
+        project: z.string().min(1).max(120).describe('Project id, slug, or name'),
+        title: z.string().max(200).optional().describe('New title'),
+        description: z.string().max(4000).optional().describe('New description (empty clears it)'),
+        note: z.string().max(4000).optional().describe('Project note to append'),
+        lifecycle: z.enum(['active', 'deprecated']).optional().describe('Set deprecated (state:deprecated label) or active (clear it)'),
+      }),
+    },
+    async ({ project, title, description, note, lifecycle }: {
+      project: string; title?: string; description?: string; note?: string; lifecycle?: 'active' | 'deprecated'
+    }) => {
+      try {
+        const r = await editProject({ project, title, description, note, lifecycle })
+        relayStatus.touch({ id: r.id, kind: 'note', title: title ?? `edited project ${r.slug}` })
+        return r.complete ? ok(formatProjectEdit(r)) : err(formatProjectEdit(r))
+      } catch (e) {
+        relayStatus.touch({ id: `project:${project}`, kind: 'failure', title: `edit project failed: ${project}`, state: 'failed' })
+        return err(`project_edit failed: ${e instanceof Error ? e.message : String(e)}`)
       }
     },
   )

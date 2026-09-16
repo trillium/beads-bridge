@@ -3,7 +3,7 @@ import { runList, runListAsync, showBeadAsync } from '../routes/query/store'
 import { cleanLabel, type Row } from '../routes/query/params'
 import { createBead } from './create'
 import { editBead } from './edit'
-import { commentBead, labelBead } from './mutate'
+import { commentBead, labelBead, noteBead } from './mutate'
 import { requireVerified } from './receipts'
 import { storeFromId } from '../util'
 import { STORES } from '../config'
@@ -49,6 +49,17 @@ export function slugOf(labels: string[], title: string): string {
 
 export function projectState(labels: string[]): ProjectState {
   return labels.includes('state:foreground') ? 'foreground' : 'backlog'
+}
+
+export type ProjectLifecycle = 'active' | 'deprecated'
+export const LIFECYCLE_DEPRECATED = 'state:deprecated'
+
+export function lifecycleState(labels: string[]): ProjectLifecycle {
+  return labels.includes(LIFECYCLE_DEPRECATED) ? 'deprecated' : 'active'
+}
+
+export function lifecycleLabels(lifecycle: ProjectLifecycle): { add?: string; remove?: string } {
+  return lifecycle === 'deprecated' ? { add: LIFECYCLE_DEPRECATED } : { remove: LIFECYCLE_DEPRECATED }
 }
 
 export function aliasTexts(labels: string[]): string[] {
@@ -232,6 +243,128 @@ export async function promoteProject(id: string, reason: string): Promise<{ prom
   } catch (e) {
     return { promoted: false, detail: `promotion failed: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300) }
   }
+}
+
+export interface ProjectEditInput {
+  project: string
+  title?: string
+  description?: string
+  note?: string
+  lifecycle?: ProjectLifecycle
+}
+
+export interface ProjectEditPlan {
+  ref: string
+  title?: string
+  description?: string
+  note?: string
+  lifecycle?: ProjectLifecycle
+}
+
+// Pure validation: resolves the project reference and rejects malformed
+// calls before any store work. Mirrors editBead's field semantics — title
+// trims empties away, description passes through (empty clears it).
+export function planProjectEdit(input: ProjectEditInput): ProjectEditPlan {
+  const ref = input.project.trim()
+  if (!ref) throw new Error('project is required (id, slug, or name)')
+  const title = input.title?.trim()
+  const description = input.description
+  const note = input.note?.trim()
+  const lifecycle = input.lifecycle
+  if (!title && description === undefined && !note && !lifecycle) {
+    throw new Error('give title, description, note, and/or lifecycle')
+  }
+  if (lifecycle && lifecycle !== 'active' && lifecycle !== 'deprecated') {
+    throw new Error(`unknown lifecycle: ${lifecycle} (want active|deprecated)`)
+  }
+  return { ref, title: title || undefined, description, note: note || undefined, lifecycle }
+}
+
+export interface ProjectEditResult {
+  id: string
+  slug: string
+  title: string
+  state: ProjectState
+  lifecycle: ProjectLifecycle
+  steps: FlowStep[]
+  complete: boolean
+}
+
+const isUnverified = (e: unknown): boolean => e instanceof Error && e.message.startsWith('unverified:')
+
+// Direct project-level edit: resolve the project, revise title/description,
+// append a note, and/or set lifecycle status. Never creates task or
+// correction beads. Every mutation step verifies read-after-write; an
+// unverified write rethrows (never a partial success), while a blocked
+// write lands as a labeled failed step so partial application is explicit.
+export async function editProject(input: ProjectEditInput): Promise<ProjectEditResult> {
+  const plan = planProjectEdit(input)
+  const found = await lookupProject(plan.ref)
+  if (!found) throw new Error(`unknown project: ${plan.ref}`)
+  const id = found.row.id
+  const slug = found.slug
+  const steps: FlowStep[] = []
+  const content: string[] = []
+  if (plan.title) content.push('title')
+  if (plan.description !== undefined) content.push('description')
+  if (content.length) {
+    try {
+      const edited = await editBead({ store: 'projects', id, title: plan.title, description: plan.description })
+      requireVerified({ operation: 'updated', id, store: 'projects', verified: edited.verified })
+      steps.push({ name: 'update', ok: true, detail: `${content.join(' + ')} updated (verified)` })
+    } catch (e) {
+      if (isUnverified(e)) throw e
+      steps.push({ name: 'update', ok: false, detail: e instanceof Error ? e.message : String(e) })
+    }
+  }
+  if (plan.note) {
+    try {
+      const n = await noteBead('projects', id, plan.note)
+      requireVerified({ operation: 'note added', id, store: 'projects', verified: n.verified })
+      steps.push({ name: 'note', ok: true, detail: 'note appended (verified)' })
+    } catch (e) {
+      if (isUnverified(e)) throw e
+      steps.push({ name: 'note', ok: false, detail: e instanceof Error ? e.message : String(e) })
+    }
+  }
+  if (plan.lifecycle) {
+    try {
+      const l = await labelBead('projects', id, lifecycleLabels(plan.lifecycle))
+      requireVerified({ operation: 'labels updated', id, store: 'projects', verified: l.verified })
+      const action = lifecycleLabels(plan.lifecycle).add ? `${LIFECYCLE_DEPRECATED} added` : `${LIFECYCLE_DEPRECATED} removed`
+      steps.push({ name: 'lifecycle', ok: true, detail: `set ${plan.lifecycle} — ${action} (verified)` })
+    } catch (e) {
+      if (isUnverified(e)) throw e
+      steps.push({ name: 'lifecycle', ok: false, detail: e instanceof Error ? e.message : String(e) })
+    }
+  }
+  const complete = steps.length > 0 && steps.every((s) => s.ok)
+  return {
+    id,
+    slug,
+    title: (plan.title ?? found.row.title).slice(0, 160),
+    state: projectState(found.row.labels),
+    lifecycle: plan.lifecycle ?? lifecycleState(found.row.labels),
+    steps,
+    complete,
+  }
+}
+
+export function formatProjectEdit(r: ProjectEditResult): string {
+  const lines = r.steps.map((s) => `- ${s.name}: ${s.ok ? 'ok' : 'FAILED'} — ${s.detail}`)
+  const lifecycle = r.lifecycle === 'deprecated' ? 'deprecated (state:deprecated)' : 'active'
+  return [
+    `# project updated ${r.id} (STORE: projects)`,
+    ``,
+    `project: ${r.slug}`,
+    `title: ${r.title}`,
+    `state: ${r.state} · lifecycle: ${lifecycle}`,
+    ``,
+    ...lines,
+    ...(r.complete
+      ? [``, `All steps verified — project reads back.`]
+      : [``, `Partial: ${r.steps.filter((s) => !s.ok).length} step(s) failed — re-read ${r.id} before reporting success.`]),
+  ].join('\n')
 }
 
 export interface CaptureInput {
