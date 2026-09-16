@@ -12,8 +12,12 @@ import {
   formatSnapshot,
   mergeByUpdated,
   parseRetrievalRows,
+  claimAnchorMs,
+  formatClaimed,
+  humanAge,
   pickRetrievalStores,
   searchArgs,
+  toClaimedRow,
   walkGraph,
   type NeighborSet,
   type RetrievalRow,
@@ -65,6 +69,7 @@ describe('parseRetrievalRows', () => {
         store: 'task', id: 'task-1', title: 'T', status: 'open', labels: ['a'],
         updatedAt: '2026-09-13T19:00:00Z', createdAt: '2026-09-12T00:00:00Z',
         commentCount: 3, closeReason: 'done',
+        assignee: undefined, startedAt: undefined,
       }],
     )
   })
@@ -161,5 +166,36 @@ describe('empty-result formats', () => {
       formatSnapshot({ root: '', beads: [], truncated: false, error: 'Give a bead id or search phrase.' }),
       /Give a bead id/,
     )
+  })
+})
+
+describe('claimed beads', () => {
+  it('parses assignee + started_at claim evidence', () => {
+    const rows = parseRetrievalRows(
+      JSON.stringify([{ id: 'inbox-1', title: 't', status: 'in_progress', assignee: 'pi-inbox', started_at: '2026-09-16T10:00:00Z', labels: [] }]),
+      'inbox',
+    )
+    assert.equal(rows[0].assignee, 'pi-inbox')
+    assert.equal(rows[0].startedAt, '2026-09-16T10:00:00Z')
+  })
+  it('anchors claim time on started, falls back, computes age', () => {
+    const now = Date.parse('2026-09-16T12:00:00Z')
+    const a = toClaimedRow(row('a', '2026-09-16T11:00:00Z', { startedAt: '2026-09-16T10:00:00Z', assignee: 'x' }), now)
+    assert.equal(a.claimAt, '2026-09-16T10:00:00.000Z')
+    assert.equal(a.claimAgeMs, 2 * 3600_000)
+    assert.equal(humanAge(a.claimAgeMs as number), '2h0m')
+    const b = toClaimedRow(row('b'), now)
+    assert.equal(b.claimAt, null)
+    assert.equal(humanAge(3 * 86400_000 + 60000), '3d0h')
+  })
+  it('formats oldest-first rows with claimant and age, names the empty case', () => {
+    const out = formatClaimed(
+      [{ ...row('a'), assignee: 'pi-inbox', claimAt: '2026-09-16T10:00:00.000Z', claimAgeMs: 7200000 }],
+      [], ['inbox'],
+    )
+    assert.match(out, /inbox-a|inbox/)
+    assert.match(out, /@pi-inbox/)
+    assert.match(out, /agent hands only/)
+    assert.match(formatClaimed([], [], ['inbox']), /Nothing claimed/)
   })
 })

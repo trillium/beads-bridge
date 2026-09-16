@@ -21,6 +21,8 @@ export interface RetrievalRow {
   createdAt?: string
   commentCount?: number
   closeReason?: string
+  assignee?: string
+  startedAt?: string
 }
 
 export interface StoreError {
@@ -71,6 +73,8 @@ export function parseRetrievalRows(stdout: string, store: string): RetrievalRow[
       createdAt: typeof x.created_at === 'string' ? x.created_at : undefined,
       commentCount: typeof x.comment_count === 'number' ? x.comment_count : undefined,
       closeReason: typeof x.close_reason === 'string' ? x.close_reason.slice(0, 160) : undefined,
+      assignee: typeof x.assignee === 'string' && x.assignee ? x.assignee.slice(0, 120) : undefined,
+      startedAt: typeof x.started_at === 'string' ? x.started_at : undefined,
     }))
     .filter((x) => x.id !== '?')
 }
@@ -249,7 +253,98 @@ export function formatActivity(
   return lines.join('\n')
 }
 
-// ---- 3. bounded reconstruction snapshot ----
+// ---- 3. federated claimed-bead activity (inbox-l6ki) ----
+//
+// Claim semantics (verified against bd list --json): claiming sets
+// status=in_progress with assignee + started_at. There is no separate
+// claimed_at field, so claim timestamp ~= started_at (fallback updated_at,
+// then created_at). CLAIMED means evidence of agent hands only — never
+// completion, progress, or freshness. Stale/abandoned/completed are NOT
+// inferred here; raw ages are exposed and the caller judges.
+
+export interface ClaimedRow extends RetrievalRow {
+  claimAt: string | null
+  claimAgeMs: number | null
+}
+
+export function claimAnchorMs(r: RetrievalRow, now = Date.now()): number | null {
+  for (const t of [r.startedAt, r.updatedAt, r.createdAt]) {
+    if (!t) continue
+    const ms = Date.parse(t)
+    if (!Number.isNaN(ms)) return ms
+  }
+  return null
+}
+
+export function humanAge(ms: number): string {
+  const m = Math.max(0, Math.floor(ms / 60000))
+  const d = Math.floor(m / 1440)
+  const h = Math.floor((m % 1440) / 60)
+  if (d > 0) return `${d}d${h}h`
+  if (h > 0) return `${h}h${m % 60}m`
+  return `${m}m`
+}
+
+export function toClaimedRow(r: RetrievalRow, now = Date.now()): ClaimedRow {
+  const anchor = claimAnchorMs(r, now)
+  return {
+    ...r,
+    claimAt: anchor == null ? null : new Date(anchor).toISOString(),
+    claimAgeMs: anchor == null ? null : Math.max(0, now - anchor),
+  }
+}
+
+export async function claimedBeads(opts: { stores?: string[]; limit?: number } = {}): Promise<{
+  rows: ClaimedRow[]
+  errors: StoreError[]
+  stores: string[]
+  unknownStores: string[]
+}> {
+  const { stores, unknown } = pickRetrievalStores(opts.stores)
+  const limit = clampLimit(opts.limit, 20)
+  const perStore = Math.min(RETRIEVAL_MAX_PER_STORE, Math.max(limit, 10))
+  const now = Date.now()
+  const per = await mapLimit(stores, 6, async (store): Promise<{ rows: ClaimedRow[]; error?: string }> => {
+    try {
+      const out = await execStdout(store, ['list', '--json', '--status', 'in_progress', '--limit', String(perStore), '--sort', 'updated'], 15000)
+      const rows = parseRetrievalRows(out, store).map((r) => toClaimedRow(r, now))
+      // Oldest claims first — abandoned work surfaces at the top.
+      rows.sort((a, b) => (b.claimAgeMs ?? -1) - (a.claimAgeMs ?? -1))
+      return { rows }
+    } catch (e) {
+      return { rows: [], error: (e instanceof Error ? e.message : String(e)).slice(0, 200) }
+    }
+  })
+  const errors: StoreError[] = []
+  const rows = per.flatMap((r, i) => {
+    if (r.error) errors.push({ store: stores[i], error: r.error })
+    return r.rows
+  })
+  rows.sort((a, b) => (b.claimAgeMs ?? -1) - (a.claimAgeMs ?? -1))
+  return { rows: rows.slice(0, limit), errors, stores, unknownStores: unknown }
+}
+
+export function formatClaimed(
+  rows: ClaimedRow[],
+  errors: StoreError[],
+  stores: string[],
+  unknownStores: string[] = [],
+): string {
+  const lines = [`# claimed beads — oldest claim first (${rows.length} across ${stores.length} stores)`, ``]
+  lines.push(`Claimed = evidence of agent hands only, never completion or freshness.`, ``)
+  if (!rows.length) lines.push(`Nothing claimed in scope.`, ``)
+  for (const r of rows) {
+    lines.push(
+      `- ${r.id} [${r.store}] — ${r.title}${r.assignee ? ` @${r.assignee}` : ''}` +
+        `${r.claimAt ? ` (claimed ${r.claimAt}, ${r.claimAgeMs != null ? humanAge(r.claimAgeMs) + ' ago' : 'age unknown'})` : ' (claim time unknown)'}`,
+    )
+  }
+  if (unknownStores.length) lines.push(``, `Skipped unknown stores: ${unknownStores.join(', ')}`)
+  for (const e of errors) lines.push(``, `error [${e.store}]: ${e.error}`)
+  return lines.join('\n')
+}
+
+// ---- 4. bounded reconstruction snapshot ----
 
 export const SNAPSHOT_DEFAULT_DEPTH = 2
 export const SNAPSHOT_MAX_DEPTH = 4

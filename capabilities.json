@@ -2,40 +2,236 @@
   "manifestVersion": 1,
   "note": "Source of truth for shipped Beads Bridge MCP capabilities. A capability is shipped only when implementation + tests + this entry + changelog/version land coherently. See task-qgplz.",
   "capabilities": [
-    { "id": "bead_show", "title": "Show bead", "op": "bead_show", "introduced": "1.0.0" },
-    { "id": "beads_bundle", "title": "Beads bundle", "op": "beads_bundle", "introduced": "1.0.0" },
-    { "id": "query_store", "title": "Query store", "op": "query_store", "introduced": "1.0.0" },
-    { "id": "bead_comment", "title": "Comment on bead", "op": "bead_comment", "introduced": "1.0.0" },
-    { "id": "bead_note", "title": "Append bead note", "op": "bead_note", "introduced": "1.0.0" },
-    { "id": "bead_decision", "title": "Record decision", "op": "bead_decision", "introduced": "1.0.0" },
-    { "id": "bead_label", "title": "Manage bead labels", "op": "bead_label", "introduced": "1.0.0" },
-    { "id": "bead_create", "title": "Create bead", "op": "bead_create", "introduced": "1.0.0" },
-    { "id": "bead_batch_create", "title": "Batch create beads", "op": "bead_batch_create", "introduced": "1.0.0" },
-    { "id": "bead_connections", "title": "Bead connections", "op": "bead_connections", "introduced": "1.0.0" },
-    { "id": "bead_edit", "title": "Edit bead", "op": "bead_edit", "introduced": "1.0.0" },
-    { "id": "bead_feedback", "title": "Bead feedback", "op": "bead_feedback", "introduced": "1.0.0" },
-    { "id": "whoami", "title": "Who am I here", "op": "whoami", "introduced": "1.0.0" },
-    { "id": "identity_update", "title": "Update operator identity", "op": "identity_update", "introduced": "1.0.0" },
-    { "id": "scratchpad", "title": "Scratchpad", "op": "scratchpad", "introduced": "1.0.0" },
-    { "id": "random", "title": "Random", "op": "random", "introduced": "1.0.0" },
-    { "id": "timeout_probe", "title": "Timeout probe", "op": "timeout_probe", "introduced": "1.0.0" },
-    { "id": "relay_resolve_project", "title": "Resolve project", "op": "relay_resolve_project", "introduced": "1.0.0" },
-    { "id": "relay_list_projects", "title": "List projects", "op": "relay_list_projects", "introduced": "1.0.0" },
-    { "id": "relay_capture", "title": "Capture to project", "op": "relay_capture", "introduced": "1.0.0" },
-    { "id": "project_edit", "title": "Edit project", "op": "project_edit", "introduced": "1.1.0", "beads": ["inbox-z6dv"] },
-    { "id": "relay_upsert_task", "title": "Create or update task", "op": "relay_upsert_task", "introduced": "1.0.0" },
-    { "id": "relay_dispatch_request", "title": "Dispatch request", "op": "relay_dispatch_request", "introduced": "1.0.0" },
-    { "id": "relay_verify", "title": "Verify work", "op": "relay_verify", "introduced": "1.0.0" },
-    { "id": "relay_flow", "title": "Resolve-capture-dispatch flow", "op": "relay_flow", "introduced": "1.0.0" },
-    { "id": "relay_catchup", "title": "Catch up", "op": "relay_catchup", "introduced": "1.0.0" },
-    { "id": "relay_attention_next", "title": "Attention next", "op": "relay_attention_next", "introduced": "1.0.0" },
-    { "id": "relay_inspect", "title": "Inspect", "op": "relay_inspect", "introduced": "1.0.0" },
-    { "id": "retrieval_search", "title": "Retrieval search", "op": "retrieval_search", "introduced": "1.0.0" },
-    { "id": "retrieval_activity", "title": "Retrieval activity", "op": "retrieval_activity", "introduced": "1.0.0" },
-    { "id": "retrieval_snapshot", "title": "Retrieval snapshot", "op": "retrieval_snapshot", "introduced": "1.0.0" },
-    { "id": "relay_status", "title": "Relay status", "op": "relay_status", "introduced": "1.0.0" },
-    { "id": "bridge_info", "title": "Bridge version/capability introspection", "op": "bridge_info", "introduced": "1.1.0", "beads": ["task-qgplz"] },
-    { "id": "capability_status", "title": "Capability status lookup", "op": "capability_status", "introduced": "1.1.0", "beads": ["task-qgplz"] },
-    { "id": "capabilities_since", "title": "Capabilities changed since version", "op": "capabilities_since", "introduced": "1.1.0", "beads": ["task-qgplz"] }
+    {
+      "id": "bead_show",
+      "title": "Show bead",
+      "op": "bead_show",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "beads_bundle",
+      "title": "Beads bundle",
+      "op": "beads_bundle",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "query_store",
+      "title": "Query store",
+      "op": "query_store",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "bead_comment",
+      "title": "Comment on bead",
+      "op": "bead_comment",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "bead_note",
+      "title": "Append bead note",
+      "op": "bead_note",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "bead_decision",
+      "title": "Record decision",
+      "op": "bead_decision",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "bead_label",
+      "title": "Manage bead labels",
+      "op": "bead_label",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "bead_create",
+      "title": "Create bead",
+      "op": "bead_create",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "bead_batch_create",
+      "title": "Batch create beads",
+      "op": "bead_batch_create",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "bead_connections",
+      "title": "Bead connections",
+      "op": "bead_connections",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "bead_edit",
+      "title": "Edit bead",
+      "op": "bead_edit",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "bead_feedback",
+      "title": "Bead feedback",
+      "op": "bead_feedback",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "whoami",
+      "title": "Who am I here",
+      "op": "whoami",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "identity_update",
+      "title": "Update operator identity",
+      "op": "identity_update",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "scratchpad",
+      "title": "Scratchpad",
+      "op": "scratchpad",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "random",
+      "title": "Random",
+      "op": "random",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "timeout_probe",
+      "title": "Timeout probe",
+      "op": "timeout_probe",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "relay_resolve_project",
+      "title": "Resolve project",
+      "op": "relay_resolve_project",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "relay_list_projects",
+      "title": "List projects",
+      "op": "relay_list_projects",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "relay_capture",
+      "title": "Capture to project",
+      "op": "relay_capture",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "project_edit",
+      "title": "Edit project",
+      "op": "project_edit",
+      "introduced": "1.1.0",
+      "beads": [
+        "inbox-z6dv"
+      ]
+    },
+    {
+      "id": "relay_upsert_task",
+      "title": "Create or update task",
+      "op": "relay_upsert_task",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "relay_dispatch_request",
+      "title": "Dispatch request",
+      "op": "relay_dispatch_request",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "relay_verify",
+      "title": "Verify work",
+      "op": "relay_verify",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "relay_flow",
+      "title": "Resolve-capture-dispatch flow",
+      "op": "relay_flow",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "relay_catchup",
+      "title": "Catch up",
+      "op": "relay_catchup",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "relay_attention_next",
+      "title": "Attention next",
+      "op": "relay_attention_next",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "relay_inspect",
+      "title": "Inspect",
+      "op": "relay_inspect",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "retrieval_search",
+      "title": "Retrieval search",
+      "op": "retrieval_search",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "retrieval_activity",
+      "title": "Retrieval activity",
+      "op": "retrieval_activity",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "retrieval_snapshot",
+      "title": "Retrieval snapshot",
+      "op": "retrieval_snapshot",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "relay_status",
+      "title": "Relay status",
+      "op": "relay_status",
+      "introduced": "1.0.0"
+    },
+    {
+      "id": "bridge_info",
+      "title": "Bridge version/capability introspection",
+      "op": "bridge_info",
+      "introduced": "1.1.0",
+      "beads": [
+        "task-qgplz"
+      ]
+    },
+    {
+      "id": "capability_status",
+      "title": "Capability status lookup",
+      "op": "capability_status",
+      "introduced": "1.1.0",
+      "beads": [
+        "task-qgplz"
+      ]
+    },
+    {
+      "id": "capabilities_since",
+      "title": "Capabilities changed since version",
+      "op": "capabilities_since",
+      "introduced": "1.1.0",
+      "beads": [
+        "task-qgplz"
+      ]
+    },
+    {
+      "id": "retrieval_claimed",
+      "title": "Claimed beads across stores",
+      "op": "retrieval_claimed",
+      "introduced": "1.2.0",
+      "beads": [
+        "inbox-l6ki"
+      ]
+    }
   ]
 }

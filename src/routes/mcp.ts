@@ -34,10 +34,12 @@ import { inspectRead, inspectReadMany, inspectSearch, inspectTree } from '../lib
 import { formatProbeResult, runDelayProbe, validateCorrelationId, validateDelaySeconds } from '../lib/delay-probe'
 import {
   attachHistory,
+  claimedBeads,
   clampLimit,
   cleanLabels,
   federatedSearch,
   formatActivity,
+  formatClaimed,
   formatSearch,
   formatSnapshot,
   pickRetrievalStores,
@@ -502,7 +504,7 @@ const mcpHandler = createMcpHandler((server) => {
     'relay_list_projects', 'relay_capture', 'project_edit', 'relay_upsert_task',
     'relay_dispatch_request', 'relay_verify', 'relay_flow', 'relay_catchup',
     'relay_attention_next', 'relay_inspect', 'retrieval_search', 'retrieval_activity',
-    'retrieval_snapshot', 'relay_status', 'bridge_info', 'capability_status',
+    'retrieval_claimed', 'retrieval_snapshot', 'relay_status', 'bridge_info', 'capability_status',
     'capabilities_since',
   ]
   server.registerTool(
@@ -981,6 +983,27 @@ const mcpHandler = createMcpHandler((server) => {
       })
       const hist = history && rows.length ? await attachHistory(rows.slice(0, Math.min(rows.length, 20)), 2) : undefined
       return ok(formatActivity(rows, errors, hit, unknownStores, hist))
+    },
+  )
+
+  server.registerTool(
+    'retrieval_claimed',
+    {
+      title: 'Claimed beads across stores',
+      description: 'Federated in_progress beads: id, title, store, claimant, claim timestamp + age, oldest first. Claimed means agent hands only — never completion or freshness (same as GET /retrieval/claimed).',
+      inputSchema: z.object({
+        limit: z.number().int().min(1).max(100).optional().describe('Max rows (default 20)'),
+        stores: z.array(z.string()).max(10).optional().describe('Stores to cover (default all)'),
+      }),
+    },
+    async ({ limit, stores }: { limit?: number; stores?: string[] }) => {
+      const { stores: used } = pickRetrievalStores(stores?.length ? stores : undefined)
+      if (stores?.length && !used.length) return err(`unknown stores: ${stores.join(', ')} (known: ${STORES.join(', ')})`)
+      const { rows, errors, stores: hit, unknownStores } = await claimedBeads({
+        stores: stores?.length ? stores : undefined,
+        limit: clampLimit(limit, 20),
+      })
+      return ok(formatClaimed(rows, errors, hit, unknownStores))
     },
   )
 

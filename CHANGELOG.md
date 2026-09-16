@@ -2,6 +2,13 @@
 
 ## 1.2.0
 
+- `retrieval_claimed` MCP op + federated claimed-bead query (inbox-l6ki):
+  in_progress beads across all stores with claimant, claim timestamp
+  (started_at) + computed age, oldest first. Claim evidence only — never
+  completion or freshness. RetrievalRow gains assignee/startedAt.
+
+## 1.2.0
+
 - Durable per-query MCP telemetry (inbox-au8v): every /mcp request appended
   as JSONL (timestamps, op/tool, session + protocol metadata, client class,
   versions, correlation ids, timing/status). Secrets never recorded
