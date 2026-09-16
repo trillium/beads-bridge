@@ -9,6 +9,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - All bead mutations (create/edit/comment/note/close/label) must go through `src/lib/mutate.ts`: shell-free argv, throw-on-failure, verify-after-write receipts. Never build shell strings for writes; `bd()` in `src/util.ts` is reads-only by convention.
 - False-success guardrail (`src/lib/receipts.ts`): unverified mutations are errors naming operation/id/store (`requireVerified`/`unverifiedError`), never success — routes return MCP isError / GET 500, batches report partial failure.
 - ChatGPT probes OAuth discovery at bare AND `/mcp`-suffixed well-known paths — every discovery doc must be mounted at both (see `src/routes/oauth.ts` Discovery + `src/routes/discovery.test.ts`).
+- Live rounds-trip tests (`src/lib/relay-live.test.ts` is the template): `projects` store beads are `project-*` while `createBead`'s id parser keys off `projects-`, so shell `projects create` directly and parse `project-<id>`; clean up with `projects delete <id> --force` + verify `show` returns null. Tests that spawn several store calls need a per-test `{ timeout }` — bun's 5s default is too tight.
 
 ## Maintaining this file
 
