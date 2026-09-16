@@ -41,6 +41,23 @@ describe('manifest', () => {
   })
 })
 
+describe('changelog coherence', () => {
+  it('has a CHANGELOG.md version section for every introduced version', () => {
+    const changelog = readFileSync(join(__dirname, '..', '..', 'CHANGELOG.md'), 'utf8')
+    const sections = new Set(
+      [...changelog.matchAll(/^##\s+(\d+\.\d+\.\d+)\s*$/gm)].map((m) => m[1]),
+    )
+    const m = loadManifest()
+    assert.ok(sections.size > 0, 'CHANGELOG.md has no version sections')
+    for (const c of m.capabilities) {
+      assert.ok(
+        sections.has(c.introduced),
+        `${c.id}: introduced ${c.introduced} has no ## ${c.introduced} section in CHANGELOG.md`,
+      )
+    }
+  })
+})
+
 describe('semver helpers', () => {
   it('validates and compares', () => {
     assert.ok(isSemver('1.1.0') && !isSemver('1.1') && !isSemver('v1.2.3'))
