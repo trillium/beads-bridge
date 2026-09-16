@@ -51,6 +51,33 @@ Server names may not contain `__` or end with `_`. Bridge tools arrive as
 - `mcpjungle list tools --server beads-bridge`: **36**
 - Live call `beads-bridge__whoami` through jungle returns bridge output.
 
+## S3 end-to-end proof (2026-09-16, task-622kl.3)
+
+Gateway started manually per S1 (`mcpjungle start --host 127.0.0.1
+--port 8338`, SQLite `~/.local/share/mcpjungle/mcpjungle.db`);
+all probes below are fresh MCP sessions over Streamable HTTP on
+`http://127.0.0.1:8338/mcp`:
+
+- Read: `initialize` → `MCPJungle Proxy MCP Server
+  v0.0.0-local+12648be`; `tools/list` → **36**, all
+  `beads-bridge__`-prefixed, zero unprefixed.
+- `bridge_info` through jungle → backend **v1.2.0** (commit db952ef,
+  manifest v1); `capability_status(bead_create)` → LIVE since 1.0.0;
+  `whoami` → `OAuth client mcpjungle-gateway`.
+- Write: `bead_create` (store `dump`) → verified receipt `dump-xen`;
+  `bead_show` reads back; `bead_decision(close)` → verified CLOSED.
+  Scratch bead, closed immediately.
+- Registration: `deregister beads-bridge` → fresh session sees **0**
+  tools (CLI: server not found); `register -c
+  /tmp/jungle-beads-bridge.json` → **36** again; `register --force`
+  (the update/rotation path) → **36**, bearer still valid.
+  Registry changes are visible to new sessions with no gateway restart
+  — staleness lives in the client session.
+- Bridge intact: direct `http://127.0.0.1:3737/mcp` (same bearer) →
+  **36** unprefixed tools, same backend/commit/manifest; repo
+  `mcp-compat` + `capabilities` + `mutate` suites green (26 pass).
+- ChatGPT refresh runbook: `docs/jungle-gateway-refresh.md`.
+
 ## Boundaries
 
 - Loopback only: bridge `127.0.0.1:3737`, jungle `127.0.0.1:8338`. Nothing
