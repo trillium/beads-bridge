@@ -17,6 +17,7 @@ import { beadConnections, formatConnections } from '../lib/connections'
 import { writeFeedback } from '../lib/feedback'
 import { editBead } from '../lib/edit'
 import { formatWhoami, loadProfile, serverVersion, updateProfile } from '../lib/whoami'
+import { backendCommit, capabilitiesSince, capabilityStatus, formatBridgeInfo, isSemver, loadManifest, schemaHash } from '../lib/capabilities'
 import { scratchAppend, scratchClear, scratchRead } from '../lib/scratchpad'
 import { pickStores, gatherCandidates, sampleIndices, formatPicks } from '../lib/random'
 import { mountFetch } from '../lib/express-fetch'
@@ -485,6 +486,86 @@ const mcpHandler = createMcpHandler((server) => {
         operator: loadProfile(),
         stores: STORES,
       }))
+    },
+  )
+
+  // Capability/version contract (task-qgplz): stable introspection so an agent
+  // with a stale loaded MCP schema can discover the backend has advanced.
+  // BRIDGE_OP_NAMES must list every registerTool name below; capabilities
+  // tests enforce the sync (source registrations == manifest ops == hash input).
+  const BRIDGE_OP_NAMES = [
+    'bead_show', 'beads_bundle', 'query_store', 'bead_comment', 'bead_note',
+    'bead_decision', 'bead_label', 'bead_create', 'bead_batch_create',
+    'bead_connections', 'bead_edit', 'bead_feedback', 'whoami', 'identity_update',
+    'scratchpad', 'random', 'timeout_probe', 'relay_resolve_project',
+    'relay_list_projects', 'relay_capture', 'project_edit', 'relay_upsert_task',
+    'relay_dispatch_request', 'relay_verify', 'relay_flow', 'relay_catchup',
+    'relay_attention_next', 'relay_inspect', 'retrieval_search', 'retrieval_activity',
+    'retrieval_snapshot', 'relay_status', 'bridge_info', 'capability_status',
+    'capabilities_since',
+  ]
+  server.registerTool(
+    'bridge_info',
+    {
+      title: 'Bridge version and capability introspection',
+      description: 'Stable introspection: backend semver, commit, capability-manifest version, MCP schema hash. Compare against what you loaded at connect; on mismatch ask the user for a manual MCP refresh — an old connection cannot see newly registered tools.',
+      inputSchema: z.object({}),
+    },
+    async () => {
+      return ok([
+        formatBridgeInfo({ opNames: BRIDGE_OP_NAMES, base: BASE }),
+        ``,
+        `commit: ${backendCommit()}`,
+        `schema: ${schemaHash(BRIDGE_OP_NAMES)}`,
+      ].join('\n'))
+    },
+  )
+  server.registerTool(
+    'capability_status',
+    {
+      title: 'Capability status lookup',
+      description: 'Is capability id (or originating bead id) live in this backend version? Use to map historical feature requests to shipped capabilities.',
+      inputSchema: z.object({
+        id: z.string().min(1).max(120).describe('Capability id or originating bead id'),
+      }),
+    },
+    async ({ id }: { id: string }) => {
+      const clean = id.trim()
+      if (!clean) return err('capability_status: empty id')
+      const r = capabilityStatus(loadManifest(), clean)
+      if (!r.found) {
+        return ok([`# capability_status — ${clean}`, ``, `not in manifest (backend v${r.liveInBackend}). Either unknown id or predates the manifest; check capabilities_since(1.0.0).`].join('\n'))
+      }
+      const e = r.entry
+      const state =
+        e.removed != null ? `REMOVED in ${e.removed}`
+        : e.deprecated != null ? `DEPRECATED since ${e.deprecated}`
+        : `LIVE since ${e.introduced}`
+      return ok([
+        `# capability_status — ${e.id}`, ``,
+        `${e.title} (op: ${e.op}) — ${state} (backend v${r.liveInBackend})`,
+        ...(e.beads?.length ? [`originating beads: ${e.beads.join(', ')}`] : []),
+      ].join('\n'))
+    },
+  )
+  server.registerTool(
+    'capabilities_since',
+    {
+      title: 'Capabilities changed since version',
+      description: 'List capabilities introduced or changed after a semver X.Y.Z. Use with the version your loaded schema understands to learn what a refresh would bring.',
+      inputSchema: z.object({
+        version: z.string().min(5).max(20).describe('Semver X.Y.Z your schema understands'),
+      }),
+    },
+    async ({ version }: { version: string }) => {
+      const clean = version.trim()
+      if (!isSemver(clean)) return err(`capabilities_since: '${version}' is not semver X.Y.Z`)
+      const rows = capabilitiesSince(loadManifest(), clean)
+      if (!rows.length) return ok(`# capabilities_since ${clean}\n\nNothing newer — your schema matches the backend.`)
+      return ok([
+        `# capabilities_since ${clean} — ${rows.length} newer`, ``,
+        ...rows.map((e) => `- ${e.id} (${e.title}, op: ${e.op}) — since ${e.changed ?? e.introduced}`),
+      ].join('\n'))
     },
   )
 
