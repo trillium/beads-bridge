@@ -106,3 +106,68 @@ all probes below are fresh MCP sessions over Streamable HTTP on
   `launchctl kickstart -k` → health + registration + 36 tools back with
   zero manual steps (registry lives in SQLite, survives restarts).
 - Bridge service untouched (still running, own plist unchanged).
+
+## S5a: firstmate_mcp onboarded (2026-09-17, task-o8q1z)
+
+Second downstream behind the same loopback gateway. ChatGPT connects
+to jungle; jungle spawns the Python server as a local stdio child.
+No bearer involved (stdio has no HTTP surface); no secrets in repo
+or ChatGPT config.
+
+## Server entry (jungle registry, SQLite `~/.local/share/mcpjungle/mcpjungle.db`)
+
+- `name`: `firstmate_mcp` (single underscores only — names may not
+  contain `__` or end with `_`)
+- `transport`: `stdio` (config-file registration is required for
+  stdio; CLI flags only cover streamable HTTP)
+- `command`: `/usr/bin/python3`, `args`:
+  `[/Users/trilliumsmith/code/firstmate/projects/firstmate_mcp/fm_mcp_server.py]`
+- `env`: `FM_HOME=/Users/trilliumsmith/code/firstmate`
+- `session_mode`: default (`stateless` — fresh process per tool call)
+- Registration config (0600): `/tmp/jungle-firstmate-mcp.json`
+- Registration command: `mcpjungle register -c
+  /tmp/jungle-firstmate-mcp.json --registry http://127.0.0.1:8338`
+
+Schema source: MCPJungle `docs/guides/register-stdio-servers.mdx`
+(`transport`/`command`/`args`/`session_mode`/`env`).
+
+## Tool prefix
+
+Same always-on `__` rule: firstmate tools arrive as
+`firstmate_mcp__<name>`. Verified zero cross-server suffix
+collisions with `beads-bridge__` tools.
+
+## Counts (2026-09-17, verified over fresh Streamable HTTP sessions on `http://127.0.0.1:8338/mcp`)
+
+- Gateway `tools/list`: **55** = **36** `beads-bridge__` + **19**
+  `firstmate_mcp__`, zero unprefixed
+- `mcpjungle list tools --server firstmate_mcp`: **19**, all ENABLED
+- Live call `firstmate_mcp__status_tail` through jungle returns real
+  server output (wake events from firstmate state).
+- Direct stdio smoke (pre-registration): `initialize` →
+  `firstmate-mcp-poc v0.3.0`, `tools/list` → **19**.
+
+## Known limitation (firstmate_mcp-owned)
+
+- `firstmate_mcp__fleet_snapshot` / `__backlog` time out through the
+gateway (`fm-fleet-snapshot.sh` exceeds the server's 180s subprocess
+cap in this environment). Every other tool responds fast. Flagged to
+the firstmate side; not a jungle wiring issue.
+
+## TS sibling: follow-up, not onboarded
+
+- `projects/firstmate_mcp/ts` (dist/ built) has stdio parity with the
+Python server — same 19 tool names. Registering it under a distinct
+name would duplicate every suffix and break the zero-collision rule,
+so it stays out until the tool sets diverge or namespacing per
+server is explicitly accepted. See task-622kl.5.
+
+## Boundaries (unchanged)
+
+- Loopback only (jungle `127.0.0.1:8338`; stdio child is a local
+process, no port at all). No Tailnet/funnel.
+- Direct-server fallback: run the Python server on stdio directly
+(`FM_HOME=/Users/trilliumsmith/code/firstmate /usr/bin/python3
+.../fm_mcp_server.py`, newline-delimited JSON-RPC).
+- ChatGPT refresh runbook: `docs/jungle-gateway-refresh.md`
+(post-refresh expectation is now **55** tools, both prefixes).

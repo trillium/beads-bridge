@@ -31,12 +31,14 @@ the ChatGPT connection — don't restart jungle.
 
 1. Through any live path, call `beads-bridge__bridge_info` and note
    backend version / manifest / schema hash. Expected now: **v1.2.0,
-   manifest v1, 36 tools**.
+   manifest v1, 36 tools** (+ **19** `firstmate_mcp__` tools since
+   S5a — gateway total **55**; see `docs/jungle-gateway.md`).
 2. Disconnect and reconnect the jungle MCP connector in ChatGPT
    (remove/re-add or toggle off/on — this forces a fresh `initialize` +
    `tools/list`).
-3. Re-check: `tools/list` must show **36** tools, every name starting
-   with `beads-bridge__`. Spot-call `beads-bridge__whoami` — it must say
+3. Re-check: `tools/list` must show **55** tools (**36** starting
+   with `beads-bridge__`, **19** with `firstmate_mcp__`). Spot-call
+   `beads-bridge__whoami` — it must say
    `you are: OAuth client mcpjungle-gateway`.
 4. If the count is still wrong after reconnect, the problem is upstream
    of ChatGPT: check jungle health (`GET http://127.0.0.1:8338/health`
