@@ -5,8 +5,11 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   activityArgs,
+  attachClaimedDetail,
+  CLAIMED_DETAIL_MAX_BEADS,
   cleanLabels,
   clampLimit,
+  excerptText,
   formatActivity,
   formatSearch,
   formatSnapshot,
@@ -196,6 +199,34 @@ describe('claimed beads', () => {
     assert.match(out, /inbox-a|inbox/)
     assert.match(out, /@pi-inbox/)
     assert.match(out, /agent hands only/)
+    assert.match(out, /claim-blind/)
     assert.match(formatClaimed([], [], ['inbox']), /Nothing claimed/)
+  })
+  it('falls back to @unassigned when no claimant is recorded', () => {
+    const out = formatClaimed(
+      [{ ...row('a'), claimAt: null, claimAgeMs: null }],
+      [], ['inbox'],
+    )
+    assert.match(out, /@unassigned/)
+    assert.match(out, /claim time unknown/)
+  })
+  it('renders attached detail excerpts and history lines inline', () => {
+    const out = formatClaimed(
+      [{ ...row('a'), assignee: 'pi-inbox', claimAt: '2026-09-16T10:00:00.000Z', claimAgeMs: 7200000, labels: ['project:x'] }],
+      [], ['inbox'], [],
+      new Map([['a', { status: 'in_progress', labels: ['project:x'], excerpt: 'fix the thing' }]]),
+      new Map([['a', 'claimed | started']]),
+    )
+    assert.match(out, /detail:.*fix the thing/)
+    assert.match(out, /change: claimed \| started/)
+    assert.match(out, /project:x/)
+  })
+  it('collapses whitespace in excerpts', () => {
+    assert.equal(excerptText('a\n\n  b\tc', 10), 'a b c')
+    assert.equal(excerptText('', 10), '')
+  })
+  it('caps detail enrichment bounds', () => {
+    assert.equal(CLAIMED_DETAIL_MAX_BEADS, 20)
+    assert.equal(typeof attachClaimedDetail, 'function')
   })
 })

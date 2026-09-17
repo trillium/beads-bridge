@@ -329,19 +329,78 @@ export function formatClaimed(
   errors: StoreError[],
   stores: string[],
   unknownStores: string[] = [],
+  detail?: Map<string, ClaimedDetail>,
+  history?: Map<string, string>,
 ): string {
   const lines = [`# claimed beads — oldest claim first (${rows.length} across ${stores.length} stores)`, ``]
   lines.push(`Claimed = evidence of agent hands only, never completion or freshness.`, ``)
+  lines.push(`Claim time ~= started_at; updated_at is claim-blind (comments bump it) — corroborate staleness with history.`, ``)
   if (!rows.length) lines.push(`Nothing claimed in scope.`, ``)
   for (const r of rows) {
     lines.push(
-      `- ${r.id} [${r.store}] — ${r.title}${r.assignee ? ` @${r.assignee}` : ''}` +
-        `${r.claimAt ? ` (claimed ${r.claimAt}, ${r.claimAgeMs != null ? humanAge(r.claimAgeMs) + ' ago' : 'age unknown'})` : ' (claim time unknown)'}`,
+      `- ${r.id} [${r.store}] — ${r.title}${r.status ? ` [${r.status}]` : ''} @${r.assignee ?? 'unassigned'}` +
+        `${r.claimAt ? ` (claimed ${r.claimAt}, ${r.claimAgeMs != null ? humanAge(r.claimAgeMs) + ' ago' : 'age unknown'})` : ' (claim time unknown)'}` +
+        `${r.labels.length ? ` {${r.labels.slice(0, 4).join(', ')}}` : ''}`,
     )
+    const d = detail?.get(r.id)
+    if (d) {
+      const bits: string[] = []
+      if (d.status && d.status !== r.status) bits.push(`live status: ${d.status}`)
+      if (d.labels?.length) bits.push(`labels: ${d.labels.slice(0, 6).join(', ')}`)
+      if (d.excerpt) bits.push(d.excerpt)
+      if (bits.length) lines.push(`  detail: ${bits.join(' | ')}`)
+    }
+    const h = history?.get(r.id)
+    if (h) lines.push(`  change: ${h}`)
   }
   if (unknownStores.length) lines.push(``, `Skipped unknown stores: ${unknownStores.join(', ')}`)
   for (const e of errors) lines.push(``, `error [${e.store}]: ${e.error}`)
   return lines.join('\n')
+}
+
+// ---- 3b. bounded claimed-detail enrichment ----
+//
+// One live `show` per bead (status/labels via showRowJson, description
+// excerpt via beadText), capped at CLAIMED_DETAIL_MAX_BEADS with
+// concurrency CLAIMED_DETAIL_FANOUT. Never rebuilds the federated scan —
+// callers pass claimedBeads() rows straight in.
+export const CLAIMED_DETAIL_MAX_BEADS = 20
+export const CLAIMED_DETAIL_FANOUT = 4
+export const CLAIMED_EXCERPT_LEN = 240
+
+export interface ClaimedDetail {
+  status?: string
+  labels: string[]
+  excerpt: string
+}
+
+export function excerptText(text: string, max = CLAIMED_EXCERPT_LEN): string {
+  return text.replace(/\s+/g, ' ').trim().slice(0, Math.max(1, max))
+}
+
+export async function attachClaimedDetail(
+  rows: ClaimedRow[],
+  maxBeads = CLAIMED_DETAIL_MAX_BEADS,
+): Promise<Map<string, ClaimedDetail>> {
+  const out = new Map<string, ClaimedDetail>()
+  const capped = rows.slice(0, Math.max(1, Math.min(CLAIMED_DETAIL_MAX_BEADS, maxBeads)))
+  await mapLimit(capped, CLAIMED_DETAIL_FANOUT, async (r) => {
+    const [live, body] = await Promise.all([
+      showRowJson(r.store, r.id),
+      beadText(r.store, ['show', r.id]),
+    ])
+    // Skip the JSON echo of the header line: beadText show starts with the
+    // title/id block, so excerpt from the body past the first line.
+    const pastHeader = body.split('\n').slice(1).join('\n') || body
+    const excerpt = excerptText(pastHeader)
+    if (!live && !excerpt) return
+    out.set(r.id, {
+      status: live?.status ?? r.status,
+      labels: live?.labels?.length ? live.labels : r.labels,
+      excerpt,
+    })
+  })
+  return out
 }
 
 // ---- 4. bounded reconstruction snapshot ----
@@ -421,6 +480,12 @@ export async function walkGraph(
 }
 
 async function showRow(store: string, id: string): Promise<RetrievalRow | null> {
+  return showRowJson(store, id)
+}
+
+// Exported live re-read: single `show --json` per bead, used by detail
+// enrichment to refresh status/labels without rebuilding the scan.
+export async function showRowJson(store: string, id: string): Promise<RetrievalRow | null> {
   try {
     const out = await execStdout(store, ['show', id, '--json'], 12000)
     const d = JSON.parse(out || 'null')
