@@ -18,6 +18,7 @@ import {
   consumeCode,
   getSetupKey,
   grantApproval,
+  jungleResource,
   lookupAccess,
   mcpResource,
   mintCode,
@@ -89,6 +90,11 @@ function setApprovalCookie(res: Response, token: string): void {
 const protectedHandler = protectedResourceHandler({ authServerUrls: [ISSUER], resourceUrl: RESOURCE })
 mountFetch(oauthRouter, '/.well-known/oauth-protected-resource', protectedHandler)
 mountFetch(oauthRouter, '/.well-known/oauth-protected-resource/mcp', protectedHandler)
+// Jungle front-door audience (RFC 9728 path insertion for resource
+// https://host/jungle/mcp): same issuer/keys, distinct resource identifier
+// so bridge-direct and jungle-routed tokens never cross-accept.
+const jungleProtectedHandler = protectedResourceHandler({ authServerUrls: [ISSUER], resourceUrl: jungleResource(BASE) })
+mountFetch(oauthRouter, '/.well-known/oauth-protected-resource/jungle/mcp', jungleProtectedHandler)
 
 const authorizationHandler = (_req: Request, res: Response) => {
   res.json(buildAuthorizationServerMetadata(ISSUER))
