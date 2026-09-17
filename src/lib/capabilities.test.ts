@@ -90,6 +90,35 @@ describe('capabilityStatus', () => {
   })
 })
 
+describe('historical mapping proof (task-qgplz.4)', () => {
+  // Every known historical bead id resolves through capabilityStatus to its
+  // shipped capability. Gaps are asserted explicitly — never silent.
+  it('maps each historical bead to its shipped capability', () => {
+    const m = loadManifest()
+    const byBead = (bead: string) => {
+      const r = capabilityStatus(m, bead)
+      assert.equal(r.found, true, `${bead}: expected a shipped capability, got a miss`)
+      assert.ok(r.found)
+      return r.entry
+    }
+    assert.equal(byBead('inbox-z6dv').id, 'project_edit')
+    assert.equal(byBead('inbox-l6ki').id, 'retrieval_claimed')
+    // task-qgplz shipped three introspection ops; capabilityStatus returns
+    // the first manifest match, so prove the full set via the beads index.
+    const qgplzCaps = m.capabilities.filter((c) => (c.beads ?? []).includes('task-qgplz')).map((c) => c.id).sort()
+    assert.deepEqual(qgplzCaps, ['bridge_info', 'capabilities_since', 'capability_status'])
+    assert.ok(['bridge_info', 'capabilities_since', 'capability_status'].includes(byBead('task-qgplz').id))
+  })
+  it('marks inbox-au8v as an explicit gap: infrastructure, not a user-facing op', () => {
+    // inbox-au8v shipped as per-query JSONL telemetry middleware
+    // (src/lib/mcp-telemetry.ts, wrapped around the /mcp fetch chain) —
+    // no MCP tool was registered, so no manifest entry exists by design.
+    const m = loadManifest()
+    const r = capabilityStatus(m, 'inbox-au8v')
+    assert.equal(r.found, false, 'inbox-au8v: gap closed? add the manifest entry + update this proof')
+  })
+})
+
 describe('capabilitiesSince', () => {
   it('returns only newer entries and rejects non-semver', () => {
     const m = loadManifest()
