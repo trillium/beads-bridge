@@ -16,12 +16,15 @@ import {
   mergeByUpdated,
   parseRetrievalRows,
   claimAnchorMs,
+  classifyClaim,
   formatClaimed,
   humanAge,
   pickRetrievalStores,
   searchArgs,
+  staleAfterMsFromHours,
   toClaimedRow,
   walkGraph,
+  CLAIM_STALE_AFTER_MS,
   type NeighborSet,
   type RetrievalRow,
 } from './retrieval'
@@ -193,7 +196,7 @@ describe('claimed beads', () => {
   })
   it('formats oldest-first rows with claimant and age, names the empty case', () => {
     const out = formatClaimed(
-      [{ ...row('a'), assignee: 'pi-inbox', claimAt: '2026-09-16T10:00:00.000Z', claimAgeMs: 7200000 }],
+      [{ ...toClaimedRow(row('a', '2026-09-16T11:00:00Z', { startedAt: '2026-09-16T10:00:00Z', assignee: 'pi-inbox' }), Date.parse('2026-09-16T12:00:00Z')) }],
       [], ['inbox'],
     )
     assert.match(out, /inbox-a|inbox/)
@@ -204,7 +207,7 @@ describe('claimed beads', () => {
   })
   it('falls back to @unassigned when no claimant is recorded', () => {
     const out = formatClaimed(
-      [{ ...row('a'), claimAt: null, claimAgeMs: null }],
+      [{ ...toClaimedRow(row('a')) }],
       [], ['inbox'],
     )
     assert.match(out, /@unassigned/)
@@ -212,7 +215,7 @@ describe('claimed beads', () => {
   })
   it('renders attached detail excerpts and history lines inline', () => {
     const out = formatClaimed(
-      [{ ...row('a'), assignee: 'pi-inbox', claimAt: '2026-09-16T10:00:00.000Z', claimAgeMs: 7200000, labels: ['project:x'] }],
+      [{ ...toClaimedRow(row('a', '2026-09-16T11:00:00Z', { startedAt: '2026-09-16T10:00:00Z', assignee: 'pi-inbox', labels: ['project:x'] }), Date.parse('2026-09-16T12:00:00Z')) }],
       [], ['inbox'], [],
       new Map([['a', { status: 'in_progress', labels: ['project:x'], excerpt: 'fix the thing' }]]),
       new Map([['a', 'claimed | started']]),
@@ -228,5 +231,61 @@ describe('claimed beads', () => {
   it('caps detail enrichment bounds', () => {
     assert.equal(CLAIMED_DETAIL_MAX_BEADS, 20)
     assert.equal(typeof attachClaimedDetail, 'function')
+  })
+})
+
+describe('claim-state taxonomy (task-5w84p.4)', () => {
+  const now = Date.parse('2026-09-16T12:00:00Z')
+  const fresh = { claimAt: '2026-09-16T10:00:00.000Z', claimAgeMs: 2 * 3600_000 }
+  const old = { claimAt: '2026-09-10T10:00:00.000Z', claimAgeMs: 6 * 24 * 3600_000 }
+  const base = { status: 'in_progress' as const, labels: [] as string[], assignee: 'pi-x', closeReason: undefined as string | undefined }
+
+  it('separates claimed / active / unknown on fresh rows', () => {
+    assert.equal(classifyClaim({ ...base, ...fresh }, null, now).state, 'active')
+    assert.equal(classifyClaim({ ...base, ...fresh, assignee: undefined }, null, now).state, 'claimed')
+    assert.equal(classifyClaim({ ...base, claimAt: null, claimAgeMs: null }, null, now).state, 'unknown')
+  })
+  it('marks age past the threshold stale — never completed or abandoned', () => {
+    for (const state of [
+      classifyClaim({ ...base, ...old }, null, now).state,
+      classifyClaim({ ...base, ...old, assignee: undefined }, null, now).state,
+    ]) assert.equal(state, 'stale')
+  })
+  it('completes only on explicit close evidence', () => {
+    assert.equal(classifyClaim({ ...base, ...fresh, status: 'closed' }, null, now).state, 'completed')
+    assert.equal(classifyClaim({ ...base, ...old, closeReason: 'done' }, null, now).state, 'completed')
+    // Live detail can close a row the scan saw as in_progress.
+    assert.equal(classifyClaim({ ...base, ...fresh }, { status: 'done', labels: [] }, now).state, 'completed')
+  })
+  it('abandons only on explicit release labels', () => {
+    assert.equal(classifyClaim({ ...base, ...fresh, labels: ['lifecycle:released'] }, null, now).state, 'abandoned')
+    assert.equal(classifyClaim({ ...base, ...old }, { status: 'in_progress', labels: ['state:abandoned'] }, now).state, 'abandoned')
+    // Completed evidence wins over release labels.
+    assert.equal(classifyClaim({ ...base, ...fresh, status: 'closed', labels: ['abandoned'] }, null, now).state, 'completed')
+  })
+  it('makes the stale threshold explicit and overridable', () => {
+    assert.equal(CLAIM_STALE_AFTER_MS, 48 * 3600_000)
+    assert.equal(staleAfterMsFromHours(undefined), CLAIM_STALE_AFTER_MS)
+    assert.equal(staleAfterMsFromHours('junk'), CLAIM_STALE_AFTER_MS)
+    assert.equal(staleAfterMsFromHours(1), 3600_000)
+    // A fresh row reads stale under a 1h threshold — the override applies.
+    assert.equal(classifyClaim({ ...base, ...fresh }, null, now, staleAfterMsFromHours(1)).state, 'stale')
+    assert.equal(classifyClaim({ ...base, ...old }, null, now, staleAfterMsFromHours(24 * 30)).state, 'active')
+  })
+  it('attaches state + evidence on toClaimedRow and surfaces both per row', () => {
+    const active = toClaimedRow(row('a', '2026-09-16T11:00:00Z', { startedAt: '2026-09-16T10:00:00Z', assignee: 'x' }), now)
+    assert.equal(active.state, 'active')
+    assert.ok(active.evidence.some((e) => e.startsWith('assignee:@x')))
+    const out = formatClaimed([active], [], ['task'])
+    assert.match(out, /\[state=active\]/)
+    assert.match(out, /evidence: /)
+    assert.match(out, /never inferred from age or silence/)
+    assert.match(out, /Stale-after default/)
+  })
+  it('re-verdicts against live detail at format time', () => {
+    const freshRow = toClaimedRow(row('a', '2026-09-16T11:00:00Z', { startedAt: '2026-09-16T10:00:00Z', assignee: 'x' }), now)
+    const out = formatClaimed([freshRow], [], ['task'], [], new Map([['a', { status: 'closed', labels: [], excerpt: '', closeReason: 'done' }]]))
+    assert.match(out, /\[state=completed\]/)
+    assert.match(out, /close-reason:done/)
   })
 })

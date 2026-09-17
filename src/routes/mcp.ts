@@ -47,6 +47,7 @@ import {
   pickRetrievalStores,
   recentActivity,
   reconstructSnapshot,
+  staleAfterMsFromHours,
   SNAPSHOT_DEFAULT_CAP,
   SNAPSHOT_DEFAULT_DEPTH,
   SNAPSHOT_MAX_CAP,
@@ -982,25 +983,28 @@ const mcpHandler = createMcpHandler((server) => {
     'retrieval_claimed',
     {
       title: 'Claimed beads across stores',
-      description: 'Federated in_progress beads: id, title, store, claimant (@unassigned fallback), claim timestamp + age, oldest first, each row enriched with live status/labels plus a description excerpt and optional change history — enough detail to act without a second query round. Claimed means agent hands only — never completion or freshness (same as GET /retrieval/claimed).',
+      description: 'Federated in_progress beads: id, title, store, claimant (@unassigned fallback), claim timestamp + age, per-row claim state (claimed|active|stale|abandoned|completed|unknown) + evidence, oldest first, each row enriched with live status/labels plus a description excerpt and optional change history — enough detail to act without a second query round. Claimed means agent hands only — never completion or freshness (same as GET /retrieval/claimed).',
       inputSchema: z.object({
         limit: z.number().int().min(1).max(100).optional().describe('Max rows (default 20)'),
         stores: z.array(z.string()).max(10).optional().describe('Stores to cover (default all)'),
         detail: z.boolean().optional().describe('Attach bounded per-bead live detail (default true, max 20 beads)'),
         history: z.boolean().optional().describe('Attach compact per-bead change info (default false)'),
+        stale_after_hours: z.number().min(1).max(720).optional().describe('Stale-after threshold in hours (default 48, the fm-ledger 2d heuristic)'),
       }),
     },
-    async ({ limit, stores, detail, history }: { limit?: number; stores?: string[]; detail?: boolean; history?: boolean }) => {
+    async ({ limit, stores, detail, history, stale_after_hours }: { limit?: number; stores?: string[]; detail?: boolean; history?: boolean; stale_after_hours?: number }) => {
       const { stores: used } = pickRetrievalStores(stores?.length ? stores : undefined)
       if (stores?.length && !used.length) return err(`unknown stores: ${stores.join(', ')} (known: ${STORES.join(', ')})`)
+      const staleAfterMs = staleAfterMsFromHours(stale_after_hours)
       const { rows, errors, stores: hit, unknownStores } = await claimedBeads({
         stores: stores?.length ? stores : undefined,
         limit: clampLimit(limit, 20),
+        staleAfterMs,
       })
       const wantDetail = detail ?? true
       const det = wantDetail && rows.length ? await attachClaimedDetail(rows.slice(0, CLAIMED_DETAIL_MAX_BEADS)) : undefined
       const hist = history && rows.length ? await attachHistory(rows.slice(0, Math.min(rows.length, 20)), 2) : undefined
-      return ok(formatClaimed(rows, errors, hit, unknownStores, det, hist))
+      return ok(formatClaimed(rows, errors, hit, unknownStores, det, hist, staleAfterMs))
     },
   )
 

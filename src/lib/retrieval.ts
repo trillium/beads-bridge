@@ -262,9 +262,39 @@ export function formatActivity(
 // completion, progress, or freshness. Stale/abandoned/completed are NOT
 // inferred here; raw ages are exposed and the caller judges.
 
+// ---- 3a. claim-state taxonomy (task-5w84p.4) ----
+//
+// Four independent concepts, never conflated. A claimed row must never
+// read as done:
+//   - claimed   = evidence an agent took it (assignee/started_at timestamp)
+//                 + claim timestamp/age. Fresh claim, no holder recorded.
+//   - active    = fresh claim (age < stale-after) with a recorded holder:
+//                 in-flight right now as far as anyone can tell.
+//   - stale     = claim age >= the stale-after threshold. Needs a check —
+//                 NOT abandonment, NOT completion.
+//   - abandoned = explicit release evidence only (abandoned/released/
+//                 superseded labels). NEVER inferred from silence/age.
+//   - completed = explicit close evidence only (closed/done status or a
+//                 close reason). NEVER inferred from silence/age.
+//   - unknown   = no claim timestamp could be anchored at all.
+//
+// Stale threshold: default 48h (2d), matching the fm-ledger 2d heuristic
+// from the task-5w84p exploration. Overridable per query via staleAfterMs
+// (retrieval_claimed stale_after_hours / GET /retrieval/claimed
+// ?stale_after_hours=). Completed/abandoned are never inferred from
+// silence alone — only from explicit close/release evidence.
+export type ClaimState = 'claimed' | 'active' | 'stale' | 'abandoned' | 'completed' | 'unknown'
+
+export const CLAIM_STALE_AFTER_MS = 2 * 24 * 3600_000
+export const CLAIM_STALE_AFTER_HOURS = 48
+
 export interface ClaimedRow extends RetrievalRow {
   claimAt: string | null
   claimAgeMs: number | null
+  /** Computed taxonomy state — see classifyClaim. Independent of status. */
+  state: ClaimState
+  /** Human-readable evidence notes behind the state (never a completion claim). */
+  evidence: string[]
 }
 
 export function claimAnchorMs(r: RetrievalRow, now = Date.now()): number | null {
@@ -285,16 +315,82 @@ export function humanAge(ms: number): string {
   return `${m}m`
 }
 
-export function toClaimedRow(r: RetrievalRow, now = Date.now()): ClaimedRow {
+export function toClaimedRow(r: RetrievalRow, now = Date.now(), staleAfterMs = CLAIM_STALE_AFTER_MS): ClaimedRow {
   const anchor = claimAnchorMs(r, now)
-  return {
+  const base = {
     ...r,
     claimAt: anchor == null ? null : new Date(anchor).toISOString(),
     claimAgeMs: anchor == null ? null : Math.max(0, now - anchor),
   }
+  const { state, evidence } = classifyClaim(base, undefined, now, staleAfterMs)
+  return { ...base, state, evidence }
 }
 
-export async function claimedBeads(opts: { stores?: string[]; limit?: number } = {}): Promise<{
+const CLAIM_CLOSED_STATUSES = new Set(['closed', 'done', 'completed'])
+const CLAIM_ABANDONED_LABELS = new Set(['abandoned', 'released', 'superseded', 'dispatch:released', 'lifecycle:released'])
+const CLAIM_ABANDONED_STATE_RE = /^state:(abandoned|released|superseded|done|completed|closed)$/i
+
+/** Hours → ms for the stale-after override; falls back to the default on junk. */
+export function staleAfterMsFromHours(v: unknown, def = CLAIM_STALE_AFTER_MS): number {
+  const n = typeof v === 'string' ? parseFloat(v) : typeof v === 'number' ? v : NaN
+  if (!Number.isFinite(n) || n <= 0) return def
+  return Math.min(30 * 24 * 3600_000, Math.max(3600_000, Math.floor(n * 3600_000)))
+}
+
+/**
+ * Pure taxonomy verdict over one claimed row plus optional live detail.
+ * Priority: completed > abandoned > stale > active > claimed > unknown.
+ * Completed/abandoned fire ONLY on explicit close/release evidence —
+ * age and silence can only ever yield stale, never done or gone.
+ */
+export function classifyClaim(
+  r: Pick<RetrievalRow, 'status' | 'labels' | 'assignee' | 'closeReason'> &
+    Pick<ClaimedRow, 'claimAt' | 'claimAgeMs'>,
+  live?: { status?: string; labels?: string[]; closeReason?: string } | null,
+  now = Date.now(),
+  staleAfterMs = CLAIM_STALE_AFTER_MS,
+): { state: ClaimState; evidence: string[] } {
+  void now
+  const status = live?.status ?? r.status
+  const labels = live?.labels?.length ? live.labels : (r.labels ?? [])
+  const closeReason = live?.closeReason ?? r.closeReason
+  const evidence: string[] = []
+  evidence.push(r.assignee ? `assignee:@${r.assignee}` : 'assignee:unassigned')
+  evidence.push(r.claimAt ? `claim-ts:${r.claimAt}` : 'claim-ts:unknown')
+  evidence.push(r.claimAgeMs != null ? `age:${humanAge(r.claimAgeMs)}` : 'age:unknown')
+  if (live?.status && live.status !== r.status) evidence.push(`live-status:${live.status}`)
+  // Completed: explicit close evidence only.
+  if ((status && CLAIM_CLOSED_STATUSES.has(status.toLowerCase())) || (closeReason && closeReason.trim())) {
+    if (closeReason && closeReason.trim()) evidence.push(`close-reason:${closeReason.slice(0, 80)}`)
+    else evidence.push(`status:${status}`)
+    return { state: 'completed', evidence }
+  }
+  // Abandoned: explicit release evidence only.
+  const releaseLabel = labels.find(
+    (l) => CLAIM_ABANDONED_LABELS.has(l.toLowerCase()) || CLAIM_ABANDONED_STATE_RE.test(l),
+  )
+  if (releaseLabel) {
+    evidence.push(`label:${releaseLabel}`)
+    return { state: 'abandoned', evidence }
+  }
+  // Stale: age past the threshold — a prompt to check, nothing more.
+  if (r.claimAgeMs != null && r.claimAgeMs >= staleAfterMs) {
+    evidence.push(`age ${humanAge(r.claimAgeMs)} ≥ stale-after ${humanAge(staleAfterMs)}`)
+    return { state: 'stale', evidence }
+  }
+  if (r.claimAgeMs == null) {
+    evidence.push('no claim timestamp — state unknown, not done')
+    return { state: 'unknown', evidence }
+  }
+  if (r.assignee) {
+    evidence.push('in-flight holder recorded, within stale-after window')
+    return { state: 'active', evidence }
+  }
+  evidence.push('fresh claim, no holder recorded')
+  return { state: 'claimed', evidence }
+}
+
+export async function claimedBeads(opts: { stores?: string[]; limit?: number; staleAfterMs?: number } = {}): Promise<{
   rows: ClaimedRow[]
   errors: StoreError[]
   stores: string[]
@@ -304,10 +400,11 @@ export async function claimedBeads(opts: { stores?: string[]; limit?: number } =
   const limit = clampLimit(opts.limit, 20)
   const perStore = Math.min(RETRIEVAL_MAX_PER_STORE, Math.max(limit, 10))
   const now = Date.now()
+  const staleAfterMs = opts.staleAfterMs ?? CLAIM_STALE_AFTER_MS
   const per = await mapLimit(stores, 6, async (store): Promise<{ rows: ClaimedRow[]; error?: string }> => {
     try {
       const out = await execStdout(store, ['list', '--json', '--status', 'in_progress', '--limit', String(perStore), '--sort', 'updated'], 15000)
-      const rows = parseRetrievalRows(out, store).map((r) => toClaimedRow(r, now))
+      const rows = parseRetrievalRows(out, store).map((r) => toClaimedRow(r, now, staleAfterMs))
       // Oldest claims first — abandoned work surfaces at the top.
       rows.sort((a, b) => (b.claimAgeMs ?? -1) - (a.claimAgeMs ?? -1))
       return { rows }
@@ -331,18 +428,29 @@ export function formatClaimed(
   unknownStores: string[] = [],
   detail?: Map<string, ClaimedDetail>,
   history?: Map<string, string>,
+  staleAfterMs = CLAIM_STALE_AFTER_MS,
 ): string {
   const lines = [`# claimed beads — oldest claim first (${rows.length} across ${stores.length} stores)`, ``]
   lines.push(`Claimed = evidence of agent hands only, never completion or freshness.`, ``)
   lines.push(`Claim time ~= started_at; updated_at is claim-blind (comments bump it) — corroborate staleness with history.`, ``)
+  lines.push(
+    `States: claimed (fresh, no holder) | active (fresh, holder recorded) | stale (age ≥ ${humanAge(staleAfterMs)}) | abandoned (explicit release label) | completed (explicit close) | unknown (no claim timestamp). ` +
+      `Completed/abandoned fire on explicit close/release evidence only — never inferred from age or silence. ` +
+      `Stale-after default ${humanAge(CLAIM_STALE_AFTER_MS)} (fm-ledger 2d heuristic), overridable per query.`,
+    ``,
+  )
   if (!rows.length) lines.push(`Nothing claimed in scope.`, ``)
   for (const r of rows) {
+    // Re-run the verdict against live detail when present: a bead that
+    // closed or was released after the scan must read completed/abandoned.
+    const d = detail?.get(r.id)
+    const verdict = d ? classifyClaim(r, d, Date.now(), staleAfterMs) : { state: r.state, evidence: r.evidence }
     lines.push(
-      `- ${r.id} [${r.store}] — ${r.title}${r.status ? ` [${r.status}]` : ''} @${r.assignee ?? 'unassigned'}` +
+      `- ${r.id} [${r.store}] — ${r.title}${r.status ? ` [${r.status}]` : ''} @${r.assignee ?? 'unassigned'} [state=${verdict.state}]` +
         `${r.claimAt ? ` (claimed ${r.claimAt}, ${r.claimAgeMs != null ? humanAge(r.claimAgeMs) + ' ago' : 'age unknown'})` : ' (claim time unknown)'}` +
         `${r.labels.length ? ` {${r.labels.slice(0, 4).join(', ')}}` : ''}`,
     )
-    const d = detail?.get(r.id)
+    lines.push(`  evidence: ${verdict.evidence.join(' · ')}`)
     if (d) {
       const bits: string[] = []
       if (d.status && d.status !== r.status) bits.push(`live status: ${d.status}`)
@@ -372,6 +480,7 @@ export interface ClaimedDetail {
   status?: string
   labels: string[]
   excerpt: string
+  closeReason?: string
 }
 
 export function excerptText(text: string, max = CLAIMED_EXCERPT_LEN): string {
@@ -398,6 +507,7 @@ export async function attachClaimedDetail(
       status: live?.status ?? r.status,
       labels: live?.labels?.length ? live.labels : r.labels,
       excerpt,
+      closeReason: live?.closeReason ?? r.closeReason,
     })
   })
   return out

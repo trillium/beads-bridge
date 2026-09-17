@@ -6,14 +6,19 @@ import { wrap } from '../wrap'
 import { withDebug } from './debug-state'
 import { strParam, listParam } from './query/params'
 import {
+  attachClaimedDetail,
   attachHistory,
+  CLAIMED_DETAIL_MAX_BEADS,
+  claimedBeads,
   clampLimit,
   federatedSearch,
   formatActivity,
+  formatClaimed,
   formatSearch,
   formatSnapshot,
   recentActivity,
   reconstructSnapshot,
+  staleAfterMsFromHours,
   SNAPSHOT_DEFAULT_CAP,
   SNAPSHOT_DEFAULT_DEPTH,
   SNAPSHOT_MAX_CAP,
@@ -79,6 +84,35 @@ retrievalRouter.get('/retrieval/activity', async (req: Request, res: Response) =
       title: 'Recent activity failed',
       noNext: true,
       body: `# activity failed: ${((e as Error)?.message ?? String(e)).slice(0, 200)}`,
+    }))
+  }
+})
+
+// GET /retrieval/claimed?limit=...&store=...&detail=1&history=1&stale_after_hours=...
+retrievalRouter.get('/retrieval/claimed', async (req: Request, res: Response) => {
+  const stores = listParam(req.query.store ?? req.query.stores)
+  const limit = clampLimit(req.query.limit, 20)
+  const wantDetail = (strParam(req.query.detail) ?? '1') !== '0'
+  const wantHistory = req.query.history !== undefined
+  const staleAfterMs = staleAfterMsFromHours(strParam(req.query.stale_after_hours))
+  try {
+    const { rows, errors, stores: used, unknownStores } = await claimedBeads({
+      stores: stores.length ? stores : undefined,
+      limit,
+      staleAfterMs,
+    })
+    const det = wantDetail && rows.length ? await attachClaimedDetail(rows.slice(0, CLAIMED_DETAIL_MAX_BEADS)) : undefined
+    const history = wantHistory && rows.length ? await attachHistory(rows.slice(0, Math.min(rows.length, 20)), 2) : undefined
+    res.type('text/plain').send(wrap({
+      title: `Claimed beads (${rows.length})`,
+      noNext: true,
+      body: withDebug(req, formatClaimed(rows, errors, used, unknownStores, det, history, staleAfterMs)),
+    }))
+  } catch (e) {
+    res.type('text/plain').status(500).send(wrap({
+      title: 'Claimed beads failed',
+      noNext: true,
+      body: `# claimed failed: ${((e as Error)?.message ?? String(e)).slice(0, 200)}`,
     }))
   }
 })
