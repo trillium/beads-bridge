@@ -1,3 +1,5 @@
+import { stalenessTriple } from './capabilities'
+
 export type RelayItemState = 'active' | 'waiting' | 'failed' | 'done' | 'stale'
 export type RelayItemKind = 'task' | 'dispatch' | 'verify' | 'note' | 'completion' | 'failure'
 
@@ -149,21 +151,25 @@ export function formatRelayStatus(
   const lines = ['## relay-status (ephemeral projection — Beads stores are authoritative)']
   if (!rows.length) {
     lines.push('clear — nothing touched recently')
-    return lines.join('\n')
-  }
-  for (const { item, state } of rows) {
-    const flags = [
-      item.pinned ? 'pinned' : null,
-      item.needsVerify ? 'needs-verify' : null,
-    ].filter(Boolean).join(',')
-    lines.push(`- ${item.id} [${item.kind}/${state}] ${item.title}${flags ? ` (${flags})` : ''} touched=${item.lastTouchedAt}`)
-  }
-  for (const f of tracker.followups(now)) {
-    lines.push(`followup: ${f.tool} ${f.id} — ${f.reason}`)
+  } else {
+    for (const { item, state } of rows) {
+      const flags = [
+        item.pinned ? 'pinned' : null,
+        item.needsVerify ? 'needs-verify' : null,
+      ].filter(Boolean).join(',')
+      lines.push(`- ${item.id} [${item.kind}/${state}] ${item.title}${flags ? ` (${flags})` : ''} touched=${item.lastTouchedAt}`)
+    }
+    for (const f of tracker.followups(now)) {
+      lines.push(`followup: ${f.tool} ${f.id} — ${f.reason}`)
+    }
   }
   let out = lines.join('\n')
-  if (out.length > RELAY_STATUS_MAX_CHARS) out = out.slice(0, RELAY_STATUS_MAX_CHARS - 1) + '…'
-  return out
+  // Reserve room so the staleness triple (task-qgplz.2) is never truncated:
+  // record it at connect (T0); any backend advance changes the string.
+  const triple = stalenessTriple()
+  const budget = RELAY_STATUS_MAX_CHARS - triple.length - 1
+  if (out.length > budget) out = out.slice(0, budget - 1) + '…'
+  return `${out}\n${triple}`
 }
 
 export function withRelayStatus(

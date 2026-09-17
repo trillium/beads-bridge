@@ -25,6 +25,22 @@ export type CapabilityManifest = {
 
 const SEMVER = /^\d+\.\d+\.\d+$/
 
+// Single source for the registered MCP tool surface (task-qgplz.2): the
+// per-response staleness footer (relay-status.ts) and bridge_info (mcp.ts)
+// both hash THIS list. Must name every registerTool in mcp.ts —
+// capabilities.test.ts enforces the sync against the manifest ops.
+export const BRIDGE_OP_NAMES = [
+  'bead_show', 'beads_bundle', 'query_store', 'bead_comment', 'bead_note',
+  'bead_decision', 'bead_label', 'bead_create', 'bead_batch_create',
+  'bead_connections', 'bead_edit', 'bead_feedback', 'whoami', 'identity_update',
+  'scratchpad', 'random', 'timeout_probe', 'relay_resolve_project',
+  'relay_list_projects', 'relay_capture', 'project_edit', 'relay_upsert_task',
+  'relay_dispatch_request', 'relay_verify', 'relay_flow', 'relay_catchup',
+  'relay_attention_next', 'relay_inspect', 'retrieval_search', 'retrieval_activity',
+  'retrieval_claimed', 'retrieval_snapshot', 'relay_status', 'bridge_info', 'capability_status',
+  'capabilities_since',
+]
+
 export function loadManifest(): CapabilityManifest {
   const raw = readFileSync(join(__dirname, '..', '..', 'capabilities.json'), 'utf8')
   const m = JSON.parse(raw) as CapabilityManifest
@@ -115,4 +131,32 @@ export function formatBridgeInfo(opts: {
     `capabilities_since(X.Y.Z) to list what changed since a version.`,
   ]
   return lines.join('\n')
+}
+
+/**
+ * Per-response staleness triple (task-qgplz.2): the version/commit/hash line
+ * appended to every MCP response footer via formatRelayStatus. Single-line,
+ * machine-comparable: record it at connect (T0); any backend advance
+ * (package.json version, capabilities.json manifest, tool surface, commit)
+ * changes the string. Never throws — degrades to 'unknown' segments so a
+ * broken manifest/commit lookup can never fail a tool response.
+ */
+export function stalenessTriple(opNames: string[] = BRIDGE_OP_NAMES): string {
+  let version = 'unknown'
+  let manifest = 'unknown'
+  let commit = 'unknown'
+  let hash = 'unknown'
+  try {
+    version = serverVersion()
+  } catch { /* keep unknown */ }
+  try {
+    manifest = String(loadManifest().manifestVersion)
+  } catch { /* keep unknown */ }
+  try {
+    commit = backendCommit()
+  } catch { /* keep unknown */ }
+  try {
+    hash = schemaHash(opNames).slice(0, 16)
+  } catch { /* keep unknown */ }
+  return `staleness: backend v${version} / manifest v${manifest} / commit ${commit} / schema ${hash}`
 }

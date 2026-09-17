@@ -7,6 +7,8 @@ import {
   withRelayStatus,
   RELAY_STATUS_MAX_CHARS,
 } from './relay-status'
+import { BRIDGE_OP_NAMES, stalenessTriple } from './capabilities'
+import { serverVersion } from './whoami'
 
 const HOUR = 60 * 60 * 1000
 
@@ -80,3 +82,48 @@ describe('same-turn chaining', () => {
     assert.match(formatRelayStatus(t), /followup: relay_verify or bead_show task-v1/)
   })
 })
+
+describe('staleness footer (task-qgplz.2)', () => {
+  it('every footer ends with the version/commit/hash triple', () => {
+    const triple = stalenessTriple()
+    assert.match(
+      triple,
+      /^staleness: backend v\S+ \/ manifest v\S+ \/ commit \S+ \/ schema [0-9a-f]{16}$/,
+    )
+    assert.ok(triple.includes(`v${serverVersion()}`))
+    for (const out of [formatRelayStatus(new RelayStatusTracker()), formatRelayStatus(trackerWithItems())]) {
+      assert.ok(out.endsWith(`\n${triple}`), 'triple is the last footer line')
+      assert.match(out, /## relay-status/) // old-shape header still parses
+      assert.ok(out.length <= RELAY_STATUS_MAX_CHARS)
+    }
+  })
+  it('withRelayStatus keeps the body parseable and appends the triple', () => {
+    const reply = withRelayStatus('# created task-x', new RelayStatusTracker())
+    assert.ok(reply.startsWith('# created task-x\n\n'))
+    assert.ok(reply.endsWith(`\n${stalenessTriple()}`))
+  })
+  it('string compare detects any backend advance', () => {
+    const t0 = stalenessTriple()
+    assert.equal(stalenessTriple(), t0) // stable within a backend
+    assert.notEqual(stalenessTriple([...opsPlusOne()]), t0) // tool-surface advance
+  })
+  it('triple survives truncation intact', () => {
+    const t = new RelayStatusTracker()
+    for (let i = 0; i < 20; i++) {
+      t.touch({ id: `task-long-${i}`, kind: 'task', title: `x`.repeat(120) })
+    }
+    const out = formatRelayStatus(t)
+    assert.ok(out.length <= RELAY_STATUS_MAX_CHARS)
+    assert.ok(out.endsWith(`\n${stalenessTriple()}`))
+  })
+})
+
+function trackerWithItems(): RelayStatusTracker {
+  const t = new RelayStatusTracker()
+  t.touch({ id: 'task-a1', kind: 'task', title: 'Something' })
+  return t
+}
+
+function opsPlusOne(): string[] {
+  return [...BRIDGE_OP_NAMES, 'hypothetical_new_tool']
+}

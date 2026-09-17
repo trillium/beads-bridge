@@ -17,7 +17,7 @@ import { beadConnections, formatConnections } from '../lib/connections'
 import { writeFeedback } from '../lib/feedback'
 import { editBead } from '../lib/edit'
 import { formatWhoami, loadProfile, serverVersion, updateProfile } from '../lib/whoami'
-import { backendCommit, capabilitiesSince, capabilityStatus, formatBridgeInfo, isSemver, loadManifest, schemaHash } from '../lib/capabilities'
+import { backendCommit, BRIDGE_OP_NAMES, capabilitiesSince, capabilityStatus, formatBridgeInfo, isSemver, loadManifest, schemaHash } from '../lib/capabilities'
 import { scratchAppend, scratchClear, scratchRead } from '../lib/scratchpad'
 import { pickStores, gatherCandidates, sampleIndices, formatPicks } from '../lib/random'
 import { mountFetch } from '../lib/express-fetch'
@@ -496,19 +496,9 @@ const mcpHandler = createMcpHandler((server) => {
 
   // Capability/version contract (task-qgplz): stable introspection so an agent
   // with a stale loaded MCP schema can discover the backend has advanced.
-  // BRIDGE_OP_NAMES must list every registerTool name below; capabilities
-  // tests enforce the sync (source registrations == manifest ops == hash input).
-  const BRIDGE_OP_NAMES = [
-    'bead_show', 'beads_bundle', 'query_store', 'bead_comment', 'bead_note',
-    'bead_decision', 'bead_label', 'bead_create', 'bead_batch_create',
-    'bead_connections', 'bead_edit', 'bead_feedback', 'whoami', 'identity_update',
-    'scratchpad', 'random', 'timeout_probe', 'relay_resolve_project',
-    'relay_list_projects', 'relay_capture', 'project_edit', 'relay_upsert_task',
-    'relay_dispatch_request', 'relay_verify', 'relay_flow', 'relay_catchup',
-    'relay_attention_next', 'relay_inspect', 'retrieval_search', 'retrieval_activity',
-    'retrieval_claimed', 'retrieval_snapshot', 'relay_status', 'bridge_info', 'capability_status',
-    'capabilities_since',
-  ]
+  // BRIDGE_OP_NAMES lives in lib/capabilities.ts (single source shared with
+  // the per-response staleness footer); capabilities tests enforce the sync
+  // (source registrations == manifest ops == hash input).
   server.registerTool(
     'bridge_info',
     {

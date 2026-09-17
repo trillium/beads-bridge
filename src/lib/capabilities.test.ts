@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   backendCommit,
+  BRIDGE_OP_NAMES,
   capabilitiesSince,
   capabilityStatus,
   compareSemver,
@@ -14,6 +15,7 @@ import {
   isSemver,
   loadManifest,
   schemaHash,
+  stalenessTriple,
 } from './capabilities'
 
 const MCP_SRC = readFileSync(join(__dirname, '..', 'routes', 'mcp.ts'), 'utf8')
@@ -38,6 +40,9 @@ describe('manifest', () => {
   it('stays in sync with registerTool calls in mcp.ts', () => {
     const m = loadManifest()
     assert.deepEqual(registeredOps(), m.capabilities.map((c) => c.op).sort())
+  })
+  it('BRIDGE_OP_NAMES (footer + hash input) matches registerTool calls', () => {
+    assert.deepEqual([...BRIDGE_OP_NAMES].sort(), registeredOps())
   })
 })
 
@@ -130,6 +135,12 @@ describe('capabilitiesSince', () => {
 })
 
 describe('bridge info', () => {
+  it('stalenessTriple is a single comparable line reusing the version sources', () => {
+    const t0 = stalenessTriple()
+    assert.match(t0, /^staleness: backend v\S+ \/ manifest v\S+ \/ commit \S+ \/ schema [0-9a-f]{16}$/)
+    assert.equal(stalenessTriple(), t0)
+    assert.notEqual(stalenessTriple([...BRIDGE_OP_NAMES, 'brand_new_tool']), t0)
+  })
   it('backendCommit is sha-or-unknown, format names refresh path', () => {
     assert.match(backendCommit(), /^([0-9a-f]{4,40}|unknown)$/)
     const out = formatBridgeInfo({ opNames: registeredOps(), base: 'https://x.example' })
