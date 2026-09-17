@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/Users/trilliumsmith/.local/bin:/Users/trilliumsmith/.pi/agent/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>SQLITE_DB_PATH</key>
+		<string>/Users/trilliumsmith/.local/share/mcpjungle/mcpjungle.db</string>
+	</dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.mcpjungle.gateway</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/trilliumsmith/.local/bin/mcpjungle</string>
+		<string>start</string>
+		<string>--host</string>
+		<string>127.0.0.1</string>
+		<string>--port</string>
+		<string>8338</string>
+		<string>--sqlite-db-path</string>
+		<string>/Users/trilliumsmith/.local/share/mcpjungle/mcpjungle.db</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/trilliumsmith/.local/share/mcpjungle/gateway.err.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/trilliumsmith/.local/share/mcpjungle/gateway.out.log</string>
+	<key>WorkingDirectory</key>
+	<string>/Users/trilliumsmith/.local/share/mcpjungle</string>
+</dict>
+</plist>

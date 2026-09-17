@@ -83,5 +83,26 @@ all probes below are fresh MCP sessions over Streamable HTTP on
 - Loopback only: bridge `127.0.0.1:3737`, jungle `127.0.0.1:8338`. Nothing
   off-loopback exposed.
 - Bridge launchd service (`com.beads-bridge.server`) untouched.
-- Jungle process here is a manual foreground/background start for S2
-  verification; launchd persistence is S4 (task-622kl.4).
+- Jungle process was a manual start for S2/S3 verification; launchd
+  persistence is S4 (task-622kl.4, below).
+
+## S4 launchd persistence (2026-09-17, task-622kl.4)
+
+- Plist template: `ops/launchd/com.mcpjungle.gateway.plist`, installed at
+  `~/Library/LaunchAgents/com.mcpjungle.gateway.plist`. Mirrors the
+  bridge pattern (`KeepAlive`, `RunAtLoad`, `WorkingDirectory`,
+  `StandardOut/ErrorPath`); loopback-only, no Tailnet/funnel.
+- Config location pin (S1 note resolved): **mcpjungle has no config file
+  — `~/.config/mcpjungle` does not exist and is not read.** All gateway
+  state is the SQLite registry
+  `~/.local/share/mcpjungle/mcpjungle.db`; bind address/port come from
+  CLI flags. Both are pinned in the plist: `--sqlite-db-path
+  ~/.local/share/mcpjungle/mcpjungle.db` (plus `SQLITE_DB_PATH` env
+  belt-and-suspenders), `--host 127.0.0.1 --port 8338`,
+  `WorkingDirectory ~/.local/share/mcpjungle`, logs to
+  `~/.local/share/mcpjungle/gateway.{out,err}.log`.
+- Verified: `launchctl bootstrap`, health `{"status":"ok"}`, 36 tools
+  all `beads-bridge__`-prefixed via a fresh MCP session, then
+  `launchctl kickstart -k` → health + registration + 36 tools back with
+  zero manual steps (registry lives in SQLite, survives restarts).
+- Bridge service untouched (still running, own plist unchanged).

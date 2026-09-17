@@ -56,6 +56,7 @@ the ChatGPT connection — don't restart jungle.
 ## Boundaries (unchanged)
 
 Loopback only (`127.0.0.1:3737` bridge, `127.0.0.1:8338` jungle). The
-running jungle process is still a **manual start** (log wherever the
-operator put it; S3 used `/tmp/jungle-s3.log`) — launchd persistence is
-S4 (task-622kl.4). Direct bridge URL stays the documented fallback.
+gateway now runs under launchd (`com.mcpjungle.gateway`, S4 —
+`ops/launchd/com.mcpjungle.gateway.plist`; logs at
+`~/.local/share/mcpjungle/gateway.{out,err}.log`). Direct bridge URL
+stays the documented fallback.
