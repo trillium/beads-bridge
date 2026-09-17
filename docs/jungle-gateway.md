@@ -171,3 +171,48 @@ process, no port at all). No Tailnet/funnel.
 .../fm_mcp_server.py`, newline-delimited JSON-RPC).
 - ChatGPT refresh runbook: `docs/jungle-gateway-refresh.md`
 (post-refresh expectation is now **55** tools, both prefixes).
+
+## S6 front door: bridge OAuth fronts the gateway (2026-09-17, task-jhdil)
+
+ChatGPT reaches the gateway through the bridge, not directly: the bridge
+serves `https://<funnel-host>/jungle/mcp` (`src/routes/jungle.ts`), verifies
+a bridge OAuth token minted for the **jungle audience**
+(`jungleResource(BASE)` = `<BASE>/jungle/mcp`, `src/lib/oauth.ts`), strips
+the client bearer, and streams the MCP request to the loopback gateway
+(`http://127.0.0.1:8338/mcp`). No new credential system — the bridge OAuth
+(register/authorize + setup-key approval, PKCE, refresh rotation) is the auth.
+
+- Audience isolation: a token minted for `/mcp` never opens `/jungle/mcp`
+  and vice versa (exact-audience equality in both gates). Discovery serves
+  the jungle audience at
+  `/.well-known/oauth-protected-resource/jungle/mcp` and
+  `/.well-known/oauth-authorization-server/jungle/mcp`.
+- Unauthenticated calls are refused with the RFC 9728 challenge (401 +
+  `WWW-Authenticate` pointing at the jungle metadata) — proxy traffic never
+  flows without a token.
+- The loopback hop carries no client bearer (stripped at the gate); the
+  gateway's downstream auth stays its own stored bearer
+  (`mcpjungle-gateway`, `/mcp` audience). Prefixing is untouched:
+  `beads-bridge__` (36) + `firstmate_mcp__` (19) = **55**, zero unprefixed.
+- Hot path is cheap: no JSON parsing, no body buffering — bytes (including
+  SSE GET streams) pump straight through via a streaming sender.
+  (`mountFetch` buffers, which is right for mcp-handler but fatal for
+  long-lived gateway streams — hence the custom sender.)
+
+## Funnel mapping (implemented, NOT exposed)
+
+The mapping is a path on the existing funnel host: `/jungle/mcp` rides the
+current `/ → 127.0.0.1:3737` funnel proxy, since the bridge itself serves
+the front door. No `tailscale serve`/`funnel` change was made in this task —
+aiming the funnel and flipping it live stays a separate explicit step.
+Until then the front door is loopback-reachable only (verified via a local
+listener mounting the same router, never via the public host).
+
+## Regression tests
+
+- `src/routes/jungle.test.ts`: gate unit tests (no-token/garbage refused,
+  `/mcp`-audience token refused, jungle-audience token accepted), wiring
+  contract (loopback pin, discovery mounts, both gates' audiences, access
+  gate), plus a live proof (`JUNGLE_LIVE=1`): 401 without token, then
+  initialize + `tools/list` through the real gateway → **36**
+  `beads-bridge__` tools, every tool prefixed.

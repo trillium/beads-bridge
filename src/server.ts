@@ -47,7 +47,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   const tagged = req as Request & { accessVerdict?: string }
   const ip = (req.ip ?? '').replace(/^::ffff:/, '')
   const ua = req.get('user-agent') ?? ''
-  if (req.path === '/mcp' || req.path.startsWith('/.well-known/') || req.path.startsWith('/oauth/')) tagged.accessVerdict = 'ALLOW:mcp'
+  if (req.path === '/mcp' || req.path === '/jungle/mcp' || req.path.startsWith('/.well-known/') || req.path.startsWith('/oauth/')) tagged.accessVerdict = 'ALLOW:mcp'
   else if (TAILNET.test(ip)) tagged.accessVerdict = 'ALLOW:tailnet'
   else if (LOOPBACK.test(req.ip ?? '')) tagged.accessVerdict = 'ALLOW:localhost'
   else if (APPROVED_AGENT_UA.test(ua)) tagged.accessVerdict = 'ALLOW:agent-ua'

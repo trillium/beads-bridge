@@ -104,6 +104,9 @@ const authorizationHandler = (_req: Request, res: Response) => {
 // Serve both, mirroring the protected-resource mounts above.
 oauthRouter.get('/.well-known/oauth-authorization-server', authorizationHandler)
 oauthRouter.get('/.well-known/oauth-authorization-server/mcp', authorizationHandler)
+// Jungle front-door audience (resource https://host/jungle/mcp): clients
+// probing that resource request issuer metadata at the suffixed path.
+oauthRouter.get('/.well-known/oauth-authorization-server/jungle/mcp', authorizationHandler)
 
 // ── Dynamic client registration (RFC 7591, public clients) ──────────────────
 
