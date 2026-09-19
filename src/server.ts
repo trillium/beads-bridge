@@ -9,11 +9,17 @@ import { wrap } from './wrap'
 import { warmResume } from './resume-cache'
 import { loadRoutes } from './routes/load-routes'
 import { isWebAgent } from './agent-detect'
+import { accessGate } from './lib/access-gate'
 import { recordHit } from './routes/activity'
 import { trackAction, shutdownAnalytics } from './lib/analytics'
 import { oauthSetupHint } from './routes/oauth'
 
 const app = express()
+
+// Supporting routing correction only (truthful req.ip in logs on
+// Funnel-forwarded hops): the auth decision lives in ./lib/access-gate
+// and never rests on req.ip, X-Forwarded-For, or User-Agent.
+app.set('trust proxy', 'loopback')
 
 app.use((req: Request, res: Response, next: NextFunction) => {
   const start = Date.now()
@@ -38,25 +44,12 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next()
 })
 
-// Access gate: tailnet IPs and localhost always pass; off-tailnet passes
-// only for approved agent fetchers (ChatGPT). Everything else gets 403.
-const TAILNET = /^100\.(6[4-9]|[78]\d|9\d|1[01]\d|12[0-7])\./
-const LOOPBACK = /^(127\.|::1$|::ffff:127\.)/
-const APPROVED_AGENT_UA = /chatgpt-user|gptbot/i
-app.use((req: Request, res: Response, next: NextFunction) => {
-  const tagged = req as Request & { accessVerdict?: string }
-  const ip = (req.ip ?? '').replace(/^::ffff:/, '')
-  const ua = req.get('user-agent') ?? ''
-  if (req.path === '/mcp' || req.path === '/jungle/mcp' || req.path.startsWith('/.well-known/') || req.path.startsWith('/oauth/')) tagged.accessVerdict = 'ALLOW:mcp'
-  else if (TAILNET.test(ip)) tagged.accessVerdict = 'ALLOW:tailnet'
-  else if (LOOPBACK.test(req.ip ?? '')) tagged.accessVerdict = 'ALLOW:localhost'
-  else if (APPROVED_AGENT_UA.test(ua)) tagged.accessVerdict = 'ALLOW:agent-ua'
-  else {
-    tagged.accessVerdict = 'DENY:403'
-    return void res.type('text/plain').status(403).send('# forbidden\n')
-  }
-  next()
-})
+// Access gate (see ./lib/access-gate.ts): OAuth/bearer credential on
+// every data/action route; only OAuth discovery/authorization/token and
+// the bearer-gated /mcp + /jungle/mcp connector paths stay public.
+// Direct tailnet/local pass exactly as before. Addresses and User-Agent
+// are routing hints only, never authentication.
+app.use(accessGate)
 
 // File-based routing: src/routes/*.ts auto-mounts (see load-routes.ts).
 // Body parsers first so route files never think about them.

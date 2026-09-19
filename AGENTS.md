@@ -10,6 +10,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - False-success guardrail (`src/lib/receipts.ts`): unverified mutations are errors naming operation/id/store (`requireVerified`/`unverifiedError`), never success — routes return MCP isError / GET 500, batches report partial failure.
 - ChatGPT probes OAuth discovery at bare AND `/mcp`-suffixed well-known paths — every discovery doc must be mounted at both (see `src/routes/oauth.ts` Discovery + `src/routes/discovery.test.ts`).
 - Live rounds-trip tests (`src/lib/relay-live.test.ts` is the template): `projects` store beads are `project-*` while `createBead`'s id parser keys off `projects-`, so shell `projects create` directly and parse `project-<id>`; clean up with `projects delete <id> --force` + verify `show` returns null. Tests that spawn several store calls need a per-test `{ timeout }` — bun's 5s default is too tight.
+- Public-ingress auth lives in `src/lib/access-gate.ts`, not `src/server.ts`: Funnel forwards onto the loopback socket so `req.ip`/localhost can never separate public from local — the gate splits them by socket peer + Funnel forwarding headers (presence only withholds the localhost bypass, never grants) and requires an OAuth/toolKey bearer on every data/action route. Never re-add an address or User-Agent allow.
 
 ## Maintaining this file
 
