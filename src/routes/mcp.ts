@@ -572,17 +572,36 @@ const mcpHandler = createMcpHandler((server) => {
     'identity_update',
     {
       title: 'Update operator identity',
-      description: 'Set operator profile fields shown by whoami: name, role, timezone, notes.',
+      description: 'Set operator profile fields shown by whoami: name, role, timezone, notes, personality, communication, principles, relationship, relay_stance.',
       inputSchema: z.object({
         name: z.string().max(500).optional(),
         role: z.string().max(500).optional(),
         timezone: z.string().max(500).optional(),
         notes: z.string().max(500).optional(),
+        personality: z.string().max(500).optional(),
+        communication: z.string().max(500).optional(),
+        principles: z.string().max(500).optional(),
+        relationship: z.string().max(500).optional(),
+        relay_stance: z.string().max(500).optional(),
       }),
     },
-    async (patch: { name?: string; role?: string; timezone?: string; notes?: string }) => {
+    async (patch: {
+      name?: string
+      role?: string
+      timezone?: string
+      notes?: string
+      personality?: string
+      communication?: string
+      principles?: string
+      relationship?: string
+      relay_stance?: string
+    }) => {
       const { profile, bad } = updateProfile(patch as Record<string, unknown>)
-      if (bad.length) return err(`unknown identity fields: ${bad.join(', ')} (want name, role, timezone, notes)`)
+      if (bad.length) {
+        return err(
+          `unknown identity fields: ${bad.join(', ')} (want name, role, timezone, notes, personality, communication, principles, relationship, relay_stance)`,
+        )
+      }
       const lines = Object.entries(profile).map(([k, v]) => `${k}: ${v}`)
       return ok(['# operator identity updated', '', ...(lines.length ? lines : ['(empty)'])].join('\n'))
     },
