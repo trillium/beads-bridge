@@ -58,8 +58,11 @@ describe('jungle wiring (source contract)', () => {
     assert.ok(mcp.includes('rec.resource !== mcpResource(BASE)'))
   })
   it('lets the access gate pass the front door for public clients', () => {
+    const gate = readFileSync(join(root, 'src/lib/access-gate.ts'), 'utf8')
+    assert.ok(gate.includes("'/jungle/mcp'"))
+    assert.ok(gate.includes("'/mcp'"))
     const server = readFileSync(join(root, 'src/server.ts'), 'utf8')
-    assert.ok(server.includes("'/jungle/mcp'"))
+    assert.ok(server.includes('accessGate'), 'server.ts must wire the access gate')
   })
 })
 
