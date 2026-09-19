@@ -28,9 +28,29 @@ export interface OperatorProfile {
   role?: string
   timezone?: string
   notes?: string
+  // Structured agent posture: how the agent presents and operates, kept as
+  // plain strings (same 500-char cap as the base fields) so the existing
+  // string-only sanitizer/update path applies unchanged — a principles list
+  // is newline/semicolon-separated text, not an array, to avoid silent
+  // flatten/drop and keep every-whoami parsing cheap.
+  personality?: string
+  communication?: string
+  principles?: string
+  relationship?: string
+  relay_stance?: string
 }
 
-const PROFILE_FIELDS = ['name', 'role', 'timezone', 'notes'] as const
+const PROFILE_FIELDS = [
+  'name',
+  'role',
+  'timezone',
+  'notes',
+  'personality',
+  'communication',
+  'principles',
+  'relationship',
+  'relay_stance',
+] as const
 
 export function identityPath(): string {
   return process.env.IDENTITY_PATH ??
@@ -96,6 +116,16 @@ export function formatWhoami(info: WhoamiInfo): string {
   const opBits = [`name: ${op.name ?? '(unset)'}`, `role: ${op.role ?? '(unset)'}` +
     (op.timezone ? `, timezone: ${op.timezone}` : '')]
   lines.push(`operator: ${opBits.join(' | ')}` + (op.notes ? `\noperator notes: ${op.notes}` : ''))
+  // Posture renders only when set: old files (or profiles without posture)
+  // render exactly as before, and empty posture adds zero context bloat.
+  const posture: Array<[string, string | undefined]> = [
+    ['personality', op.personality],
+    ['communication', op.communication],
+    ['principles', op.principles],
+    ['relationship', op.relationship],
+    ['relay_stance', op.relay_stance],
+  ]
+  for (const [k, v] of posture) if (v) lines.push(`posture ${k}: ${v}`)
   lines.push(
     ``,
     `stores: ${info.stores.length} queryable (${info.stores.join(', ')})`,
