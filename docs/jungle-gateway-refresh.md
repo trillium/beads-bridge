@@ -23,8 +23,7 @@ the ChatGPT connection — don't restart jungle.
 
 - Jungle gateway restart alone (registry persists in SQLite
   `~/.local/share/mcpjungle/mcpjungle.db`).
-- Bridge bearer rotation (server-side only: mint pair → rewrite
-  `/tmp/jungle-beads-bridge.json` → `register --force`; the bearer never
+- Bridge bearer rotation (server-side only: `ops/jungle-register-bearer.sh`; the bearer never
   appears in ChatGPT config).
 
 ## Refresh steps (operator, in ChatGPT)
@@ -37,9 +36,9 @@ the ChatGPT connection — don't restart jungle.
    (remove/re-add or toggle off/on — this forces a fresh `initialize` +
    `tools/list`).
 3. Re-check: `tools/list` must show **55** tools (**36** starting
-   with `beads-bridge__`, **19** with `firstmate_mcp__`). Spot-call
-   `beads-bridge__whoami` — it must say
-   `you are: OAuth client mcpjungle-gateway`.
+   with `beads-bridge__`, **19** with `firstmate_mcp__`).
+   (`beads-bridge__whoami` on the gateway path reports no OAuth client —
+   service-bearer path; bridge-direct OAuth callers still show theirs.)
 4. If the count is still wrong after reconnect, the problem is upstream
    of ChatGPT: check jungle health (`GET http://127.0.0.1:8338/health`
    → `{"status":"ok"}`), then `mcpjungle list tools --server

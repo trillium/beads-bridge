@@ -9,13 +9,17 @@ never appears in ChatGPT-side config.
 - `name`: `beads-bridge`
 - `transport`: `streamable_http` (config-file spelling; CLI `--url` implies it)
 - `url`: `http://127.0.0.1:3737/mcp`
-- `bearer_token`: dedicated bridge OAuth access token, client
-  `mcpjungle-gateway`, scope `mcp` (value lives only in the jungle DB and
-  the 0600 registration config at `/tmp/jungle-beads-bridge.json` — never
-  in this repo or ChatGPT config)
+- `bearer_token`: the bridge's own service key (`toolKey` — minted once,
+  0600 file at `~/.config/pai/beads-bridge-toolkey`, never expires).
+  The bridge accepts it on `/mcp` only from true direct-loopback
+  sockets (socket peer is loopback AND no proxy forwarding headers —
+  see `isLoopbackServiceCall` in `src/routes/mcp.ts`), so it is
+  unusable off-host even if leaked. Value lives only in the jungle DB
+  (written by `ops/jungle-register-bearer.sh`) — never in this repo
+  or ChatGPT config.
 - `session_mode`: default (`stateless`)
-- Registration command: `mcpjungle register -c /tmp/jungle-beads-bridge.json
-  --registry http://127.0.0.1:8338`
+- Registration command: `ops/jungle-register-bearer.sh` (reads the live
+  service key, registers, verifies; idempotent, safe to re-run)
 
 Schema source: MCPJungle `docs/guides/register-http-servers.mdx`
 (`transport`/`url`/`bearer_token`/`session_mode`/`headers`) and
@@ -29,19 +33,34 @@ separator constant `serverToolNameSep = "__"`; split on first `__`).
 Server names may not contain `__` or end with `_`. Bridge tools arrive as
 `beads-bridge__<name>`.
 
-## Bearer handling
+## Bearer handling (task-y1i3e, 2026-09-19 — durable service bearer)
 
-- The bridge `/mcp` gate is OAuth (`withMcpAuth` + `lookupAccess` in
-  `src/routes/mcp.ts`); jungle's static `bearer_token` carries a bridge
-  OAuth access token minted for client `mcpjungle-gateway`.
-- Access TTL 24h, refresh TTL 30d (`ACCESS_TTL_MS`/`REFRESH_TTL_MS` in
-  `src/lib/oauth.ts`). Token state lives in the bridge OAuth store
-  `~/.config/pai/beads-bridge-oauth.json` (0600, survives bridge restarts).
-- Rotation (no `update server` in the jungle CLI): mint a fresh pair
-  (`mintTokenPair('mcpjungle-gateway', ['mcp'], mcpResource(BASE))` or
-  `rotateRefresh`), rewrite `/tmp/jungle-beads-bridge.json`, then
-  `mcpjungle register --force -c …` (deregister + re-register).
-- Gateway whoami proof shows `you are: OAuth client mcpjungle-gateway`.
+History: the S2 wiring stored a bridge OAuth **access token**
+(`bb_at_…`, client `mcpjungle-gateway`) as the static bearer. Access
+tokens live 24h (`ACCESS_TTL_MS` in `src/lib/oauth.ts`) and the gateway
+holds no refresh logic, so the bearer expired silently and the gateway's
+`/mcp` calls 401'd from 2026-09-18T08:05Z while direct ChatGPT stayed
+200 (bridge log: `ALLOW:mcp 401 POST /mcp … ua=Go-http-client/1.1`).
+This was expiry, not a regression from the Sep 18 ingress hardening
+(`7809762` never touched `src/routes/mcp.ts`; first 401 predates the
+18:25 redeploy by ~17h).
+
+Since task-y1i3e the bearer is the bridge service key instead:
+
+- The bridge `/mcp` gate is OAuth (`withMcpAuth` + `lookupAccess`, exact
+  `/mcp` audience) for everyone else, PLUS the service key on the
+  loopback-only path (`isLoopbackServiceCall` in `src/routes/mcp.ts`).
+- The service key never expires, so there is no expiry clock to miss.
+- Rotation (no `update server` in the jungle CLI): run
+  `ops/jungle-register-bearer.sh` (deregister + re-register via
+  `register --force`, no restarts needed). Re-run it any time the
+  registry and the bridge desync.
+- Failure is loud: a rejected loopback bearer logs a
+  `jungle-bearer-mismatch` marker line in the bridge log
+  (`~/.local/share/beads-bridge/server.out.log`) — grep for that
+  string instead of diagnosing a bare 401.
+- Gateway whoami proof now reports no OAuth client (the service path
+  carries no OAuth authInfo); bridge-direct OAuth callers are unchanged.
 
 ## Counts (2026-09-16, verified)
 

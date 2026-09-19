@@ -3,9 +3,10 @@
 // directly. Mounted before readRouter's /:store catchall so /mcp isn't
 // swallowed by a param route.
 import { Router } from 'express'
+import type { Request, Response } from 'express'
 import { createMcpHandler, withMcpAuth } from 'mcp-handler'
 import { z } from 'zod'
-import { BASE, STORES } from '../config'
+import { BASE, STORES, toolKey } from '../config'
 import { storeFromId } from '../util'
 import { beadText, mapLimit } from '../lib/exec'
 import { bundleIds } from './beads'
@@ -20,8 +21,9 @@ import { formatWhoami, loadProfile, serverVersion, updateProfile } from '../lib/
 import { backendCommit, BRIDGE_OP_NAMES, capabilitiesSince, capabilityStatus, formatBridgeInfo, isSemver, loadManifest, schemaHash } from '../lib/capabilities'
 import { scratchAppend, scratchClear, scratchRead } from '../lib/scratchpad'
 import { pickStores, gatherCandidates, sampleIndices, formatPicks } from '../lib/random'
-import { mountFetch } from '../lib/express-fetch'
+import { sendFetchResponse, toFetchRequest } from '../lib/express-fetch'
 import { lookupAccess, mcpResource } from '../lib/oauth'
+import { LOOPBACK, hasForwardMarkers, socketPeer } from '../lib/access-gate'
 import { withCompatRequest } from '../lib/mcp-compat'
 import { withTelemetry } from '../lib/mcp-telemetry'
 import { captureEntry, editProject, formatFlow, formatProjectEdit, formatProjectList, formatResolve, formatVerify, listProjectsScoped, requestDispatch, resolveProject, runFlow, upsertTask, verifyWork } from '../lib/relay'
@@ -1048,6 +1050,26 @@ const mcpHandler = createMcpHandler((server) => {
   )
 })
 
+// Loopback service bearer (task-y1i3e): the MCPJungle gateway calls /mcp
+// from 127.0.0.1 with a static bearer, but OAuth access tokens expire
+// (24h) and the gateway holds no refresh logic — so a static OAuth token
+// silently 401s days later (2026-09-18 outage: bb_at_ bearer expired,
+// gateway 401 from 08:05 UTC while direct ChatGPT stayed 200). The
+// bridge's own service key (`toolKey`: minted once, 0600 file, never
+// expires) is therefore also accepted here — but ONLY on true
+// direct-loopback sockets (same socket-peer + no-forwarding-headers rule
+// as the access gate's localhost bypass). Funnel-forwarded requests
+// arrive on the loopback socket WITH forwarding headers, so the service
+// bearer is unusable off-host: such calls fall through to the OAuth gate
+// and 401. Exported for the auth regression tests (see mcp-auth.test.ts).
+export function isLoopbackServiceCall(req: Request): boolean {
+  const t = String(req.headers?.authorization ?? '').replace(/^Bearer\s+/i, '')
+  if (!t || t !== toolKey) return false
+  if (!LOOPBACK.test(socketPeer(req))) return false
+  if (hasForwardMarkers(req)) return false
+  return true
+}
+
 // Bearer gate: ChatGPT completes OAuth against /oauth/*, then presents the
 // token here. withMcpAuth answers 401/403 with RFC 9728 challenges itself.
 // Unauthenticated callers get discovery instead of tools.
@@ -1071,7 +1093,32 @@ const authedMcpHandler = withMcpAuth(
 // mcp-handler speaks Fetch Request/Response; adapt at the boundary.
 // Sparse 2026 envelopes (ChatGPT) are backfilled first so the SDK's
 // strict envelope validation passes; everything else flows through.
-// Per-query telemetry wraps the whole chain (compat backfill + authed handler):
+// Per-query telemetry wraps the whole chain (compat backfill + handler):
 // durable JSONL per request for lifecycle research, never failing responses.
+// The bare chain is identical minus the OAuth gate — the loopback service
+// bearer was already verified against the socket above, so withMcpAuth has
+// nothing left to check (whoami on this path reports no OAuth authInfo).
+const telemetryBareHandler = withTelemetry((fetchReq) => withCompatRequest(fetchReq).then((r) => mcpHandler(r)))
 const telemetryMcpHandler = withTelemetry((fetchReq) => withCompatRequest(fetchReq).then((r) => authedMcpHandler(r)))
-mountFetch(mcpRouter, '/mcp', (fetchReq) => telemetryMcpHandler(fetchReq))
+
+// The Express layer owns the loopback-service branch because withMcpAuth
+// only sees Fetch requests (no socket peer to check loopback against):
+// loopback + service bearer goes straight to the tools, everything else
+// faces the OAuth gate (RFC 9728 challenges on 401, exact /mcp audience).
+// A rejected loopback bearer is logged with a searchable marker — the
+// gateway has no refresh logic, so a future mismatch must fail loudly in
+// the bridge log, never as a mystery 401 (see docs/jungle-gateway.md).
+mcpRouter.all('/mcp', async (req: Request, res: Response) => {
+  const service = isLoopbackServiceCall(req)
+  try {
+    const out = await (service ? telemetryBareHandler : telemetryMcpHandler)(toFetchRequest(req))
+    if (!service && out.status === 401 && String(req.headers?.authorization ?? '').startsWith('Bearer ')) {
+      if (LOOPBACK.test(socketPeer(req)) && !hasForwardMarkers(req)) {
+        console.log(`${new Date().toISOString()} jungle-bearer-mismatch 401 POST /mcp — loopback bearer rejected (service-key mismatch or expired OAuth token); re-register the gateway bearer, see docs/jungle-gateway.md`)
+      }
+    }
+    await sendFetchResponse(res, out)
+  } catch {
+    res.status(500).json({ error: 'handler failed' })
+  }
+})
