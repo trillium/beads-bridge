@@ -11,6 +11,18 @@
   it the verdict is feedback-vs-live and says so, and with no reference
   surface at all it returns an explicit unknown instead of a guess.
   Observational only (no writes, bounded output). Manifest v2.
+- Generalized MCP follow-on mechanism + Heartbeat (task-ksmy1, from
+  inbox-3z9q/inbox-uagq/inbox-lr1k, design brain-5eq4n): `src/lib/followons.ts`
+  (declarative post-action hooks — per-tool triggers, outcome conditions,
+  priority ordering, context passing, failure isolation, re-entrancy/cycle
+  guards) with Heartbeat as the default follow-on, plus `src/lib/heartbeat.ts`
+  (per-caller cursor delta over the relay-status projection). New callable
+  `heartbeat` MCP op + automatic `## heartbeat` footer on every tool response
+  (template-driven via `config/heartbeat.md`, `HEARTBEAT_TEMPLATE_FILE`
+  override; empty delta reports "Feeds current."). Loop prevention (bare
+  introspection tools, terminal text-only follow-ons), observational-only
+  (no store reads/writes), bounded output, documented cursor rule — see
+  `docs/heartbeat.md`. Manifest v2.
 
 ## 1.3.0
 

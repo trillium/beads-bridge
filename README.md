@@ -85,14 +85,14 @@ Ports: **3737** (this server) + **8338** (upstream MCPJungle gateway on loopback
 
 ## Tool namespaces
 
-Tools registered in `src/routes/mcp.ts` (36 total), grouped:
+Tools registered in `src/routes/mcp.ts` (41 total), grouped:
 
 - Beads: `bead_show`, `beads_bundle`, `bead_create`, `bead_batch_create`, `bead_edit`, `bead_comment`, `bead_note`, `bead_decision`, `bead_label`, `bead_connections`, `bead_feedback`
 - Query/retrieval: `query_store`, `retrieval_search`, `retrieval_activity`, `retrieval_claimed`, `retrieval_snapshot`, `random`, `relay_inspect`
 - Projects/relay: `relay_resolve_project`, `relay_list_projects`, `relay_capture`, `project_edit`, `relay_upsert_task`, `relay_dispatch_request`, `relay_verify`, `relay_flow`, `relay_catchup`, `relay_attention_next`, `relay_status`
-- Meta: `whoami`, `bridge_info`, `capability_status`, `capabilities_since`, `identity_update`, `scratchpad`, `timeout_probe`
+- Meta: `whoami`, `bridge_info`, `capability_status`, `capabilities_since`, `identity_update`, `scratchpad`, `timeout_probe`, `heartbeat`
 
-Shipped capabilities are also tracked in `capabilities.json` (manifest v1) — a capability lands only with implementation + tests + manifest entry + changelog/version together.
+Shipped capabilities are also tracked in `capabilities.json` (manifest v2) — a capability lands only with implementation + tests + manifest entry + changelog/version together.
 
 Behind the loopback gateway these appear as `beads-bridge__<name>`; the sibling `firstmate_mcp` server contributes `firstmate_mcp__<name>` (19 tools, owned by the firstmate repo).
 

@@ -31,7 +31,9 @@ import { withTelemetry } from '../lib/mcp-telemetry'
 import { captureEntry, editProject, formatFlow, formatProjectEdit, formatProjectList, formatResolve, formatVerify, listProjectsScoped, requestDispatch, resolveProject, runFlow, upsertTask, verifyWork } from '../lib/relay'
 import { closeBead, commentBead, formatReceipt, labelBead, noteBead } from '../lib/mutate'
 import { unverifiedMessage } from '../lib/receipts'
-import { formatRelayStatus, relayStatus, withRelayStatus } from '../lib/relay-status'
+import { formatRelayStatus, relayStatus } from '../lib/relay-status'
+import { currentScope, registerFollowon, withFollowonScope, withResponseFooter } from '../lib/followons'
+import { HEARTBEAT_CALLER_ANONYMOUS, HEARTBEAT_CALLER_LOOPBACK, HEARTBEAT_EXCLUDED_TOOLS, advanceHeartbeatCursor, renderHeartbeatBlock } from '../lib/heartbeat'
 import { relayCatchup } from '../lib/catchup'
 import { attentionNext } from '../lib/attention'
 import { inspectRead, inspectReadMany, inspectSearch, inspectTree } from '../lib/inspect'
@@ -62,8 +64,19 @@ export const mountOrder = -20
 export const mcpRouter = Router()
 
 const text = (t: string) => ({ type: 'text' as const, text: t })
-const ok = (t: string, bare = false) => ({ content: [text(bare ? t : withRelayStatus(t))] })
-const err = (t: string, bare = false) => ({ content: [text(bare ? t : withRelayStatus(t))], isError: true as const })
+const ok = (t: string, bare = false) => ({ content: [text(bare ? t : withResponseFooter(t, 'ok'))] })
+const err = (t: string, bare = false) => ({ content: [text(bare ? t : withResponseFooter(t, 'error'))], isError: true as const })
+
+// Heartbeat as the default follow-on (task-ksmy1): every footered response
+// carries the caller's delta off the shared relay-status projection.
+// Bare tools (heartbeat itself, relay_status, timeout_probe) stay bare —
+// footer output never re-triggers a follow-on (loop prevention).
+registerFollowon({
+  name: 'heartbeat',
+  priority: 100,
+  excludeTools: HEARTBEAT_EXCLUDED_TOOLS,
+  run: (ctx) => renderHeartbeatBlock(ctx.caller, { now: ctx.at }),
+})
 
 async function showBead(id: string): Promise<string> {
   const store = storeFromId(id)
@@ -1211,7 +1224,27 @@ const mcpHandler = createMcpHandler((server) => {
       if (mark_verified?.trim()) relayStatus.markVerified(mark_verified.trim())
       if (pin?.trim()) relayStatus.pin(pin.trim(), true)
       if (unpin?.trim()) relayStatus.pin(unpin.trim(), false)
+      // A relay_status read surfaces the same projection heartbeat deltas
+      // come from, so it advances the caller's cursor too (see
+      // docs/heartbeat.md). Bare response: no footer, no re-trigger.
+      advanceHeartbeatCursor(currentScope()?.caller ?? HEARTBEAT_CALLER_ANONYMOUS)
       return ok(formatRelayStatus(), true)
+    },
+  )
+
+  // Heartbeat as an explicitly callable tool (task-ksmy1): the same delta
+  // the automatic footer carries, on demand. Bare response (loop
+  // prevention); observational only — tracker read + cursor advance.
+  server.registerTool(
+    'heartbeat',
+    {
+      title: 'Heartbeat',
+      description: 'Changes since your previous MCP query (the same delta the automatic response footer carries): recently touched tasks, dispatches, verifications, failures with timestamps. The first call returns the current projection as a baseline; later calls return only what changed, or Feeds current. Read-only — never creates work, requests agents, or mutates beads.',
+      inputSchema: z.object({}),
+    },
+    async (_args: Record<string, never>) => {
+      const caller = currentScope()?.caller ?? HEARTBEAT_CALLER_ANONYMOUS
+      return ok(renderHeartbeatBlock(caller), true)
     },
   )
 })
@@ -1267,6 +1300,19 @@ const authedMcpHandler = withMcpAuth(
 const telemetryBareHandler = withTelemetry((fetchReq) => withCompatRequest(fetchReq).then((r) => mcpHandler(r)))
 const telemetryMcpHandler = withTelemetry((fetchReq) => withCompatRequest(fetchReq).then((r) => authedMcpHandler(r)))
 
+// Request scope for follow-ons (followons.ts): tool name off the envelope
+// clone plus caller key off the bearer, installed around the inner chain
+// so footers compose per caller with zero changes to tool callbacks. The
+// bare chain is reachable only via the verified loopback service bearer
+// (Express branch below), so its caller is loopback-local; the authed
+// chain resolves the OAuth clientId (anonymous fallback never reaches a
+// tool — withMcpAuth 401s first).
+const scopedBareHandler = withFollowonScope(telemetryBareHandler, () => HEARTBEAT_CALLER_LOOPBACK)
+const scopedAuthedHandler = withFollowonScope(
+  telemetryMcpHandler,
+  (bearer) => (bearer ? (lookupAccess(bearer)?.clientId ?? HEARTBEAT_CALLER_ANONYMOUS) : HEARTBEAT_CALLER_ANONYMOUS),
+)
+
 // The Express layer owns the loopback-service branch because withMcpAuth
 // only sees Fetch requests (no socket peer to check loopback against):
 // loopback + service bearer goes straight to the tools, everything else
@@ -1277,7 +1323,7 @@ const telemetryMcpHandler = withTelemetry((fetchReq) => withCompatRequest(fetchR
 mcpRouter.all('/mcp', async (req: Request, res: Response) => {
   const service = isLoopbackServiceCall(req)
   try {
-    const out = await (service ? telemetryBareHandler : telemetryMcpHandler)(toFetchRequest(req))
+    const out = await (service ? scopedBareHandler : scopedAuthedHandler)(toFetchRequest(req))
     if (!service && out.status === 401 && String(req.headers?.authorization ?? '').startsWith('Bearer ')) {
       if (LOOPBACK.test(socketPeer(req)) && !hasForwardMarkers(req)) {
         console.log(`${new Date().toISOString()} jungle-bearer-mismatch 401 POST /mcp — loopback bearer rejected (service-key mismatch or expired OAuth token); re-register the gateway bearer, see docs/jungle-gateway.md`)
