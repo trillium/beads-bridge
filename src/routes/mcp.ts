@@ -15,11 +15,12 @@ import { cleanLabel, LABEL_RE } from './query/params'
 import { createBead, validateCreateLabels } from '../lib/create'
 import { DEP_TYPES, MAX_BATCH_BEADS, formatBatch, runBatch } from '../lib/batch'
 import { beadConnections, formatConnections } from '../lib/connections'
-import { writeFeedback } from '../lib/feedback'
+import { feedbackDir, writeFeedback } from '../lib/feedback'
 import { editBead } from '../lib/edit'
 import { formatWhoami, loadProfile, readWhoamiNotes, serverVersion, updateProfile } from '../lib/whoami'
 import { appendPersonality, editPersonalitySection, ensurePersonality, loadPersonality, savePersonality, PERSONALITY_MAX_CHARS } from '../lib/personality'
 import { backendCommit, BRIDGE_OP_NAMES, capabilitiesSince, capabilityStatus, formatBridgeInfo, isSemver, loadManifest, schemaHash } from '../lib/capabilities'
+import { checkSurface, extractRecordedTriple, formatSurfaceCheck, latestFeedbackFilename, readFeedbackRecord } from '../lib/surface-compare'
 import { scratchAppend, scratchClear, scratchRead } from '../lib/scratchpad'
 import { pickStores, gatherCandidates, sampleIndices, formatPicks } from '../lib/random'
 import { sendFetchResponse, toFetchRequest } from '../lib/express-fetch'
@@ -575,6 +576,61 @@ const mcpHandler = createMcpHandler((server) => {
         `# capabilities_since ${clean} — ${rows.length} newer`, ``,
         ...rows.map((e) => `- ${e.id} (${e.title}, op: ${e.op}) — since ${e.changed ?? e.introduced}`),
       ].join('\n'))
+    },
+  )
+
+  // Tool-surface comparison (task-trv5y): observational only — reads the
+  // newest feedback record (or the named one), extracts the tool surface
+  // it describes, and diffs it against the live surface. A server cannot
+  // see a client's loaded tools/list, so a caller may supply its own
+  // snapshot (client_tools/client_schema) for a direct check; otherwise
+  // the verdict is feedback-vs-live and says so. Bounded output, no writes.
+  server.registerTool(
+    'tool_surface_check',
+    {
+      title: 'Tool-surface comparison against latest feedback',
+      description: 'Compare the MCP tool surface described in the latest feedback record against the live surface: additions, removals, schema/capability changes, and a needs_refresh verdict. Optionally pass your own loaded tools/list (client_tools) and schema hash (client_schema) for a direct staleness check — without them the verdict is feedback-vs-live and says so explicitly.',
+      inputSchema: z.object({
+        client_tools: z.string().max(4000).optional().describe('Your loaded tools/list snapshot: tool names separated by commas, spaces, or newlines'),
+        client_schema: z.string().max(128).optional().describe('Schema hash your connection loaded at connect time'),
+        feedback: z.string().max(120).optional().describe('Feedback filename to compare against (default: most recent)'),
+      }),
+    },
+    async ({ client_tools, client_schema, feedback }: { client_tools?: string; client_schema?: string; feedback?: string }) => {
+      try {
+        const dir = feedbackDir()
+        const file = feedback?.trim() || latestFeedbackFilename(dir)
+        if (!file) return err('tool_surface_check: no feedback records yet — nothing to compare against')
+        if (/[/\\]|\.\./.test(file)) return err(`tool_surface_check: bad feedback name '${file}'`)
+        let raw: string
+        try {
+          raw = readFeedbackRecord(dir, file)
+        } catch {
+          return err(`tool_surface_check: cannot read feedback '${file}'`)
+        }
+        const recorded = extractRecordedTriple(raw)
+        const changedSince = recorded.version
+          ? capabilitiesSince(loadManifest(), recorded.version).map((e) => e.id).sort()
+          : []
+        const m = loadManifest()
+        return ok(formatSurfaceCheck(checkSurface({
+          feedbackFile: file,
+          feedbackText: raw,
+          vocabulary: BRIDGE_OP_NAMES,
+          liveOps: BRIDGE_OP_NAMES,
+          liveTriple: {
+            version: serverVersion(),
+            manifest: m.manifestVersion,
+            commit: backendCommit(),
+            schema: schemaHash(BRIDGE_OP_NAMES),
+          },
+          clientTools: client_tools ?? null,
+          clientSchema: client_schema ?? null,
+          changedSince,
+        })))
+      } catch (e) {
+        return err(`tool_surface_check failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
     },
   )
 

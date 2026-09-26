@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 1,
+  "manifestVersion": 2,
   "note": "Source of truth for shipped Beads Bridge MCP capabilities. A capability is shipped only when implementation + tests + this entry + changelog/version land coherently. See task-qgplz.",
   "capabilities": [
     {
@@ -258,6 +258,15 @@
       "introduced": "1.1.0",
       "beads": [
         "task-qgplz"
+      ]
+    },
+    {
+      "id": "tool_surface_check",
+      "title": "Tool-surface comparison against latest feedback",
+      "op": "tool_surface_check",
+      "introduced": "1.4.0",
+      "beads": [
+        "task-trv5y"
       ]
     },
     {

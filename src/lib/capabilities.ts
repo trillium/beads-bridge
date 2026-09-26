@@ -39,7 +39,7 @@ export const BRIDGE_OP_NAMES = [
   'relay_dispatch_request', 'relay_verify', 'relay_flow', 'relay_catchup',
   'relay_attention_next', 'relay_inspect', 'retrieval_search', 'retrieval_activity',
   'retrieval_claimed', 'retrieval_snapshot', 'relay_status', 'bridge_info', 'capability_status',
-  'capabilities_since',
+  'capabilities_since', 'tool_surface_check',
 ]
 
 export function loadManifest(): CapabilityManifest {

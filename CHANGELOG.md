@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.0
+
+- `tool_surface_check` MCP op (task-trv5y): compares the MCP tool
+  surface described in the latest feedback record against the live
+  surface — additions, removals, schema/capability changes (via
+  `capabilities_since` on the recorded version) plus a `needs_refresh`
+  verdict. Accepts an optional caller-supplied tools/list snapshot
+  (`client_tools`/`client_schema`) for a direct staleness check; without
+  it the verdict is feedback-vs-live and says so, and with no reference
+  surface at all it returns an explicit unknown instead of a guess.
+  Observational only (no writes, bounded output). Manifest v2.
+
 ## 1.3.0
 
 - Personality document (task-xqj24): Who Am I now returns one durable,
