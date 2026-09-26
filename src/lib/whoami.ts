@@ -47,6 +47,9 @@ export interface WhoamiInfo {
   auth?: WhoamiAuth
   operator?: OperatorProfile
   stores: string[]
+  // Durable personality document (task-xqj24): the complete operator-
+  // controlled bootstrap record. Rendered in full — this is the point.
+  personalityDoc?: string
   // Bounded scratchpad tail (attached only for authenticated callers —
   // never populated on the unauthenticated path, so no new leak surface).
   recentNotes?: WhoamiNote[]
@@ -63,6 +66,9 @@ export interface OperatorProfile {
   // string-only sanitizer/update path applies unchanged — a principles list
   // is newline/semicolon-separated text, not an array, to avoid silent
   // flatten/drop and keep every-whoami parsing cheap.
+  // Legacy canonical home (task-xqj24): notes + posture migrate verbatim
+  // into the personality document, which clears them here; the fields stay
+  // writable for compatibility and still render when set.
   personality?: string
   communication?: string
   principles?: string
@@ -208,6 +214,14 @@ export function formatWhoami(info: WhoamiInfo): string {
     ['relay_stance', op.relay_stance],
   ]
   for (const [k, v] of posture) if (v) lines.push(`posture ${k}: ${v}`)
+  // The personality document is the canonical operating record: always the
+  // complete text, never truncated or capped.
+  if (info.personalityDoc) {
+    lines.push(
+      `operator document (personality, ${info.personalityDoc.length} chars, full text):`,
+      info.personalityDoc,
+    )
+  }
   // Resume context renders only when notes are attached (authenticated
   // callers): absent/empty degrades to nothing — no heading, no error.
   if (info.recentNotes?.length) lines.push(formatWhoamiNotes(info.recentNotes, info.scratchTotal ?? info.recentNotes.length))

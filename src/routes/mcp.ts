@@ -18,6 +18,7 @@ import { beadConnections, formatConnections } from '../lib/connections'
 import { writeFeedback } from '../lib/feedback'
 import { editBead } from '../lib/edit'
 import { formatWhoami, loadProfile, readWhoamiNotes, serverVersion, updateProfile } from '../lib/whoami'
+import { appendPersonality, editPersonalitySection, ensurePersonality, loadPersonality, savePersonality, PERSONALITY_MAX_CHARS } from '../lib/personality'
 import { backendCommit, BRIDGE_OP_NAMES, capabilitiesSince, capabilityStatus, formatBridgeInfo, isSemver, loadManifest, schemaHash } from '../lib/capabilities'
 import { scratchAppend, scratchClear, scratchRead } from '../lib/scratchpad'
 import { pickStores, gatherCandidates, sampleIndices, formatPicks } from '../lib/random'
@@ -470,7 +471,7 @@ const mcpHandler = createMcpHandler((server) => {
     'whoami',
     {
       title: 'Who am I here',
-      description: 'Your identity on this bridge: the server, your OAuth client id and scopes, the operator profile, and what you can do.',
+      description: 'Your identity on this bridge: the server, your OAuth client id and scopes, the operator profile, the complete operator personality document (startup/bootstrap context, read it fully), and what you can do.',
       inputSchema: z.object({}),
     },
     async (
@@ -479,6 +480,10 @@ const mcpHandler = createMcpHandler((server) => {
     ) => {
       const auth = ctx?.http?.authInfo
       const rec = auth?.token ? lookupAccess(auth.token) : null
+      // The personality document is the durable bootstrap record: ensured
+      // here so whoami always returns the complete text, migrating any
+      // legacy profile notes/posture exactly once (idempotent after that).
+      const pers = ensurePersonality(loadProfile())
       // Resume context is the operator's own content for their own agents:
       // attach only on the authenticated path, never for unauthenticated.
       const scratch = auth ? readWhoamiNotes() : { notes: [], total: 0 }
@@ -495,6 +500,7 @@ const mcpHandler = createMcpHandler((server) => {
           }
           : undefined,
         operator: loadProfile(),
+        personalityDoc: pers.doc,
         stores: STORES,
         recentNotes: scratch.notes,
         scratchTotal: scratch.total,
@@ -577,7 +583,7 @@ const mcpHandler = createMcpHandler((server) => {
     'identity_update',
     {
       title: 'Update operator identity',
-      description: 'Set operator profile fields shown by whoami: name, role, timezone, notes, personality, communication, principles, relationship, relay_stance.',
+      description: 'Set operator profile fields shown by whoami: name, role, timezone, notes, personality, communication, principles, relationship, relay_stance. The notes/posture fields are legacy — their canonical home is now the personality document (see personality_*); writes are still accepted for compatibility.',
       inputSchema: z.object({
         name: z.string().max(500).optional(),
         role: z.string().max(500).optional(),
@@ -609,6 +615,86 @@ const mcpHandler = createMcpHandler((server) => {
       }
       const lines = Object.entries(profile).map(([k, v]) => `${k}: ${v}`)
       return ok(['# operator identity updated', '', ...(lines.length ? lines : ['(empty)'])].join('\n'))
+    },
+  )
+
+  // Personality document (task-xqj24): one durable operator-controlled
+  // bootstrap record. Four operations with distinct semantics — read the
+  // whole record, replace it wholesale, append to the end, or rewrite one
+  // ## section by heading. No 500-char cap anywhere here (whole-document
+  // guard only). Every op routes through ensurePersonality, so legacy
+  // profile notes/posture migrate exactly once instead of being lost.
+  server.registerTool(
+    'personality_read',
+    {
+      title: 'Read personality document',
+      description: 'Read the complete operator personality document (startup/bootstrap context). Returns the full text plus whether the file already existed and whether a legacy profile migration seeded it just now.',
+      inputSchema: z.object({}),
+    },
+    async () => {
+      const existed = loadPersonality().existed
+      const { doc, migrated } = ensurePersonality(loadProfile())
+      return ok([
+        `# personality (operator document, ${doc.length} chars${existed ? '' : ', default'}${migrated ? ', migrated from operator profile just now' : ''})`,
+        '',
+        doc,
+      ].join('\n'))
+    },
+  )
+  server.registerTool(
+    'personality_replace',
+    {
+      title: 'Replace personality document',
+      description: 'Replace the entire personality document with the given markdown. Full overwrite — the old text is gone, so read first. No 500-char cap; the whole-document guard applies.',
+      inputSchema: z.object({
+        document: z.string().min(1).max(PERSONALITY_MAX_CHARS).describe('Complete new markdown document'),
+      }),
+    },
+    async ({ document }: { document: string }) => {
+      try {
+        ensurePersonality(loadProfile())
+        const { chars } = savePersonality(document)
+        return ok(`# personality replaced (${chars} chars).`)
+      } catch (e) {
+        return err(`personality_replace failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    },
+  )
+  server.registerTool(
+    'personality_append',
+    {
+      title: 'Append to personality document',
+      description: 'Append markdown to the end of the personality document (new section, rule, or repertoire entry). The text is added verbatim after a blank line; nothing else changes.',
+      inputSchema: z.object({
+        text: z.string().min(1).max(100000).describe('Markdown to append'),
+      }),
+    },
+    async ({ text }: { text: string }) => {
+      try {
+        const { chars } = appendPersonality(text)
+        return ok(`# personality appended (now ${chars} chars).`)
+      } catch (e) {
+        return err(`personality_append failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    },
+  )
+  server.registerTool(
+    'personality_section_edit',
+    {
+      title: 'Edit personality section',
+      description: 'Rewrite one ## section of the personality document by heading (case-insensitive, e.g. "Speaking preferences"). Only that section\'s body changes; sub-sections belong to their parent. Unknown headings fail listing the headings that exist.',
+      inputSchema: z.object({
+        heading: z.string().min(1).max(200).describe('Section heading to rewrite'),
+        body: z.string().min(1).max(100000).describe('New markdown body for the section'),
+      }),
+    },
+    async ({ heading, body }: { heading: string; body: string }) => {
+      try {
+        const { chars } = editPersonalitySection(heading, body)
+        return ok(`# personality section '${heading.trim()}' updated (now ${chars} chars).`)
+      } catch (e) {
+        return err(`personality_section_edit failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
     },
   )
 
