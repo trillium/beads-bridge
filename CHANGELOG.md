@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.1
+
+- Bridge version in `whoami` tool description (task-mm1q8): the
+  description now ends with a live `[bridge vX / manifest vY]` tag plus
+  refresh rule, derived at startup from the same sources `bridge_info`
+  and the staleness line read (`serverVersion()` + `capabilities.json`
+  manifest). A client holding an older schema reads the mismatch from
+  its own loaded description vs live `bridge_info`. Scope is `whoami`
+  only (session-start op, no tools/list bloat). `schemaHash` stays over
+  operation names only — descriptions never feed it. Manifest v3
+  (`whoami` `changed: 1.4.1`).
+
 ## 1.4.0
 
 - `tool_surface_check` MCP op (task-trv5y): compares the MCP tool

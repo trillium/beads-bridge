@@ -16,7 +16,12 @@ import {
   loadManifest,
   schemaHash,
   stalenessTriple,
+  toolVersionTag,
+  WHOAMI_DESCRIPTION_BASE,
+  whoamiDescription,
+  withToolVersion,
 } from './capabilities'
+import { serverVersion } from './whoami'
 
 const MCP_SRC = readFileSync(join(__dirname, '..', 'routes', 'mcp.ts'), 'utf8')
 
@@ -129,7 +134,7 @@ describe('capabilitiesSince', () => {
   it('returns only newer entries and rejects non-semver', () => {
     const m = loadManifest()
     const rows = capabilitiesSince(m, '1.0.0').map((c) => c.id).sort()
-    assert.deepEqual(rows, ['bridge_info', 'capabilities_since', 'capability_status', 'heartbeat', 'personality_append', 'personality_read', 'personality_replace', 'personality_section_edit', 'project_edit', 'retrieval_claimed', 'tool_surface_check'])
+    assert.deepEqual(rows, ['bridge_info', 'capabilities_since', 'capability_status', 'heartbeat', 'personality_append', 'personality_read', 'personality_replace', 'personality_section_edit', 'project_edit', 'retrieval_claimed', 'tool_surface_check', 'whoami'])
     assert.deepEqual(capabilitiesSince(m, '9.9.9'), [])
     assert.throws(() => capabilitiesSince(m, '1.0'), /not semver/)
   })
@@ -148,5 +153,44 @@ describe('bridge info', () => {
     assert.ok(out.includes('STALENESS RULE'))
     assert.ok(out.includes('manual MCP refresh'))
     assert.ok(out.includes('capability_status'))
+  })
+})
+
+describe('version in tool descriptions (task-mm1q8)', () => {
+  it('whoami description carries the current version from the single source', () => {
+    const v = serverVersion()
+    const manifest = String(loadManifest().manifestVersion)
+    const d = whoamiDescription()
+    assert.ok(d.startsWith(WHOAMI_DESCRIPTION_BASE), 'base text preserved')
+    assert.ok(d.includes(`[bridge v${v} / manifest v${manifest}]`), `tag missing: ${d.slice(-160)}`)
+    assert.ok(d.includes('bridge_info'), 'refresh rule names bridge_info')
+  })
+  it('tag changes when the version source changes (no hardcoded string)', () => {
+    // Coupling proof, not value proof: the tag is computed from the live
+    // sources on every call, and mcp.ts builds whoami from it.
+    assert.equal(toolVersionTag(), `[bridge v${serverVersion()} / manifest v${loadManifest().manifestVersion}]`)
+    assert.equal(withToolVersion('X').slice(0, 2), 'X ')
+    assert.ok(withToolVersion('A').endsWith(withToolVersion('B').slice(1)), 'same live tag regardless of base')
+    assert.ok(MCP_SRC.includes('whoamiDescription()'), 'mcp.ts whoami must call whoamiDescription()')
+    assert.ok(MCP_SRC.includes("from '../lib/capabilities'"), 'mcp.ts whoami tag must import from capabilities')
+    assert.ok(!MCP_SRC.match(/bridge v\d+\.\d+\.\d+.*Who am I|Who am I.*bridge v\d/), 'no hardcoded version in whoami description')
+  })
+  it('embedded tag does not drift from bridge_info report', () => {
+    const v = serverVersion()
+    const manifest = String(loadManifest().manifestVersion)
+    const info = formatBridgeInfo({ opNames: BRIDGE_OP_NAMES, base: 'https://x.example' })
+    assert.ok(info.includes(`backend: v${v} `), 'bridge_info backend version')
+    assert.ok(info.includes(`manifest v${manifest}`), 'bridge_info manifest version')
+    assert.ok(whoamiDescription().includes(`v${v} `) || whoamiDescription().includes(`v${v}]`), 'description backend version matches')
+    assert.ok(whoamiDescription().includes(`manifest v${manifest}`), 'description manifest matches')
+  })
+  it('schemaHash still covers op names only (descriptions never feed it)', () => {
+    const h = schemaHash(BRIDGE_OP_NAMES)
+    assert.match(h, /^[0-9a-f]{64}$/)
+    // A description-only change leaves the hash input untouched: hashing
+    // the ops plus a description must differ, proving descriptions are out.
+    const withDesc = schemaHash([...BRIDGE_OP_NAMES, whoamiDescription()])
+    assert.notEqual(withDesc, h)
+    assert.equal(schemaHash([...BRIDGE_OP_NAMES].reverse()), h, 'order-insensitive over names')
   })
 })

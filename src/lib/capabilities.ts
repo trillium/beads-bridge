@@ -161,3 +161,47 @@ export function stalenessTriple(opNames: string[] = BRIDGE_OP_NAMES): string {
   } catch { /* keep unknown */ }
   return `staleness: backend v${version} / manifest v${manifest} / commit ${commit} / schema ${hash}`
 }
+
+// Version-in-tool-description (task-mm1q8): the whoami description carries
+// the version it was generated at, so a stale loaded schema is
+// self-evidently stale — compare the embedded tag against live bridge_info.
+// Single source: serverVersion() (package.json, same as bridge_info) +
+// loadManifest().manifestVersion (capabilities.json, same as bridge_info and
+// the staleness line). No hardcoded version string anywhere in descriptions.
+//
+// SCOPE: whoami only. whoami runs at every session start so its description
+// is near-certainly in the client's loaded schema; annotating all ~40 tools
+// would bloat every tools/list payload for no extra signal.
+//
+// SCHEMA HASH: schemaHash() stays over sorted operation NAMES only —
+// descriptions never feed it. A description-only change (like this one)
+// therefore leaves the hash stable while the version/manifest segments of
+// the staleness triple advance; the version-in-description is still a valid
+// staleness signal because bridge_info's backend/manifest report moves with
+// the same bump. Hash = "which ops exist"; tag = "which backend built
+// this schema".
+export const WHOAMI_DESCRIPTION_BASE =
+  'Your identity on this bridge: the server, your OAuth client id and scopes, the operator profile, the complete operator personality document (startup/bootstrap context, read it fully), and what you can do.'
+
+/** Short tag naming the backend that generated a tool description. Never throws. */
+export function toolVersionTag(): string {
+  let version = 'unknown'
+  let manifest = 'unknown'
+  try {
+    version = serverVersion()
+  } catch { /* keep unknown */ }
+  try {
+    manifest = String(loadManifest().manifestVersion)
+  } catch { /* keep unknown */ }
+  return `[bridge v${version} / manifest v${manifest}]`
+}
+
+/** Append the live version tag plus the refresh rule to a base description. */
+export function withToolVersion(base: string): string {
+  return `${base} ${toolVersionTag()} If bridge_info reports a newer backend/manifest, your loaded schema is stale: ask the user for a manual MCP refresh.`
+}
+
+/** whoami tool description with the live version embedded (single source). */
+export function whoamiDescription(): string {
+  return withToolVersion(WHOAMI_DESCRIPTION_BASE)
+}
