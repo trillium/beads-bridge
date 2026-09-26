@@ -5,7 +5,8 @@ import assert from 'node:assert/strict'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { formatWhoami, loadProfile, updateProfile } from './whoami'
+import { formatWhoami, loadProfile, readWhoamiNotes, selectWhoamiNotes, updateProfile,
+  WHOAMI_NOTES_MAX_BYTES, WHOAMI_NOTES_MAX_ENTRIES, WHOAMI_NOTES_MAX_RESUME } from './whoami'
 
 beforeEach(() => {
   process.env.IDENTITY_PATH = join(mkdtempSync(join(tmpdir(), 'identity-test-')), 'identity.json')
@@ -109,5 +110,94 @@ describe('formatWhoami', () => {
     const out = formatWhoami({ server: 'b', version: 'dev', base: 'https://x.example', stores: [] })
     assert.ok(out.includes('unauthenticated'))
     assert.ok(out.includes('(unset)'))
+  })
+})
+
+describe('whoami resume context (scratchpad tail)', () => {
+  const { writeFileSync } = require('node:fs') as typeof import('node:fs')
+  function scratchWith(lines: string[]): string {
+    const p = join(mkdtempSync(join(tmpdir(), 'scratch-whoami-')), 'scratchpad.md')
+    process.env.SCRATCHPAD_PATH = p
+    writeFileSync(p, '# scratchpad\n' + lines.map((l) => `- ${l}`).join('\n') + '\n')
+    return p
+  }
+  const base = { server: 'b', version: 'dev', base: 'https://x.example', stores: [] as string[] }
+
+  it('populated scratchpad yields a bounded section with timestamps', () => {
+    scratchWith([
+      '2026-09-20T10:00:00.000Z first note',
+      '2026-09-21T10:00:00.000Z second note',
+    ])
+    const { notes, total } = readWhoamiNotes()
+    assert.equal(total, 2)
+    assert.equal(notes.length, 2)
+    const out = formatWhoami({ ...base, recentNotes: notes, scratchTotal: total })
+    assert.ok(out.includes('recent notes (scratchpad, 2 of 2):'))
+    assert.ok(out.includes('2026-09-20T10:00:00.000Z first note'))
+    assert.ok(out.includes('[#1]') && out.includes('[#2]'))
+  })
+  it('a PAUSED entry older than the cap still surfaces', () => {
+    const lines = ['2026-09-10T00:00:00.000Z PAUSED 2026-09-10 - big review. Resume here later.']
+    for (let i = 2; i <= WHOAMI_NOTES_MAX_ENTRIES + 3; i++) lines.push(`2026-09-${10 + i}T00:00:00.000Z routine note ${i}`)
+    scratchWith(lines)
+    const { notes, total } = readWhoamiNotes()
+    assert.equal(total, WHOAMI_NOTES_MAX_ENTRIES + 3)
+    assert.ok(notes.length <= WHOAMI_NOTES_MAX_ENTRIES + WHOAMI_NOTES_MAX_RESUME)
+    assert.equal(notes[0].ordinal, 1) // the old PAUSED note is prioritised first, chronological
+    assert.ok(notes[0].line.includes('PAUSED'))
+    const out = formatWhoami({ ...base, recentNotes: notes, scratchTotal: total })
+    assert.ok(out.includes('PAUSED 2026-09-10'))
+  })
+  it('an oversized scratchpad stays within the caps', () => {
+    const lines = [`2026-09-01T00:00:00.000Z PAUSED old but important. Resume later.`]
+    for (let i = 2; i <= 40; i++) lines.push(`2026-09-02T00:00:00.000Z ${'x'.repeat(400)} ${i}`)
+    scratchWith(lines)
+    const { notes } = readWhoamiNotes()
+    assert.ok(notes.length <= WHOAMI_NOTES_MAX_ENTRIES + WHOAMI_NOTES_MAX_RESUME)
+    const bytes = notes.map((n) => n.line).join('\n').length
+    assert.ok(bytes <= WHOAMI_NOTES_MAX_BYTES, `bytes ${bytes} exceed cap`)
+    // newest entry always survives truncation
+    assert.equal(notes[notes.length - 1].ordinal, 40)
+  })
+  it('absent/empty scratchpad adds nothing and does not throw', () => {
+    process.env.SCRATCHPAD_PATH = join(mkdtempSync(join(tmpdir(), 'scratch-whoami-')), 'missing.md')
+    assert.deepEqual(readWhoamiNotes(), { notes: [], total: 0 })
+    scratchWith([])
+    // header-only file: zero entries
+    const { writeFileSync: w } = require('node:fs') as typeof import('node:fs')
+    w(process.env.SCRATCHPAD_PATH!, '# scratchpad\n')
+    assert.deepEqual(readWhoamiNotes(), { notes: [], total: 0 })
+    const out = formatWhoami({ ...base, recentNotes: [], scratchTotal: 0 })
+    assert.ok(!out.includes('recent notes'))
+    const out2 = formatWhoami({ ...base })
+    assert.ok(!out2.includes('recent notes'))
+  })
+  it('selectWhoamiNotes is pure and chronological without IO', () => {
+    const all = ['- 2026-09-01T00:00:00.000Z a', '- 2026-09-02T00:00:00.000Z NEXT b']
+    const sel = selectWhoamiNotes(all)
+    assert.deepEqual(sel.map((n) => n.ordinal), [1, 2])
+  })
+})
+
+describe('whoami resume tiers', () => {
+  it('weak extras are evicted before fresh entries under byte pressure', () => {
+    const lines = [
+      '2026-09-01T00:00:00.000Z a decision was made long ago',
+      '2026-09-02T00:00:00.000Z another old decision here',
+    ]
+    for (let i = 3; i <= WHOAMI_NOTES_MAX_ENTRIES + 2; i++) lines.push(`2026-09-03T00:00:00.000Z ${'y'.repeat(380)} ${i}`)
+    const sel = selectWhoamiNotes(lines.map((l) => `- ${l}`))
+    const bytes = sel.map((n) => n.line).join('\n').length
+    assert.ok(bytes <= WHOAMI_NOTES_MAX_BYTES, `bytes ${bytes} exceed cap`)
+    // newest entry always survives; weak incidental matches do not crowd it out
+    assert.equal(sel[sel.length - 1].ordinal, lines.length)
+    assert.ok(!sel.some((n) => n.ordinal <= 2), 'weak extras evicted first')
+  })
+  it('a single entry larger than the byte cap is truncated, never dropped', () => {
+    const sel = selectWhoamiNotes([`- 2026-09-26T00:00:00.000Z PAUSED ${'z'.repeat(3000)}`])
+    assert.equal(sel.length, 1)
+    assert.ok(sel[0].line.includes('2026-09-26T00:00:00.000Z'))
+    assert.ok(sel[0].line.includes('PAUSED'))
+    assert.ok(sel[0].line.length <= WHOAMI_NOTES_MAX_BYTES)
   })
 })

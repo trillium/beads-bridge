@@ -17,7 +17,7 @@ import { DEP_TYPES, MAX_BATCH_BEADS, formatBatch, runBatch } from '../lib/batch'
 import { beadConnections, formatConnections } from '../lib/connections'
 import { writeFeedback } from '../lib/feedback'
 import { editBead } from '../lib/edit'
-import { formatWhoami, loadProfile, serverVersion, updateProfile } from '../lib/whoami'
+import { formatWhoami, loadProfile, readWhoamiNotes, serverVersion, updateProfile } from '../lib/whoami'
 import { backendCommit, BRIDGE_OP_NAMES, capabilitiesSince, capabilityStatus, formatBridgeInfo, isSemver, loadManifest, schemaHash } from '../lib/capabilities'
 import { scratchAppend, scratchClear, scratchRead } from '../lib/scratchpad'
 import { pickStores, gatherCandidates, sampleIndices, formatPicks } from '../lib/random'
@@ -479,6 +479,9 @@ const mcpHandler = createMcpHandler((server) => {
     ) => {
       const auth = ctx?.http?.authInfo
       const rec = auth?.token ? lookupAccess(auth.token) : null
+      // Resume context is the operator's own content for their own agents:
+      // attach only on the authenticated path, never for unauthenticated.
+      const scratch = auth ? readWhoamiNotes() : { notes: [], total: 0 }
       return ok(formatWhoami({
         server: 'beads-bridge',
         version: serverVersion(),
@@ -493,6 +496,8 @@ const mcpHandler = createMcpHandler((server) => {
           : undefined,
         operator: loadProfile(),
         stores: STORES,
+        recentNotes: scratch.notes,
+        scratchTotal: scratch.total,
       }))
     },
   )
