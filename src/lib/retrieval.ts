@@ -7,6 +7,7 @@
 import { execStdout, beadText, mapLimit } from './exec'
 import { STORES, BASE } from '../config'
 import { storeFromId, extractLinks } from '../util'
+import { resolveStoreName } from './store-aliases'
 import { cleanLabel } from '../routes/query/params'
 import { listArgs } from '../routes/query/store'
 import { runList } from '../routes/query/store'
@@ -34,11 +35,21 @@ export const RETRIEVAL_MAX_STORES = 10
 export const RETRIEVAL_MAX_PER_STORE = 50
 export const RETRIEVAL_MAX_LIMIT = 100
 
-export function pickRetrievalStores(wanted?: string[]): { stores: string[]; unknown: string[] } {
-  if (!wanted || !wanted.length) return { stores: [...STORES], unknown: [] }
-  const unknown = wanted.filter((s) => !STORES.includes(s))
-  const stores = [...new Set(wanted.filter((s) => STORES.includes(s)))].slice(0, RETRIEVAL_MAX_STORES)
-  return { stores, unknown }
+export function pickRetrievalStores(wanted?: string[], registry: string[] = STORES): { stores: string[]; unknown: string[] } {
+  if (!wanted || !wanted.length) return { stores: [...registry], unknown: [] }
+  const stores: string[] = []
+  const unknown: string[] = []
+  for (const w of wanted) {
+    const r = resolveStoreName(w, registry)
+    if (r.kind === 'exact' || r.kind === 'alias') {
+      if (!stores.includes(r.store)) stores.push(r.store)
+    } else if (r.kind === 'ambiguous') {
+      unknown.push(`${r.requested} (ambiguous: ${r.candidates.join(', ')})`)
+    } else {
+      unknown.push(w)
+    }
+  }
+  return { stores: stores.slice(0, RETRIEVAL_MAX_STORES), unknown }
 }
 
 export function cleanLabels(labels?: string[]): string[] {

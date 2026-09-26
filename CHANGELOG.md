@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.5.0
+
+- Federated store-name aliases (task-4lb3r): MCP store parameters
+  and bead-id prefixes accept the natural singular or plural spelling
+  (`idea` for `ideas`, `tasks` for `task`, `story-…` for a `stories`
+  bead). Rule is mechanical only — exact match plus deterministic
+  singular/plural spellings (trailing-s, -ies/-y, -es for s/x/z/ch/sh
+  stems); separators stay significant and mass nouns like `staleness`
+  have no alias. No fuzzy matching: unknown names are refused with the
+  canonical list, and a spelling that could map to more than one store
+  fails loudly naming the candidates instead of guessing. Canonical
+  names stay authoritative in `whoami`/`bridge_info`/listings; accepting
+  responses note the resolution (`resolved alias 'idea' → canonical
+  'ideas'`). Applies to `query_store`, `bead_create`,
+  `bead_batch_create`, all bead-id tools, `random`, the retrieval ops,
+  `relay_capture`, `relay_verify`, and the GET store/id routes.
+  Single source `src/lib/store-aliases.ts`, tests
+  `src/lib/store-aliases.test.ts`, rule documented in
+  `docs/store-aliases.md`. Manifest v4 (19 affected ops marked
+  `changed: 1.5.0`).
+
 ## 1.4.1
 
 - Bridge version in `whoami` tool description (task-mm1q8): the

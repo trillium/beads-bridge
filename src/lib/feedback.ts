@@ -6,6 +6,7 @@ import { mkdirSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { storeFromId } from '../util'
+import { ambiguousBeadIdError, resolveBeadStore } from './store-aliases'
 
 export interface FeedbackInput {
   text: string
@@ -32,6 +33,10 @@ export function buildFeedbackDoc(input: FeedbackInput, now: Date = new Date()): 
   const text = input.text.trim()
   if (!text) throw new Error('text is required')
   const bead = input.bead?.trim() || undefined
+  if (bead) {
+    const r = resolveBeadStore(bead)
+    if (r.kind === 'ambiguous') throw new Error(ambiguousBeadIdError(bead, r.prefix, r.candidates))
+  }
   const store = bead ? storeFromId(bead) : null
   if (bead && !store) throw new Error(`unknown bead id: ${input.bead}`)
   const front = [

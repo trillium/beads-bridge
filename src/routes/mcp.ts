@@ -8,6 +8,14 @@ import { createMcpHandler, withMcpAuth } from 'mcp-handler'
 import { z } from 'zod'
 import { BASE, STORES, toolKey } from '../config'
 import { storeFromId } from '../util'
+import {
+  ambiguousBeadIdError,
+  ambiguousStoreError,
+  resolveBeadStore,
+  resolveStoreName,
+  unknownBeadIdError,
+  unknownStoreError,
+} from '../lib/store-aliases'
 import { beadText, mapLimit } from '../lib/exec'
 import { bundleIds } from './beads'
 import { runList } from './query/store'
@@ -78,9 +86,25 @@ registerFollowon({
   run: (ctx) => renderHeartbeatBlock(ctx.caller, { now: ctx.at }),
 })
 
+// Canonical store for a bead id, with loud ambiguity: an id prefix that
+// could belong to more than one store names the candidates instead of
+// guessing. Returns the error text (caller wraps with err()).
+function beadStore(id: string): { store: string } | { error: string } {
+  const clean = id.trim()
+  const r = resolveBeadStore(clean)
+  if (r.kind === 'ambiguous') return { error: ambiguousBeadIdError(clean, r.prefix, r.candidates) }
+  const store = storeFromId(clean)
+  if (!store) return { error: unknownBeadIdError(id) }
+  return { store }
+}
+
 async function showBead(id: string): Promise<string> {
+  const resolved = resolveBeadStore(id.trim())
+  if (resolved.kind === 'ambiguous') {
+    return ambiguousBeadIdError(id.trim(), resolved.prefix, resolved.candidates)
+  }
   const store = storeFromId(id)
-  if (!store) return `unknown bead id: ${id}`
+  if (!store) return unknownBeadIdError(id)
   relayStatus.markVerified(id.trim())
   const [body, comments] = await Promise.all([
     beadText(store, ['show', id]),
@@ -137,7 +161,11 @@ const mcpHandler = createMcpHandler((server) => {
       store: string; label?: string[]; any?: string[]; exclude?: string[];
       title?: string; status?: string; limit?: number
     }) => {
-      if (!STORES.includes(store)) return err(`unknown store: ${store} (known: ${STORES.join(', ')})`)
+      const req = resolveStoreName(store ?? '')
+      if (req.kind === 'ambiguous') return err(ambiguousStoreError(req.requested, req.candidates))
+      if (req.kind === 'unknown') return err(unknownStoreError(store))
+      store = req.store
+      const aliasNote = req.kind === 'alias' ? ` (resolved alias '${req.requested}' → canonical '${req.store}')` : ''
       const all = (label ?? []).map(cleanLabel).filter((x): x is string => !!x).slice(0, 10)
       const orLabels = (any ?? []).map(cleanLabel).filter((x): x is string => !!x).slice(0, 10)
       // No filters means list-all (up to limit) — store discovery is a feature.
@@ -149,7 +177,7 @@ const mcpHandler = createMcpHandler((server) => {
         allStates: false,
       })
       const lines = rows.map((r) => `${r.id} — ${r.title}${r.labels.length ? ` [${r.labels.join(', ')}]` : ''}`)
-      return ok([`# query — ${store} (${rows.length})`, '', ...lines, ...(error ? ['', `error: ${error}`] : [])].join('\n'))
+      return ok([`# query — ${store} (${rows.length})${aliasNote}`, '', ...lines, ...(error ? ['', `error: ${error}`] : [])].join('\n'))
     },
   )
 
@@ -164,8 +192,9 @@ const mcpHandler = createMcpHandler((server) => {
     },
     async ({ id, text: t }: { id: string; text: string }) => {
       const clean = id.trim()
-      const store = storeFromId(clean)
-      if (!store) return err(`unknown bead id: ${id}`)
+      const bs = beadStore(id)
+      if ('error' in bs) return err(bs.error)
+      const store = bs.store
       if (!t.trim()) return err('Missing text.')
       try {
         const r = await commentBead(store, clean, t)
@@ -193,8 +222,9 @@ const mcpHandler = createMcpHandler((server) => {
     },
     async ({ id, text: t }: { id: string; text: string }) => {
       const clean = id.trim()
-      const store = storeFromId(clean)
-      if (!store) return err(`unknown bead id: ${id}`)
+      const bs = beadStore(id)
+      if ('error' in bs) return err(bs.error)
+      const store = bs.store
       if (!t.trim()) return err('Missing text.')
       try {
         const r = await noteBead(store, clean, t)
@@ -224,8 +254,9 @@ const mcpHandler = createMcpHandler((server) => {
     },
     async ({ id, decision }: { id: string; decision: 'approve' | 'reject' | 'done' | 'close' }) => {
       const clean = id.trim()
-      const store = storeFromId(clean)
-      if (!store) return err(`unknown bead id: ${id}`)
+      const bs = beadStore(id)
+      if ('error' in bs) return err(bs.error)
+      const store = bs.store
       const ts = new Date().toISOString()
       try {
         if (decision === 'approve') {
@@ -287,8 +318,9 @@ const mcpHandler = createMcpHandler((server) => {
     },
     async ({ id, add, remove }: { id: string; add?: string; remove?: string }) => {
       const clean = id.trim()
-      const store = storeFromId(clean)
-      if (!store) return err(`unknown bead id: ${id}`)
+      const bs = beadStore(id)
+      if ('error' in bs) return err(bs.error)
+      const store = bs.store
       if (!add && !remove) return err('Give add and/or remove.')
       try {
         const r = await labelBead(store, clean, { add, remove })
@@ -325,10 +357,17 @@ const mcpHandler = createMcpHandler((server) => {
     async ({ store, title, description, labels, parent }: {
       store: string; title: string; description?: string; labels?: string[]; parent?: string
     }) => {
-      if (!STORES.includes(store)) return err(`unknown store: ${store} (known: ${STORES.join(', ')})`)
+      const req = resolveStoreName(store ?? '')
+      if (req.kind === 'ambiguous') return err(ambiguousStoreError(req.requested, req.candidates))
+      if (req.kind === 'unknown') return err(unknownStoreError(store))
+      store = req.store
       if (parent?.trim()) {
         const pstore = storeFromId(parent.trim())
-        if (!pstore) return err(`unknown parent bead id: ${parent}`)
+        if (!pstore) {
+          const pr = resolveBeadStore(parent.trim())
+          if (pr.kind === 'ambiguous') return err(ambiguousBeadIdError(parent.trim(), pr.prefix, pr.candidates))
+          return err(`unknown parent bead id: ${parent}`)
+        }
         if (pstore !== store) return err(`parent lives in ${pstore}, not ${store}`)
       }
       const { ok: valid, bad } = validateCreateLabels(labels)
@@ -389,7 +428,10 @@ const mcpHandler = createMcpHandler((server) => {
       relations?: { from: string; to: string; type: string }[]
     }) => {
       for (const b of beads) {
-        if (!STORES.includes(b.store)) return err(`unknown store: ${b.store} (known: ${STORES.join(', ')})`)
+        const br = resolveStoreName(b.store ?? '')
+        if (br.kind === 'ambiguous') return err(`bead "${b.name}": ${ambiguousStoreError(br.requested, br.candidates)}`)
+        if (br.kind === 'unknown') return err(`bead "${b.name}": ${unknownStoreError(b.store)}`)
+        b.store = br.store
       }
       try {
         const r = await runBatch({ beads, relations })
@@ -437,8 +479,9 @@ const mcpHandler = createMcpHandler((server) => {
     },
     async ({ id, title, description }: { id: string; title?: string; description?: string }) => {
       const clean = id.trim()
-      const store = storeFromId(clean)
-      if (!store) return err(`unknown bead id: ${id}`)
+      const bs = beadStore(id)
+      if ('error' in bs) return err(bs.error)
+      const store = bs.store
       try {
         const { detail, verified } = await editBead({ store, id: clean, title, description })
         relayStatus.touch({ id: clean, kind: 'note', title: title ?? `edited ${clean}` })
@@ -1117,7 +1160,7 @@ const mcpHandler = createMcpHandler((server) => {
       query: string; stores?: string[]; status?: string; labels?: string[]; limit?: number
     }) => {
       const { stores: used, unknown } = pickRetrievalStores(stores?.length ? stores : undefined)
-      if (stores?.length && !used.length) return err(`unknown stores: ${stores.join(', ')} (known: ${STORES.join(', ')})`)
+      if (stores?.length && !used.length) return err(`unknown stores: ${(unknown.length ? unknown : stores).join(', ')} (known: ${STORES.join(', ')})`)
       const { rows, errors, stores: hit } = await federatedSearch(query, {
         stores: stores?.length ? stores : undefined,
         status: status?.slice(0, 64),
@@ -1146,8 +1189,8 @@ const mcpHandler = createMcpHandler((server) => {
     async ({ limit, stores, status, labels, since, history }: {
       limit?: number; stores?: string[]; status?: string; labels?: string[]; since?: string; history?: boolean
     }) => {
-      const { stores: used } = pickRetrievalStores(stores?.length ? stores : undefined)
-      if (stores?.length && !used.length) return err(`unknown stores: ${stores.join(', ')} (known: ${STORES.join(', ')})`)
+      const { stores: used, unknown } = pickRetrievalStores(stores?.length ? stores : undefined)
+      if (stores?.length && !used.length) return err(`unknown stores: ${(unknown.length ? unknown : stores).join(', ')} (known: ${STORES.join(', ')})`)
       const { rows, errors, stores: hit, unknownStores } = await recentActivity({
         stores: stores?.length ? stores : undefined,
         limit: clampLimit(limit, 20),
@@ -1174,8 +1217,8 @@ const mcpHandler = createMcpHandler((server) => {
       }),
     },
     async ({ limit, stores, detail, history, stale_after_hours }: { limit?: number; stores?: string[]; detail?: boolean; history?: boolean; stale_after_hours?: number }) => {
-      const { stores: used } = pickRetrievalStores(stores?.length ? stores : undefined)
-      if (stores?.length && !used.length) return err(`unknown stores: ${stores.join(', ')} (known: ${STORES.join(', ')})`)
+      const { stores: used, unknown } = pickRetrievalStores(stores?.length ? stores : undefined)
+      if (stores?.length && !used.length) return err(`unknown stores: ${(unknown.length ? unknown : stores).join(', ')} (known: ${STORES.join(', ')})`)
       const staleAfterMs = staleAfterMsFromHours(stale_after_hours)
       const { rows, errors, stores: hit, unknownStores } = await claimedBeads({
         stores: stores?.length ? stores : undefined,

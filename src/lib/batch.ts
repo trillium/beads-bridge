@@ -7,6 +7,7 @@
 // partial-failure report naming exactly what landed and what did not.
 import { STORES } from '../config'
 import { storeFromId } from '../util'
+import { ambiguousStoreError, resolveStoreName, unknownStoreError } from './store-aliases'
 import { createBead, validateCreateLabels, type CreateInput } from './create'
 import { runMutation } from './mutate'
 import { unverifiedMessage } from './receipts'
@@ -250,7 +251,10 @@ export function validateBatch(input: BatchInput): { beads: ResolvedBead[]; relat
   const resolved: ResolvedBead[] = beads.map((b, index) => {
     const name = b.name.trim()
     const context = `bead "${name}"`
-    if (!STORES.includes(b.store)) fail(`${context}: unknown store: ${b.store} (known: ${STORES.join(', ')})`)
+    const storeReq = resolveStoreName(b.store ?? '')
+    if (storeReq.kind === 'ambiguous') fail(`${context}: ${ambiguousStoreError(storeReq.requested, storeReq.candidates)}`)
+    if (storeReq.kind === 'unknown') fail(`${context}: ${unknownStoreError(b.store ?? '')}`)
+    const canonicalStore = (storeReq as { store: string }).store
     const title = b.title?.trim().slice(0, 200) ?? ''
     if (!title) fail(`${context}: title is required`)
     const { ok, bad } = validateCreateLabels(b.labels)
@@ -258,7 +262,7 @@ export function validateBatch(input: BatchInput): { beads: ResolvedBead[]; relat
     return {
       index,
       name,
-      store: b.store,
+      store: canonicalStore,
       title,
       description: b.description?.slice(0, 4000),
       labels: ok,

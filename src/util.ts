@@ -1,6 +1,6 @@
 // Small shared helpers: coercions, cache tags, bead shell-outs, link extraction.
 import { execSync } from 'child_process'
-import { BASE, STORES } from './config'
+import { BASE } from './config'
 
 export const cacheTag = () => Math.random().toString(36).slice(2, 10)
 
@@ -20,17 +20,17 @@ export function bd(store: string, args: string): string {
   }
 }
 
-// Stores whose bead prefix differs from the store name (prefix is set at
-// DB init, not derived) — checked before the generic `<store>-` rule.
-const PREFIX_OVERRIDES: Record<string, string> = {
-  'project-': 'projects',
-}
+// Federated store-name aliases (task-4lb3r): bead-id prefixes resolve
+// through the same singular/plural rule as store names (idea- -> ideas).
+// Re-exported here so every storeFromId caller gains aliases for free;
+// ambiguous prefixes degrade to null here — callers that must name the
+// candidates use resolveBeadStore directly.
+export { resolveStoreName, resolveBeadStore } from './lib/store-aliases'
+import { resolveBeadStore } from './lib/store-aliases'
 
 export function storeFromId(id: string): string | null {
-  for (const [prefix, store] of Object.entries(PREFIX_OVERRIDES)) {
-    if (id.startsWith(prefix) && STORES.includes(store)) return store
-  }
-  return STORES.find(s => id.startsWith(s + '-')) ?? null
+  const r = resolveBeadStore(id)
+  return r.kind === 'ok' ? r.store : null
 }
 
 // Extract http(s) URLs and bead-ids from bead text → absolute links for research.
