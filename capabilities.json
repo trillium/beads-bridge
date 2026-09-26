@@ -87,6 +87,42 @@
       "introduced": "1.0.0"
     },
     {
+      "id": "personality_read",
+      "title": "Read personality document",
+      "op": "personality_read",
+      "introduced": "1.3.0",
+      "beads": [
+        "task-xqj24"
+      ]
+    },
+    {
+      "id": "personality_replace",
+      "title": "Replace personality document",
+      "op": "personality_replace",
+      "introduced": "1.3.0",
+      "beads": [
+        "task-xqj24"
+      ]
+    },
+    {
+      "id": "personality_append",
+      "title": "Append to personality document",
+      "op": "personality_append",
+      "introduced": "1.3.0",
+      "beads": [
+        "task-xqj24"
+      ]
+    },
+    {
+      "id": "personality_section_edit",
+      "title": "Edit personality section",
+      "op": "personality_section_edit",
+      "introduced": "1.3.0",
+      "beads": [
+        "task-xqj24"
+      ]
+    },
+    {
       "id": "scratchpad",
       "title": "Scratchpad",
       "op": "scratchpad",

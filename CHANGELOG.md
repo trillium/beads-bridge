@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.3.0
+
+- Personality document (task-xqj24): Who Am I now returns one durable,
+  operator-controlled bootstrap record
+  (`~/.config/pai/beads-bridge-personality.md`) in full, replacing the
+  500-char profile-schema model for operating instructions. New
+  `personality_read` / `personality_replace` / `personality_append` /
+  `personality_section_edit` MCP operations (read, full replace, append,
+  targeted ## section rewrite). One-time migration moves existing operator
+  notes + posture fields verbatim into the document and clears them from the
+  profile (name/role/timezone stay; `identity_update` still accepts all
+  fields for compatibility). Scratchpad stays alongside as live working
+  memory, projected read-only into whoami as before.
+
 ## 1.2.0
 
 - `retrieval_claimed` MCP op + federated claimed-bead query (inbox-l6ki):
