@@ -143,7 +143,7 @@ export class RelayStatusTracker {
 
 export const relayStatus = new RelayStatusTracker()
 
-export function formatRelayStatus(
+export function formatRelayBody(
   tracker: RelayStatusTracker = relayStatus,
   now: number = Date.now(),
 ): string {
@@ -169,7 +169,14 @@ export function formatRelayStatus(
   const triple = stalenessTriple()
   const budget = RELAY_STATUS_MAX_CHARS - triple.length - 1
   if (out.length > budget) out = out.slice(0, budget - 1) + '…'
-  return `${out}\n${triple}`
+  return out
+}
+
+export function formatRelayStatus(
+  tracker: RelayStatusTracker = relayStatus,
+  now: number = Date.now(),
+): string {
+  return `${formatRelayBody(tracker, now)}\n${stalenessTriple()}`
 }
 
 export function withRelayStatus(

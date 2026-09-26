@@ -234,6 +234,18 @@
       "introduced": "1.0.0"
     },
     {
+      "id": "heartbeat",
+      "title": "Heartbeat (callable delta + automatic footer)",
+      "op": "heartbeat",
+      "introduced": "1.4.0",
+      "beads": [
+        "task-ksmy1",
+        "inbox-3z9q",
+        "inbox-uagq",
+        "inbox-lr1k"
+      ]
+    },
+    {
       "id": "bridge_info",
       "title": "Bridge version/capability introspection",
       "op": "bridge_info",

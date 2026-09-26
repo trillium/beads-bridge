@@ -108,6 +108,7 @@ describe('historical mapping proof (task-qgplz.4)', () => {
     }
     assert.equal(byBead('inbox-z6dv').id, 'project_edit')
     assert.equal(byBead('inbox-l6ki').id, 'retrieval_claimed')
+    assert.equal(byBead('task-ksmy1').id, 'heartbeat')
     // task-qgplz shipped three introspection ops; capabilityStatus returns
     // the first manifest match, so prove the full set via the beads index.
     const qgplzCaps = m.capabilities.filter((c) => (c.beads ?? []).includes('task-qgplz')).map((c) => c.id).sort()
@@ -128,7 +129,7 @@ describe('capabilitiesSince', () => {
   it('returns only newer entries and rejects non-semver', () => {
     const m = loadManifest()
     const rows = capabilitiesSince(m, '1.0.0').map((c) => c.id).sort()
-    assert.deepEqual(rows, ['bridge_info', 'capabilities_since', 'capability_status', 'personality_append', 'personality_read', 'personality_replace', 'personality_section_edit', 'project_edit', 'retrieval_claimed', 'tool_surface_check'])
+    assert.deepEqual(rows, ['bridge_info', 'capabilities_since', 'capability_status', 'heartbeat', 'personality_append', 'personality_read', 'personality_replace', 'personality_section_edit', 'project_edit', 'retrieval_claimed', 'tool_surface_check'])
     assert.deepEqual(capabilitiesSince(m, '9.9.9'), [])
     assert.throws(() => capabilitiesSince(m, '1.0'), /not semver/)
   })
