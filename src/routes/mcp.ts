@@ -19,7 +19,7 @@ import { feedbackDir, writeFeedback } from '../lib/feedback'
 import { editBead } from '../lib/edit'
 import { formatWhoami, loadProfile, readWhoamiNotes, serverVersion, updateProfile } from '../lib/whoami'
 import { appendPersonality, editPersonalitySection, ensurePersonality, loadPersonality, savePersonality, PERSONALITY_MAX_CHARS } from '../lib/personality'
-import { backendCommit, BRIDGE_OP_NAMES, capabilitiesSince, capabilityStatus, formatBridgeInfo, isSemver, loadManifest, schemaHash } from '../lib/capabilities'
+import { backendCommit, BRIDGE_OP_NAMES, capabilitiesSince, capabilityStatus, formatBridgeInfo, isSemver, loadManifest, schemaHash, whoamiDescription } from '../lib/capabilities'
 import { checkSurface, extractRecordedTriple, formatSurfaceCheck, latestFeedbackFilename, readFeedbackRecord } from '../lib/surface-compare'
 import { scratchAppend, scratchClear, scratchRead } from '../lib/scratchpad'
 import { pickStores, gatherCandidates, sampleIndices, formatPicks } from '../lib/random'
@@ -485,7 +485,7 @@ const mcpHandler = createMcpHandler((server) => {
     'whoami',
     {
       title: 'Who am I here',
-      description: 'Your identity on this bridge: the server, your OAuth client id and scopes, the operator profile, the complete operator personality document (startup/bootstrap context, read it fully), and what you can do.',
+      description: whoamiDescription(),
       inputSchema: z.object({}),
     },
     async (

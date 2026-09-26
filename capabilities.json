@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 2,
+  "manifestVersion": 3,
   "note": "Source of truth for shipped Beads Bridge MCP capabilities. A capability is shipped only when implementation + tests + this entry + changelog/version land coherently. See task-qgplz.",
   "capabilities": [
     {
@@ -78,7 +78,9 @@
       "id": "whoami",
       "title": "Who am I here",
       "op": "whoami",
-      "introduced": "1.0.0"
+      "introduced": "1.0.0",
+      "changed": "1.4.1",
+      "beads": ["task-mm1q8"]
     },
     {
       "id": "identity_update",
