@@ -7,6 +7,7 @@ import { readFileSync } from 'fs'
 import path from 'path'
 import { BASE, STORES, storeAbout, fillTokens } from '../config'
 import { qstr, pstr, bd, storeFromId, cacheTag, stripFrontmatter } from '../util'
+import { resolveStoreName } from '../lib/store-aliases'
 import { readSection } from './sections'
 import { wrap } from '../wrap'
 import { isWebAgent } from '../agent-detect'
@@ -134,10 +135,12 @@ readRouter.get('/next', (_req: Request, res: Response) => {
   )
 })
 
-// GET /{store} — list or search store
+// GET /{store} — list or search store (singular/plural aliases resolve to
+// the canonical store; unknown or ambiguous names fall through to 404).
 readRouter.get('/:store', (req: Request, res: Response, next: NextFunction) => {
-  const store = pstr(req.params.store)
-  if (!STORES.includes(store)) return next()
+  const req2 = resolveStoreName(pstr(req.params.store))
+  if (req2.kind !== 'exact' && req2.kind !== 'alias') return next()
+  const store = req2.store
 
   const q = qstr(req.query.q)
   const raw = q

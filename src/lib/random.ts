@@ -4,6 +4,7 @@
 // the registry), open items only, recent-first capped per store.
 import { runList } from '../routes/query/store'
 import { STORES } from '../config'
+import { ambiguousStoreError, resolveStoreName, unknownStoreError } from './store-aliases'
 
 export const PICK_STORES = ['task', 'stories', 'resume_bullets', 'inbox', 'workflows']
 const PER_STORE_LIMIT = 50
@@ -26,9 +27,14 @@ export function sampleIndices(n: number, count: number, rand: () => number = Mat
   return out
 }
 
-export function pickStores(store: string | undefined): string[] | { error: string } {
-  if (store) return STORES.includes(store) ? [store] : { error: `unknown store: ${store}` }
-  const eligible = PICK_STORES.filter((s) => STORES.includes(s))
+export function pickStores(store: string | undefined, stores: string[] = STORES): string[] | { error: string } {
+  if (store) {
+    const r = resolveStoreName(store, stores)
+    if (r.kind === 'exact' || r.kind === 'alias') return [r.store]
+    if (r.kind === 'ambiguous') return { error: ambiguousStoreError(r.requested, r.candidates) }
+    return { error: unknownStoreError(store, stores) }
+  }
+  const eligible = PICK_STORES.filter((s) => stores.includes(s))
   return eligible.length ? eligible : { error: 'no work stores registered' }
 }
 

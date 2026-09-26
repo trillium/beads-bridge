@@ -2,22 +2,24 @@
 // /:store catchall. AND labels via repeated ?label=, OR via ?any=.
 import { Router } from 'express'
 import type { Request, Response, NextFunction } from 'express'
-import { BASE, STORES } from '../config'
+import { BASE } from '../config'
 import { pstr, withCb, shortCode } from '../util'
 import { wrap } from '../wrap'
 import { withDebug, failureDebug } from './debug-state'
 import { warmBundle } from './beads'
 import { LABEL_RE, MAX_LABELS, strParam, listParam, cleanLabel } from './query/params'
 import { runList } from './query/store'
+import { resolveStoreName } from '../lib/store-aliases'
 import { formatSection } from './query/format'
 
 export const mountOrder = -15
 export const singleQueryRouter = Router()
 
-// GET /q/:store — single-store label query.
+// GET /q/:store — single-store label query (aliases resolve to canonical).
 singleQueryRouter.get('/q/:store', (req: Request, res: Response, next: NextFunction) => {
-  const store = pstr(req.params.store)
-  if (!STORES.includes(store)) return next()
+  const req2 = resolveStoreName(pstr(req.params.store))
+  if (req2.kind !== 'exact' && req2.kind !== 'alias') return next()
+  const store = req2.store
 
   const all = listParam(req.query.label).map(cleanLabel).filter((x): x is string => !!x).slice(0, MAX_LABELS)
   const any = listParam(req.query.any).map(cleanLabel).filter((x): x is string => !!x).slice(0, MAX_LABELS)

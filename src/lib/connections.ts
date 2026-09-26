@@ -6,6 +6,7 @@ import { execStdout, beadText } from './exec'
 import { type Row } from '../routes/query/params'
 import { parseRows, runList } from '../routes/query/store'
 import { storeFromId, extractLinks } from '../util'
+import { ambiguousBeadIdError, resolveBeadStore } from './store-aliases'
 import { BASE } from '../config'
 
 export interface Connection {
@@ -114,6 +115,10 @@ function mentionedIds(store: string, id: string, text: string): string[] {
 
 export async function beadConnections(id: string): Promise<ConnectionSet | { error: string }> {
   const clean = id.trim()
+  const resolved = resolveBeadStore(clean)
+  if (resolved.kind === 'ambiguous') {
+    return { error: ambiguousBeadIdError(id, resolved.prefix, resolved.candidates) }
+  }
   const store = storeFromId(clean)
   if (!store) return { error: `unknown bead id: ${id}` }
   const [meta, down, up, children, text] = await Promise.all([

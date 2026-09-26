@@ -7,6 +7,13 @@ import { commentBead, labelBead, noteBead } from './mutate'
 import { requireVerified } from './receipts'
 import { storeFromId } from '../util'
 import { STORES } from '../config'
+import {
+  ambiguousBeadIdError,
+  ambiguousStoreError,
+  resolveBeadStore,
+  resolveStoreName,
+  unknownStoreError,
+} from './store-aliases'
 
 export type ProjectState = 'foreground' | 'backlog'
 export type CaptureKind = 'observation' | 'idea' | 'friction' | 'correction' | 'knowledge'
@@ -377,9 +384,12 @@ export interface CaptureInput {
 export async function captureEntry(input: CaptureInput): Promise<{ id: string; store: string; slug?: string; promoted: boolean; detail: string }> {
   const text = input.text.trim()
   if (!text) throw new Error('text is required')
-  const store = input.store?.trim() || captureStoreFor(input.kind) || null
-  if (!store) throw new Error(`unknown kind: ${input.kind} (want observation, idea, friction, correction, knowledge)`)
-  if (!STORES.includes(store)) throw new Error(`unknown store: ${store}`)
+  const requested = input.store?.trim() || captureStoreFor(input.kind) || null
+  if (!requested) throw new Error(`unknown kind: ${input.kind} (want observation, idea, friction, correction, knowledge)`)
+  const resolved = resolveStoreName(requested)
+  if (resolved.kind === 'ambiguous') throw new Error(ambiguousStoreError(resolved.requested, resolved.candidates))
+  if (resolved.kind === 'unknown') throw new Error(unknownStoreError(requested))
+  const store = resolved.store
   let slug: string | undefined
   let wasBacklog = false
   let projectId: string | null = null
@@ -540,8 +550,19 @@ export interface VerifyHit {
 export async function verifyWork(query: string, store?: string): Promise<{ found: boolean; hits: VerifyHit[]; detail: string }> {
   const q = query.trim()
   if (!q) throw new Error('query is required')
+  let canonicalStore: string | null = null
+  if (store) {
+    const sr = resolveStoreName(store)
+    if (sr.kind === 'ambiguous') throw new Error(ambiguousStoreError(sr.requested, sr.candidates))
+    if (sr.kind === 'unknown') throw new Error(unknownStoreError(store))
+    canonicalStore = sr.store
+  }
+  const idResolved = resolveBeadStore(q)
+  if (idResolved.kind === 'ambiguous' && !canonicalStore) {
+    throw new Error(ambiguousBeadIdError(q, idResolved.prefix, idResolved.candidates))
+  }
   const idStore = storeFromId(q)
-  if (idStore && (!store || store === idStore)) {
+  if (idStore && (!canonicalStore || canonicalStore === idStore)) {
     const [body, comments] = await Promise.all([
       beadText(idStore, ['show', q]),
       beadText(idStore, ['comments', q]),
@@ -553,8 +574,8 @@ export async function verifyWork(query: string, store?: string): Promise<{ found
       detail: found ? (comments ? `${body}\n\n## Comments\n${comments}` : body).slice(0, 2000) : `no bead ${q} in ${idStore}`,
     }
   }
-  const stores = (store ? [store] : VERIFY_STORES).filter((s) => STORES.includes(s))
-  if (!stores.length) throw new Error(`unknown store: ${store}`)
+  const stores = (canonicalStore ? [canonicalStore] : VERIFY_STORES).filter((s) => STORES.includes(s))
+  if (!stores.length) throw new Error(unknownStoreError(store ?? ''))
   const per = await mapLimit(stores, 4, async (s) => {
     try {
       const { rows } = await runListAsync(s, [], [], {
