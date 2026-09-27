@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Live MCP Activity UI is mobile-first with a multi-device-synced drawer
+  (project-s1rf.1.1): below 900px the activity/navigation list is an off-canvas
+  drawer and the live content is the ordinary document body (hamburger /
+  scrim / Close / Escape open and close it; tapping a card closes it); 900px
+  and up keeps the existing two-panel layout. One SHARED view per bridge
+  instance (drawer state + selected activity) — `src/lib/view-state.ts`,
+  broadcast over the existing SSE fan-out as named `event: view` frames with a
+  monotonic `revision` (last-write-wins), replayed to a (re)connecting viewer
+  and readable from the new read-only `GET /live/view`. Every recorded
+  activity event moves the shared cursor, so two devices on one instance
+  follow the same event. Activity frames keep their original unnamed shape.
+  No new write route: every `/live` route stays GET-only, so a viewer's own
+  drawer tap remains local — see docs/live-activity.md "Drawer sync" for the
+  proposed guarded `POST /live/view` shape. Page fixes found while verifying
+  at 390x844: the empty list showed nothing at first paint (now a placeholder),
+  and the stream dot stayed red until the first event (now green on connect).
+
 - `bead_create` receipt fix (task-d8ipc): `parseCreatedId` matched the
   created id against the store *name* (`projects-`), but a store's id
   *prefix* comes from its bd config (`project-`, `task-`, `idea-`,
