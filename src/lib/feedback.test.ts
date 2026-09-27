@@ -31,6 +31,12 @@ describe('buildFeedbackDoc', () => {
     assert.ok(doc.includes('query: "label query"'))
     assert.ok(doc.endsWith('hello\n'))
   })
+  it('preserves a 5,200-char report body in full (no silent slice)', () => {
+    const long = 'y'.repeat(5200)
+    const { doc } = buildFeedbackDoc({ text: long }, NOW)
+    assert.ok(doc.includes(long), 'the complete body must survive into the filed doc')
+    assert.ok(doc.endsWith(`${long}\n`))
+  })
   it('omits absent context, rejects empty text and bad beads', () => {
     const { doc } = buildFeedbackDoc({ text: 't' }, NOW)
     assert.ok(!doc.includes('bead:'))

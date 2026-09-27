@@ -269,3 +269,18 @@ describe('cross-store mention-links', () => {
     assert.ok(text.includes('FAILED'))
   })
 })
+
+describe('long descriptions survive the batch path intact', () => {
+  it('a 5,200-char description reaches createBeadFn verbatim (no silent slice)', async () => {
+    const long = `HEAD-MARKER-${'x'.repeat(5200)}-TAIL-MARKER`
+    assert.ok(long.length > 5200)
+    const f = fake()
+    const r = await runBatch({
+      beads: [{ name: 'report', store: 'task', title: 'Long report', description: long }],
+    }, f)
+    assert.equal(r.complete, true)
+    assert.equal(f.created.length, 1)
+    assert.equal(f.created[0].description?.length, long.length)
+    assert.equal(f.created[0].description, long)
+  })
+})

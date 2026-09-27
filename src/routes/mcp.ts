@@ -6,6 +6,7 @@ import { Router } from 'express'
 import type { Request, Response } from 'express'
 import { createMcpHandler, withMcpAuth } from 'mcp-handler'
 import { z } from 'zod'
+import { MAX_BODY_CHARS, bodyText, requiredBodyText } from '../lib/limits'
 import { BASE, STORES, toolKey } from '../config'
 import { storeFromId } from '../util'
 import {
@@ -349,7 +350,7 @@ const mcpHandler = createMcpHandler((server) => {
       inputSchema: z.object({
         store: z.string().describe('Store name, e.g. task, stories, brain'),
         title: z.string().min(1).max(200).describe('Bead title'),
-        description: z.string().max(4000).optional().describe('Body text'),
+        description: bodyText('Body text'),
         labels: z.array(z.string()).max(10).optional().describe('Labels, e.g. project:parlay — invalid ones are rejected'),
         parent: z.string().optional().describe('Parent bead id for hierarchy'),
       }),
@@ -412,7 +413,7 @@ const mcpHandler = createMcpHandler((server) => {
           name: z.string().min(1).max(64).describe('Intra-batch name, e.g. root — later beads refer to it'),
           store: z.string().describe('Store name, e.g. task'),
           title: z.string().min(1).max(200).describe('Bead title'),
-          description: z.string().max(4000).optional().describe('Body text'),
+          description: bodyText('Body text'),
           labels: z.array(z.string()).max(10).optional().describe('Labels — invalid ones reject the batch'),
           parent: z.string().optional().describe('Parent: earlier batch name or canonical bead id (same store as the bead)'),
           depends_on: z.array(z.string()).max(20).optional().describe('Dependencies: earlier batch names or bead ids (any store; cross-store legs land as mention-links)'),
@@ -475,7 +476,7 @@ const mcpHandler = createMcpHandler((server) => {
       inputSchema: z.object({
         id: z.string().describe('Bead id'),
         title: z.string().min(1).max(200).optional().describe('New title'),
-        description: z.string().max(4000).optional().describe('New description'),
+        description: bodyText('New description'),
       }),
     },
     async ({ id, title, description }: { id: string; title?: string; description?: string }) => {
@@ -507,7 +508,7 @@ const mcpHandler = createMcpHandler((server) => {
       title: 'Submit feedback',
       description: 'File feedback about a bead, a query, or the bridge itself. Say what happened, what you expected, and paste the query that prompted it.',
       inputSchema: z.object({
-        text: z.string().min(1).max(4000).describe('The feedback itself'),
+        text: requiredBodyText('The feedback itself'),
         kind: z.string().max(40).optional().describe('Rough kind: bug, confusion, praise, request, note'),
         bead: z.string().optional().describe('Bead id this is about, if any'),
         query: z.string().max(500).optional().describe('The query or action that prompted this'),
@@ -648,7 +649,7 @@ const mcpHandler = createMcpHandler((server) => {
       title: 'Tool-surface comparison against latest feedback',
       description: 'Compare the MCP tool surface described in the latest feedback record against the live surface: additions, removals, schema/capability changes, and a needs_refresh verdict. Optionally pass your own loaded tools/list (client_tools) and schema hash (client_schema) for a direct staleness check — without them the verdict is feedback-vs-live and says so explicitly.',
       inputSchema: z.object({
-        client_tools: z.string().max(4000).optional().describe('Your loaded tools/list snapshot: tool names separated by commas, spaces, or newlines'),
+        client_tools: z.string().max(MAX_BODY_CHARS).optional().describe('Your loaded tools/list snapshot: tool names separated by commas, spaces, or newlines'),
         client_schema: z.string().max(128).optional().describe('Schema hash your connection loaded at connect time'),
         feedback: z.string().max(120).optional().describe('Feedback filename to compare against (default: most recent)'),
       }),
@@ -934,7 +935,7 @@ const mcpHandler = createMcpHandler((server) => {
       title: 'Capture to project',
       description: 'Persist an observation, idea, friction, correction, or knowledge into the routed store with the project label. Creating a bead for a backlog project promotes it to foreground. The relay never executes work.',
       inputSchema: z.object({
-        text: z.string().min(1).max(4000).describe('The observation/idea/friction/correction/knowledge'),
+        text: requiredBodyText('The observation/idea/friction/correction/knowledge'),
         kind: z.enum(['observation', 'idea', 'friction', 'correction', 'knowledge']),
         project: z.string().max(120).optional().describe('Project id, slug, or name'),
         store: z.string().max(40).optional().describe('Store override (default routes by kind)'),
@@ -959,8 +960,8 @@ const mcpHandler = createMcpHandler((server) => {
       inputSchema: z.object({
         project: z.string().min(1).max(120).describe('Project id, slug, or name'),
         title: z.string().max(200).optional().describe('New title'),
-        description: z.string().max(4000).optional().describe('New description (empty clears it)'),
-        note: z.string().max(4000).optional().describe('Project note to append'),
+        description: bodyText('New description (empty clears it)'),
+        note: bodyText('Project note to append'),
         lifecycle: z.enum(['active', 'deprecated']).optional().describe('Set deprecated (state:deprecated label) or active (clear it)'),
       }),
     },
@@ -985,7 +986,7 @@ const mcpHandler = createMcpHandler((server) => {
       description: 'Create a task, or update the duplicate when one already exists. Duplicate detection runs before every create. Updating a task for a backlog project promotes it to foreground.',
       inputSchema: z.object({
         title: z.string().min(1).max(200).describe('Task title'),
-        description: z.string().max(4000).optional().describe('Task body'),
+        description: bodyText('Task body'),
         project: z.string().max(120).optional().describe('Project id, slug, or name'),
         labels: z.array(z.string()).max(10).optional().describe('Extra labels'),
         allow_update: z.boolean().optional().describe('Update duplicate instead of creating (default true)'),
@@ -1008,7 +1009,7 @@ const mcpHandler = createMcpHandler((server) => {
       title: 'Request dispatch',
       description: 'Request external execution of a task without executing it. Writes a structured dispatch request bead for an external agent to claim. The relay never executes work itself.',
       inputSchema: z.object({
-        instruction: z.string().min(1).max(4000).describe('What the external agent should do'),
+        instruction: requiredBodyText('What the external agent should do'),
         task_id: z.string().max(80).optional().describe('Existing task bead id'),
         task_title: z.string().max(200).optional().describe('Task title to attach to'),
         project: z.string().max(120).optional().describe('Project id, slug, or name'),
@@ -1056,9 +1057,9 @@ const mcpHandler = createMcpHandler((server) => {
       inputSchema: z.object({
         instruction: z.string().min(1).max(2000).describe('Overall human intent for step reporting'),
         task_title: z.string().min(1).max(200).describe('Task title to create or update'),
-        task_description: z.string().max(4000).optional().describe('Task body'),
+        task_description: bodyText('Task body'),
         project_hint: z.string().max(120).optional().describe('Project id, slug, or name'),
-        dispatch_instruction: z.string().max(4000).optional().describe('Dispatch instruction (skips dispatch when omitted)'),
+        dispatch_instruction: bodyText('Dispatch instruction (skips dispatch when omitted)'),
         dry_run: z.boolean().optional().describe('Resolve and duplicate-check only (default false)'),
       }),
     },

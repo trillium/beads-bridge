@@ -405,7 +405,8 @@ export async function captureEntry(input: CaptureInput): Promise<{ id: string; s
   const created = await createBead({
     store,
     title,
-    description: slug ? `${text.slice(0, 3500)}\n\nproject: ${slug}` : text.slice(0, 3500),
+    // No slice: capture text passes through verbatim (see lib/limits.ts).
+    description: slug ? `${text}\n\nproject: ${slug}` : text,
     labels: labels.map(cleanLabel).filter((x): x is string => !!x),
   })
   // False-success guardrail: an unverified create is an error naming the
@@ -458,7 +459,7 @@ export async function upsertTask(input: UpsertInput): Promise<{ mode: 'created' 
     const extra = input.description?.trim()
     if (extra) {
       try {
-        const edited = await editBead({ store: 'task', id: dup.id, description: `${extra.slice(0, 3500)}` })
+        const edited = await editBead({ store: 'task', id: dup.id, description: extra })
         requireVerified({ operation: 'updated', id: dup.id, store: 'task', verified: edited.verified })
       } catch (e) {
         // editBead throws on write failure AND on unverified writes (both
@@ -466,7 +467,7 @@ export async function upsertTask(input: UpsertInput): Promise<{ mode: 'created' 
         // An unverified edit already names the bead — rethrow, never mask it
         // as success via a comment.
         if (e instanceof Error && e.message.startsWith('unverified:')) throw e
-        requireVerified(await commentBead('task', dup.id, extra.slice(0, 500)))
+        requireVerified(await commentBead('task', dup.id, extra))
       }
     } else {
       requireVerified(await commentBead('task', dup.id, `Touched by relay upsert ${new Date().toISOString()}`))
@@ -480,7 +481,7 @@ export async function upsertTask(input: UpsertInput): Promise<{ mode: 'created' 
   }
   const extraLabels = (input.labels ?? []).map(cleanLabel).filter((x): x is string => !!x)
   const labels = [...(slug ? [`project:${slug}`] : []), ...extraLabels].slice(0, 10)
-  const created = await createBead({ store: 'task', title, description: input.description?.slice(0, 4000), labels })
+  const created = await createBead({ store: 'task', title, description: input.description, labels })
   requireVerified({ operation: 'created', id: created.id, store: 'task', verified: created.verified })
   await maybePromote()
   return { mode: 'created', id: created.id, slug, promoted, detail: created.detail }
@@ -528,7 +529,7 @@ export async function requestDispatch(input: DispatchInput): Promise<{ id: strin
   }
   const title = `Dispatch: ${snippet(taskRef ?? input.taskTitle?.trim() ?? instruction.split('\n')[0], 80)}`.slice(0, 200)
   const body = [
-    `instruction: ${instruction.slice(0, 2500)}`,
+    `instruction: ${instruction}`,
     taskRef ? `task: ${taskRef}` : null,
     input.target?.trim() ? `target: ${input.target.trim().slice(0, 200)}` : null,
     ``,

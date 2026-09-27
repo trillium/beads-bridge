@@ -71,7 +71,10 @@ export async function createBead(input: CreateInput): Promise<{ id: string; deta
   const args = buildCreateArgs({
     ...input,
     title,
-    description: input.description?.slice(0, 4000),
+    // No slice: body text passes through verbatim. The MCP zod schema
+    // (MAX_BODY_CHARS) is the single loud enforcement point — truncating
+    // here would turn a loud rejection into silent data loss.
+    description: input.description,
   })
   let stdout: string
   try {

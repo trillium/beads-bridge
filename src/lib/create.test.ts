@@ -8,6 +8,13 @@ describe('buildCreateArgs', () => {
   it('builds minimal argv', () => {
     assert.deepEqual(buildCreateArgs({ store: 'task', title: 'Fix it' }), ['create', 'Fix it'])
   })
+  it('passes a 5,200-char durable report through verbatim (no silent slice)', () => {
+    const long = 'x'.repeat(5200)
+    assert.deepEqual(
+      buildCreateArgs({ store: 'task', title: 'T', description: long }),
+      ['create', 'T', '-d', long],
+    )
+  })
   it('adds description, labels, parent only when present', () => {
     assert.deepEqual(
       buildCreateArgs({ store: 'stories', title: 'T', description: 'D', labels: ['a', 'project:x'], parent: 'stories-abc' }),

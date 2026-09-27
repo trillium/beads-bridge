@@ -13,7 +13,7 @@ export interface EditInput {
 export function buildEditArgs(id: string, input: Pick<EditInput, 'title' | 'description'>): string[] | null {
   const args = ['update', id]
   if (input.title?.trim()) args.push('--title', input.title.trim().slice(0, 200))
-  if (input.description !== undefined) args.push('-d', input.description.slice(0, 4000))
+  if (input.description !== undefined) args.push('-d', input.description)
   return args.length > 2 ? args : null
 }
 

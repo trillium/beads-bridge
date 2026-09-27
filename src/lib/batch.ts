@@ -264,7 +264,7 @@ export function validateBatch(input: BatchInput): { beads: ResolvedBead[]; relat
       name,
       store: canonicalStore,
       title,
-      description: b.description?.slice(0, 4000),
+      description: b.description,
       labels: ok,
       parent: b.parent?.trim() ? resolveRef(b.parent, context, byName, index) : null,
       deps: (b.depends_on ?? []).map((r) => resolveRef(r, context, byName, index)),
