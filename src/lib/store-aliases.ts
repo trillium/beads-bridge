@@ -17,6 +17,12 @@
 // "resolved alias X -> canonical Y" note on the accepting response.
 import { STORES } from '../config'
 
+// Mechanical singular/plural rule lives in ./store-spellings (pure, no
+// config dependency); re-exported here so this module stays the single
+// source for every store-alias consumer.
+import { aliasesForStore } from './store-spellings'
+export { aliasesForStore }
+
 export type StoreResolution =
   | { kind: 'exact'; store: string }
   | { kind: 'alias'; store: string; requested: string }
@@ -27,23 +33,6 @@ export type BeadStoreResolution =
   | { kind: 'ok'; store: string; viaAlias: boolean }
   | { kind: 'unknown'; prefix: string }
   | { kind: 'ambiguous'; prefix: string; candidates: string[] }
-
-const isConsonant = (c: string): boolean => /[b-df-hj-np-tv-z]/.test(c)
-
-// Deterministic singular/plural spellings of one canonical store name.
-// Lowercase; at most one alias per store with the current registry.
-export function aliasesForStore(store: string): string[] {
-  const s = store.toLowerCase()
-  if (s.length < 2) return []
-  if (s.endsWith('ies') && s.length > 4) return [s.slice(0, -3) + 'y']
-  if (s.endsWith('ss')) return []
-  if (s.endsWith('s')) return [s.slice(0, -1)]
-  if (s.endsWith('y') && s.length > 2 && isConsonant(s[s.length - 2])) {
-    return [s.slice(0, -1) + 'ies']
-  }
-  if (/((s|x|z|ch|sh))$/.test(s)) return [`${s}es`]
-  return [`${s}s`]
-}
 
 // Resolve a requested store name against a registry (default: live STORES).
 // Exact (case-insensitive) always wins; aliases only compete when nothing

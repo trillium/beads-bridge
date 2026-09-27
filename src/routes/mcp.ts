@@ -361,6 +361,7 @@ const mcpHandler = createMcpHandler((server) => {
       if (req.kind === 'ambiguous') return err(ambiguousStoreError(req.requested, req.candidates))
       if (req.kind === 'unknown') return err(unknownStoreError(store))
       store = req.store
+      const createAliasNote = req.kind === 'alias' ? ` (resolved alias '${req.requested}' → canonical '${req.store}')` : ''
       if (parent?.trim()) {
         const pstore = storeFromId(parent.trim())
         if (!pstore) {
@@ -386,7 +387,7 @@ const mcpHandler = createMcpHandler((server) => {
           relayStatus.touch({ id, kind: 'verify', title, needsVerify: true })
           return err(unverifiedMessage(receipt))
         }
-        return ok(formatReceipt(receipt, `Labels: ${valid.join(', ') || '(none)'}`))
+        return ok(formatReceipt(receipt, `Labels: ${valid.join(', ') || '(none)'}${createAliasNote}`))
       } catch (e) {
         relayStatus.touch({ id: `new:${store}`, kind: 'failure', title: `create failed in ${store}: ${title}`, state: 'failed' })
         return err(`create failed: ${e instanceof Error ? e.message : String(e)}`)
