@@ -118,9 +118,8 @@ type Subscriber = (line: string) => boolean
 const subscribers = new Set<Subscriber>()
 const MAX_SUBSCRIBERS = 100
 
-function publish(ev: ActivityEvent): void {
-  if (!subscribers.size) return
-  const line = `data: ${JSON.stringify(ev)}\n\n`
+/** Push one already-framed SSE message to every live stream; drops bad sinks. */
+function deliverFrame(line: string): void {
   for (const sub of [...subscribers]) {
     try {
       if (!sub(line)) subscribers.delete(sub)
@@ -128,6 +127,63 @@ function publish(ev: ActivityEvent): void {
       subscribers.delete(sub)
     }
   }
+}
+
+/**
+ * Push a framed SSE message onto the SAME fan-out as activity events, for a
+ * co-located projection that shares the transport (see ./view-state, which
+ * sends named `event: view` frames). One fan-out, not a second channel.
+ * Never throws.
+ */
+export function broadcastSseFrame(line: string): void {
+  try {
+    deliverFrame(line)
+  } catch {
+    /* the boundary never fails */
+  }
+}
+
+// ---- in-process observers ---------------------------------------------------
+//
+// Distinct from `subscribeActivity`: that is the wire (one sink per open
+// stream, frame strings). An observer is a co-located module that needs each
+// recorded event for its own projection and never touches the wire. Observers
+// fire for every recorded event, including with no stream open, so a
+// projection is already current for the next viewer that connects.
+
+type Observer = (ev: ActivityEvent) => void
+
+const observers = new Set<Observer>()
+
+/** Register a co-located observer; returns an unsubscribe. Never throws. */
+export function observeActivity(obs: Observer): () => void {
+  try {
+    observers.add(obs)
+  } catch {
+    /* ignore */
+  }
+  return () => {
+    try {
+      observers.delete(obs)
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+function notifyObservers(ev: ActivityEvent): void {
+  for (const obs of [...observers]) {
+    try {
+      obs(ev)
+    } catch {
+      /* observation never fails a record */
+    }
+  }
+}
+
+function publish(ev: ActivityEvent): void {
+  deliverFrame(`data: ${JSON.stringify(ev)}\n\n`)
+  notifyObservers(ev)
 }
 
 /** Register a push sink; the sink returns false to unsubscribe. Never throws. */

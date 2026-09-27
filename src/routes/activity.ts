@@ -15,6 +15,7 @@ import {
   recentEvents,
   subscribeActivity,
 } from '../lib/activity'
+import { currentViewFrame, sseViewFrame } from '../lib/view-state'
 import { withDebug, failureDebug } from './debug-state'
 import { discoverScopeLabels } from './query/scope'
 import { mapLimit } from '../lib/exec'
@@ -164,11 +165,13 @@ activityRouter.get('/resume/:id/last-turn', async (req: Request, res: Response) 
   }))
 })
 
-// ---- Live MCP Activity UI (project-s1rf.1.1.2) --------------------------------
-// Observational two-panel UI over the activity ring (src/lib/activity.ts).
-// GET-only: the page, its config, recent JSON, and the SSE stream. Nothing
-// here mutates beads or creates work — bead content in the detail pane is
-// resolved client-side through the existing read-only GET /:id route.
+// ---- Live MCP Activity UI (project-s1rf.1.1.2, drawer project-s1rf.1.1) ------
+// Observational live UI over the activity ring (src/lib/activity.ts): activity
+// cards + resolved content on desktop, an off-canvas navigation drawer over the
+// live body on a phone. GET-only: the page, its config, recent JSON, the shared
+// view state, and the SSE stream. Nothing here mutates beads or creates work —
+// bead content in the detail pane is resolved client-side through the existing
+// read-only GET /:id route.
 // Mounted at order -14 (this file), ahead of the parametric /:store /:id
 // read routes, so /live never falls through to a store lookup.
 
@@ -178,6 +181,18 @@ liveRouter.get('/live/config', (_req: Request, res: Response) => {
     res.json({ autoFollowDefault: activityAutoFollowDefault(), maxEvents: activityMaxEvents() })
   } catch {
     res.status(500).json({ error: 'config unavailable' })
+  }
+})
+
+/**
+ * Current shared view state (read-only; same frame shape as the SSE event).
+ * The session is the bridge instance — see src/lib/view-state.ts.
+ */
+liveRouter.get('/live/view', (_req: Request, res: Response) => {
+  try {
+    res.json(currentViewFrame())
+  } catch {
+    res.status(500).json({ error: 'view unavailable' })
   }
 })
 
@@ -191,7 +206,11 @@ liveRouter.get('/live/recent', (req: Request, res: Response) => {
   }
 })
 
-/** SSE stream of activity events; replays ?limit= recent first. */
+/**
+ * SSE stream of activity frames + shared view frames; replays ?limit= recent
+ * activity first. Activity frames keep their original unnamed shape; view
+ * state arrives as named `event: view` frames on the same fan-out.
+ */
 liveRouter.get('/live/events', (req: Request, res: Response) => {
   try {
     const raw = parseInt(String(req.query.limit ?? '20'), 10)
@@ -203,9 +222,6 @@ liveRouter.get('/live/events', (req: Request, res: Response) => {
       'X-Accel-Buffering': 'no',
     })
     res.write('retry: 5000\n\n')
-    for (const ev of recentEvents(limit).slice().reverse()) {
-      res.write(`data: ${JSON.stringify(ev)}\n\n`)
-    }
     let open = true
     const unsub = subscribeActivity((line) => {
       if (!open) return false
@@ -216,6 +232,15 @@ liveRouter.get('/live/events', (req: Request, res: Response) => {
         return false
       }
     })
+    // Subscribed before the replay so no live frame is dropped in between: the
+    // client dedupes activity by seq and view frames by revision, so replay and
+    // live frames may interleave safely.
+    for (const ev of recentEvents(limit).slice().reverse()) {
+      res.write(`data: ${JSON.stringify(ev)}\n\n`)
+    }
+    // Current shared view state, so a connecting or reconnecting viewer lands
+    // on it instead of holding a stale local guess.
+    res.write(sseViewFrame(currentViewFrame()))
     const ping = setInterval(() => {
       if (!open) return
       try {
@@ -242,59 +267,114 @@ liveRouter.get('/live/events', (req: Request, res: Response) => {
   }
 })
 
-function renderLivePage(autoFollow: boolean): string {
+function renderLivePage(autoFollow: boolean, viewFrameJson: string): string {
   const auto = autoFollow ? 'true' : 'false'
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Beads Bridge — Live MCP Activity</title>
 <style>
-:root { color-scheme: light dark; }
+:root { color-scheme: light dark; --edge: #8884; }
+* { box-sizing: border-box; }
+html, body { max-width: 100%; overflow-x: hidden; }
 body { font-family: -apple-system, system-ui, sans-serif; margin: 0; }
-header { display: flex; gap: 12px; align-items: center; padding: 10px 14px; border-bottom: 1px solid #8884; }
-header h1 { font-size: 16px; margin: 0; }
-#dot { width: 10px; height: 10px; border-radius: 50%; background: #c33; }
+header { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--edge); background: Canvas; }
+header h1 { font-size: 15px; margin: 0; }
+#dot { width: 10px; height: 10px; border-radius: 50%; background: #c33; flex: 0 0 auto; }
 #dot.on { background: #3a3; }
-main { display: flex; height: calc(100vh - 53px); }
-#left { width: 42%; min-width: 300px; overflow-y: auto; border-right: 1px solid #8884; padding: 8px; }
-#right { flex: 1; overflow-y: auto; padding: 12px 16px; }
-.card { border: 1px solid #8884; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; cursor: pointer; }
+button.ctl { padding: 5px 11px; min-height: 32px; border-radius: 8px; border: 1px solid var(--edge); background: none; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+#count { font-size: 12px; opacity: .7; margin-left: auto; }
+main { display: block; }
+/* Mobile-first: the live content IS the document body; navigation is a drawer. */
+#panel { position: fixed; top: 0; bottom: 0; left: 0; z-index: 30; width: min(88vw, 360px); max-width: 100%; padding: 8px; padding-top: calc(8px + env(safe-area-inset-top)); padding-bottom: calc(8px + env(safe-area-inset-bottom)); overflow-y: auto; overflow-x: hidden; background: Canvas; border-right: 1px solid var(--edge); box-shadow: 0 0 24px #0004; transform: translateX(-105%); transition: transform .2s ease; }
+body.drawer-open #panel { transform: none; }
+body:not(.drawer-open) #panel { pointer-events: none; }
+#scrim { position: fixed; inset: 0; z-index: 25; background: #0007; opacity: 0; pointer-events: none; transition: opacity .2s ease; }
+body.drawer-open #scrim { opacity: 1; pointer-events: auto; }
+.panelhead { display: flex; align-items: center; justify-content: space-between; padding: 2px 2px 8px; font-size: 13px; opacity: .8; }
+#detail { padding: 12px 14px calc(28px + env(safe-area-inset-bottom)); overflow-x: hidden; }
+.card { border: 1px solid var(--edge); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; cursor: pointer; }
 .card.sel { border-color: #06c; border-width: 2px; }
-.card .row1 { display: flex; gap: 8px; align-items: baseline; }
-.card .tool { font-weight: 700; }
+.card .row1 { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.card .tool { font-weight: 700; overflow-wrap: anywhere; }
 .chip { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: #8883; }
 .chip.ok { background: #3a32; } .chip.error { background: #c332; }
-.card .meta { font-size: 12px; opacity: .75; margin-top: 2px; }
-.card .sum { font-size: 13px; margin-top: 4px; }
-.tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
-.tabs button { padding: 3px 10px; border-radius: 12px; border: 1px solid #8886; background: none; cursor: pointer; font-size: 12px; }
+.card .meta { font-size: 12px; opacity: .75; margin-top: 2px; overflow-wrap: anywhere; }
+.card .sum { font-size: 13px; margin-top: 4px; overflow-wrap: anywhere; }
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; max-width: 100%; }
+.tabs button { padding: 4px 10px; border-radius: 12px; border: 1px solid #8886; background: none; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
 .tabs button.on { background: #06c; color: #fff; border-color: #06c; }
-pre { white-space: pre-wrap; font-size: 12.5px; background: #8881; padding: 10px; border-radius: 8px; }
-button.ctl { padding: 4px 12px; }
+h2 { font-size: 17px; overflow-wrap: anywhere; }
+.meta { overflow-wrap: anywhere; }
+/* Anything wide scrolls inside its own box; the page body never goes sideways. */
+pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; background: #8881; padding: 10px; border-radius: 8px; max-width: 100%; }
+@media (min-width: 900px) {
+  #menu, #scrim, .panelhead { display: none; }
+  main { display: flex; height: calc(100vh - 53px); }
+  #panel { position: static; transform: none; pointer-events: auto; width: 42%; min-width: 320px; max-width: 46%; padding: 8px; border-right: 1px solid var(--edge); box-shadow: none; overflow-y: auto; overflow-x: hidden; }
+  #detail { flex: 1; overflow-y: auto; }
+}
 </style>
 </head>
 <body>
 <header>
+<button class="ctl" id="menu" aria-controls="panel" aria-expanded="false" aria-label="Show activity navigation">☰</button>
 <span id="dot"></span>
 <h1>Live MCP Activity</h1>
-<label><input type="checkbox" id="follow"> auto-follow newest</label>
+<label><input type="checkbox" id="follow"> auto-follow</label>
 <button class="ctl" id="pause">Pause</button>
 <span id="count"></span>
 </header>
 <main>
-<div id="left"></div>
-<div id="right"><p>Waiting for MCP activity… trigger any tool call and it appears here.</p></div>
+<div id="scrim"></div>
+<nav id="panel" aria-label="Activity navigation">
+<div class="panelhead"><span>Activity</span><button class="ctl" id="closeNav" aria-label="Hide activity navigation">Close</button></div>
+<div id="left"><p>No events yet.</p></div>
+</nav>
+<section id="detail"><div id="right"><p>Waiting for MCP activity… trigger any tool call and it appears here.</p></div></section>
 </main>
 <script>
-var state = { events: [], bySeq: {}, selected: null, autoFollow: AUTO_TOKEN, paused: false, cache: {} };
+// Shared view state is server-authoritative for this bridge instance: one
+// drawer + selected-activity state for every viewer of this session, sent as
+// named 'event: view' SSE frames and replayed on connect.
+var sharedView = VIEW_JSON;
+var state = { events: [], bySeq: {}, selected: null, autoFollow: AUTO_TOKEN, paused: false, cache: {}, viewRevision: 0, drawerLocal: false };
 var leftEl = document.getElementById('left');
 var rightEl = document.getElementById('right');
 var dotEl = document.getElementById('dot');
 var followEl = document.getElementById('follow');
 var pauseEl = document.getElementById('pause');
 var countEl = document.getElementById('count');
+var menuEl = document.getElementById('menu');
+var scrimEl = document.getElementById('scrim');
+var closeNavEl = document.getElementById('closeNav');
+followEl.checked = state.autoFollow;
+// ---- drawer + shared view ------------------------------------------------
+// A local tap owns the drawer from then on: it cannot be posted back (the
+// /live surface is GET-only by design), so server frames bring a viewer to
+// the shared state on load and reconnect but never fight a local toggle.
+// See docs/live-activity.md "Drawer sync".
+function drawerOpen() { return document.body.classList.contains('drawer-open'); }
+function setDrawer(open, local) {
+  if (local) state.drawerLocal = true;
+  document.body.classList.toggle('drawer-open', !!open);
+  if (menuEl) menuEl.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+// Apply shared state; a lower-or-equal revision is a stale frame and is ignored.
+function applyView(frame) {
+  if (!frame || typeof frame.revision !== 'number' || frame.revision <= state.viewRevision) return;
+  state.viewRevision = frame.revision;
+  if (!state.drawerLocal && (frame.drawer === 'open' || frame.drawer === 'closed')) setDrawer(frame.drawer === 'open', false);
+  if (state.autoFollow && !state.paused && typeof frame.selectedSeq === 'number' && state.bySeq[frame.selectedSeq]) {
+    state.selected = frame.selectedSeq;
+    render();
+  }
+}
+function refreshView() {
+  fetch('/live/view').then(function (r) { return r.json(); }).then(applyView).catch(function () {});
+}
 followEl.checked = state.autoFollow;
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 function tstr(iso) { try { return new Date(iso).toLocaleTimeString(); } catch (e) { return iso; } }
@@ -329,7 +409,10 @@ function render() {
   countEl.textContent = state.events.length + ' events';
   var cards = leftEl.querySelectorAll('.card');
   for (var j = 0; j < cards.length; j++) {
-    cards[j].addEventListener('click', function () { select(Number(this.getAttribute('data-seq')), false); });
+    cards[j].addEventListener('click', function () {
+      select(Number(this.getAttribute('data-seq')), false);
+      if (drawerOpen()) setDrawer(false, true); // reveal what the card points at
+    });
   }
   renderDetail();
 }
@@ -399,20 +482,31 @@ pauseEl.addEventListener('click', function () {
   state.paused = !state.paused;
   pauseEl.textContent = state.paused ? 'Resume' : 'Pause';
 });
+menuEl.addEventListener('click', function () { setDrawer(!drawerOpen(), true); });
+closeNavEl.addEventListener('click', function () { setDrawer(false, true); });
+scrimEl.addEventListener('click', function () { setDrawer(false, true); });
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && drawerOpen()) setDrawer(false, true); });
+// Baked state first (no flash on a phone), then the live read + stream.
+applyView(sharedView);
+refreshView();
 fetch('/live/config').then(function (r) { return r.json(); }).then(function (c) {
   if (c && typeof c.autoFollowDefault === 'boolean') { state.autoFollow = c.autoFollowDefault; followEl.checked = c.autoFollowDefault; }
 }).catch(function () {});
 var es = null;
 try {
   es = new EventSource('/live/events?limit=30');
+  es.onopen = function () { setLive(true); };
   es.onmessage = function (m) { try { onEvent(JSON.parse(m.data)); setLive(true); } catch (e) {} };
+  es.addEventListener('view', function (m) { try { applyView(JSON.parse(m.data)); } catch (e) {} });
   es.onerror = function () { setLive(false); startPoll(); };
 } catch (e) { startPoll(); }
 var polling = false;
 function startPoll() {
   if (polling || (es && es.readyState !== 2)) return;
   polling = true;
+  refreshView();
   setInterval(function () {
+    refreshView();
     fetch('/live/recent?limit=50').then(function (r) { return r.json(); }).then(function (d) {
       var arr = (d && d.events) || [];
       var changed = false;
@@ -429,13 +523,18 @@ function startPoll() {
 </body>
 </html>`
     .split('AUTO_TOKEN')
-    .join(auto);
+    .join(auto)
+    .split('VIEW_JSON')
+    .join(viewFrameJson);
 }
 
-/** The two-panel page. Auto-follow default comes from the backend config. */
+/** The responsive page: drawer on a phone, two panels on desktop. */
 liveRouter.get('/live', (_req: Request, res: Response) => {
   try {
-    res.type('text/html').send(renderLivePage(activityAutoFollowDefault()))
+    // Escaped for an inline <script> block: JSON is valid JS, but a literal
+    // `<` from a future origin value must not be able to close the tag.
+    const frame = JSON.stringify(currentViewFrame()).replace(/</g, '\\u003c')
+    res.type('text/html').send(renderLivePage(activityAutoFollowDefault(), frame))
   } catch {
     res.status(500).type('text/plain').send('live UI unavailable')
   }
