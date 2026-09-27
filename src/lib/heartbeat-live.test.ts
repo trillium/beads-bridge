@@ -261,3 +261,37 @@ describe('heartbeat live (task-36na1)', () => {
     })
   })
 })
+
+// inbox-1uxt: one response asserted CLOSED and active at once for the same
+// bead. `bead_show` reads the authoritative lifecycle (CLOSED) AND carries
+// the relay-status/heartbeat footer, whose per-item state comes from the
+// in-memory projection — which by design never learns about out-of-band
+// closes (the incident replay above). The projection's `state` is bridge
+// activity, not bead lifecycle, so it must never render a lifecycle-shaped
+// token beside an id that the same response reports CLOSED.
+describe('projection never contradicts the lifecycle the same response reads (inbox-1uxt)', () => {
+  it('a bead closed outside the bridge is not projected as active by the response that reads it CLOSED', { timeout: 120000 }, async (t) => {
+    process.env.OAUTH_STORE_PATH = join(mkdtempSync(join(tmpdir(), 'hb-live-oauth-')), 'store.json')
+    process.env.MCP_TELEMETRY_DIR = mkdtempSync(join(tmpdir(), 'hb-live-tel-'))
+    resetHeartbeatCursors()
+    await withApp(async (base) => {
+      const sess = await session(base, toolKey)
+      const id = await createScratch(base, sess, toolKey) // bridge touch -> projection row for `id`
+      t.after(() => cleanup(id))
+      await execStdout(STORE, ['close', id], 15000) // EXTERNAL close — never enters the projection
+      const shown = await callTool(base, sess, toolKey, 'bead_show', { id })
+      assert.match(shown, /CLOSED/i, 'the body reports the authoritative lifecycle')
+      assert.match(shown, new RegExp(`- ${id} `), 'the same response still projects the id')
+      assert.doesNotMatch(
+        shown,
+        new RegExp(`- ${id} \\[[^\\]]*/active\\]`),
+        'the response must not project a bead it just read as CLOSED as lifecycle-active',
+      )
+      assert.match(
+        shown,
+        new RegExp(`- ${id} \\[[^\\]]*/touched\\]`),
+        'the projection is labelled as bridge activity, not bead lifecycle',
+      )
+    })
+  })
+})
