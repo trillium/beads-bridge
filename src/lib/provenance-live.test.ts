@@ -1,12 +1,15 @@
 // LIVE round-trip: creation provenance (task-mm2zq) must survive the
 // bridge's own write path end to end — the exact functions each creation
-// path calls — against live stores through the same CLIs every route shells
-// out to. One scratch bead per path (MCP tool args, paste argv, batch via
-// runBatch, relay via requestDispatch), each asserting its `source:*` stamp
-// reads back on `show`, then force-deleted (and asserted gone) so the
-// stores are left as found. Requires the store CLIs to be reachable;
-// FUNNEL_BASE must still be set so src/config.ts imports.
-import { describe, it } from 'node:test'
+// path calls — against REAL stores that are SCRATCH, never the captain's
+// production stores (task-8hmyn): per-run temp Dolt stores (`bd init -p`),
+// inbox reached by BEADS_DIR redirect, task reached through a `bd`-router
+// shim. Real lib + real CLI + real Dolt — only the databases are
+// throwaway. One scratch bead per path (MCP tool args, paste argv, batch
+// via runBatch, relay via requestDispatch), each asserting its `source:*`
+// stamp reads back on `show`, then force-deleted (and asserted gone).
+// Requires the `bd` binary to be reachable; FUNNEL_BASE must still be set
+// so src/config.ts imports.
+import { describe, it, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { buildCreateArgs, createBead, parseCreatedId } from './create'
 import { runBatch } from './batch'
@@ -14,8 +17,55 @@ import { requestDispatch } from './relay'
 import { buildPasteArgs } from '../routes/paste'
 import { showBeadAsync } from '../routes/query/store'
 import { execStdout } from './exec'
+import {
+  liveRunTag,
+  initScratchStoreSync,
+  sweepScratchBeadsSync,
+  redirectStoreEnv,
+  shimBdRouter,
+  removeScratchStore,
+} from './live-test-store'
 
-const TAG = 'bb-live-prov'
+// Run-derived tag (task-8hmyn): unique per run, never a hardcoded string.
+// LEGACY_TAG (no trailing space: pre-fix titles were `bb-live-prov-mcp …`)
+// is swept on the REAL stores at suite start with a 30-minute age guard,
+// so beads orphaned by pre-fix interrupted runs self-heal instead of
+// accumulating. Post-fix runs never touch the real stores.
+//
+// Suite setup at import time as blocking sync statements, NOT in before()
+// (hook budget is 5s; the package is type:commonjs so no top-level await).
+// Sweep BEFORE isolation is installed so it hits the real stores; a setup
+// failure throws here and fails the file loudly. inbox uses env redirect
+// (flexibly-pinned wrapper honors BEADS_DIR); task uses a `bd`-router shim
+// (hard-pinned wrapper; see live-test-store.ts).
+const TAG = liveRunTag('bb-live-prov')
+const LEGACY_TAG = 'bb-live-prov'
+
+let inboxDir = ''
+let taskDir = ''
+let restoreStoreEnv: (() => void) | null = null
+let restoreShim: (() => void) | null = null
+try {
+  sweepScratchBeadsSync('task', LEGACY_TAG, 30 * 60 * 1000)
+  sweepScratchBeadsSync('inbox', LEGACY_TAG, 30 * 60 * 1000)
+  inboxDir = initScratchStoreSync('inbox')
+  taskDir = initScratchStoreSync('task')
+  restoreStoreEnv = redirectStoreEnv(`${inboxDir}/.beads`)
+  restoreShim = shimBdRouter({ task: taskDir })
+} catch (e) {
+  throw new Error(`provenance-live setup failed (isolation not installed): ${(e as Error)?.message ?? e}`)
+}
+
+after(() => {
+  restoreShim?.()
+  restoreShim = null
+  restoreStoreEnv?.()
+  restoreStoreEnv = null
+  if (taskDir) removeScratchStore(taskDir)
+  if (inboxDir) removeScratchStore(inboxDir)
+  taskDir = ''
+  inboxDir = ''
+})
 
 function scratchTitle(path: string): string {
   return `${TAG}-${path} ${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -33,7 +83,7 @@ async function cleanup(store: string, id: string): Promise<void> {
 }
 
 describe('creation provenance live round-trip', () => {
-  it('mcp path: source:mcp + caller read back on show', { timeout: 60000 }, async (t) => {
+  it('mcp path: source:mcp + caller read back on show', { timeout: 120000 }, async (t) => {
     // Same argv the bead_create MCP tool builds (provenance via createBead).
     const args = buildCreateArgs({ store: 'task', title: scratchTitle('mcp'), provenance: { source: 'mcp', caller: 'bb-live-caller' } })
     assert.ok(args.join(' ').includes('source:mcp'))
@@ -48,7 +98,7 @@ describe('creation provenance live round-trip', () => {
     assert.ok(shown.includes('by:bb-live-caller'), 'caller stamp reads back')
   })
 
-  it('paste path: historical argv still lands source:paste + untriaged', { timeout: 60000 }, async (t) => {
+  it('paste path: historical argv still lands source:paste + untriaged', { timeout: 120000 }, async (t) => {
     const title = scratchTitle('paste')
     const out = await execStdout('inbox', buildPasteArgs(title, `${TAG} body ${Date.now()}`), 15000)
     const id = parseCreatedId('inbox', out)
@@ -76,7 +126,7 @@ describe('creation provenance live round-trip', () => {
     }
   })
 
-  it('relay path: requestDispatch lands source:relay with no caller', { timeout: 60000 }, async (t) => {
+  it('relay path: requestDispatch lands source:relay with no caller', { timeout: 120000 }, async (t) => {
     const d = await requestDispatch({ instruction: `${TAG} relay probe ${Date.now()}` })
     t.after(() => cleanup('task', d.id))
     const shown = await shownText('task', d.id)
