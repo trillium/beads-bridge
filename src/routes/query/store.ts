@@ -50,7 +50,18 @@ export function runList(
   any: string[],
   opts: ListOpts,
 ): { rows: Row[]; error?: string } {
-  const r = spawnSync(store, listArgs(all, any, opts), { encoding: 'utf8', timeout: 12000, maxBuffer: 4 * 1024 * 1024 })
+  // Explicit live env: Bun's spawnSync without `env` reuses the
+  // process-start environment snapshot and ignores runtime process.env
+  // changes (verified task-8hmyn), diverging from Node where children
+  // inherit the live environment. Passing it explicitly restores Node
+  // semantics. Production behavior is unchanged — the server never
+  // mutates process.env per request, so live === snapshot there.
+  const r = spawnSync(store, listArgs(all, any, opts), {
+    encoding: 'utf8',
+    timeout: 12000,
+    maxBuffer: 4 * 1024 * 1024,
+    env: { ...process.env },
+  })
   if (r.error) return { rows: [], error: String(r.error).slice(0, 160) }
   if (r.status !== 0 && !r.stdout) {
     return { rows: [], error: (r.stderr ?? `exit ${r.status}`).trim().slice(0, 200) || `exit ${r.status}` }

@@ -1,8 +1,13 @@
 // Heartbeat live regression tests (task-36na1): end-to-end through the
 // REAL mcpRouter over loopback HTTP (same harness as mcp-auth.test.ts)
-// against the LIVE stores with scratch inbox beads, following the
-// relay-live pattern (unique titles, force-delete cleanup, per-test
-// timeout). Settles, against real code + real stores:
+// against a REAL store that is SCRATCH, not the captain's inbox
+// (task-8hmyn): per-run temp Dolt store via `bd init -p inbox`, reached
+// through the same `inbox` wrapper the bridge shells out to, with
+// BEADS_DIR redirected. Real route + real CLI + real Dolt — only the
+// database is throwaway. Following the relay-live pattern (unique titles,
+// force-delete cleanup, per-test timeout), plus a start-of-suite orphan
+// sweep so an interrupted run self-heals on the next run. Settles,
+// against real code + a real (scratch) store:
 //   - a bridge-mediated async close survives an intervening unrelated call
 //     (automatic footers peek; explicit heartbeat still reports it);
 //   - explicit heartbeat acknowledges (second read drops the event);
@@ -13,8 +18,10 @@
 // Live tests: FUNNEL_BASE=https://example.test bun test src/lib/heartbeat-live.test.ts
 // (Importing the route pulls toolKey/BASE from config, so FUNNEL_BASE must
 // be set. OAuth + telemetry state are isolated per test via temp dirs.
-// Scratch beads are deleted after each test; the stores are left as found.)
-import { describe, it } from 'node:test'
+// The bead store is an isolated scratch store per run; the captain's inbox
+// is never touched — verified by comparing the inbox item list before and
+// after the suite.)
+import { describe, it, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -26,9 +33,48 @@ import { mcpRouter } from '../routes/mcp'
 import { resetHeartbeatCursors } from './heartbeat'
 import { execStdout } from './exec'
 import { showBeadAsync } from '../routes/query/store'
+import {
+  liveRunTag,
+  initScratchStoreSync,
+  sweepScratchBeadsSync,
+  redirectStoreEnv,
+  removeScratchStore,
+} from './live-test-store'
 
 const STORE = 'inbox'
-const TAG = 'bb-hb-36na1'
+// Run-derived tag (task-8hmyn): unique per run, never a hardcoded task id.
+// LEGACY_TAG is swept on the REAL store at suite start so beads orphaned
+// by pre-fix interrupted runs are reaped exactly once, then never again.
+const TAG = liveRunTag('bb-hb')
+const LEGACY_TAG = 'bb-hb-36na1'
+
+// Suite setup runs at import time as blocking sync statements, NOT in
+// before(): the sweep + `bd init` take ~10-15s, beyond the runner's 5s
+// hook budget (hook timeout options are not honored), and the package is
+// type:commonjs so top-level await is rejected by tsc. A setup failure
+// throws here, failing the file loudly instead of silently testing the
+// wrong store. Sweep BEFORE isolation is installed, so it hits the real
+// store: self-heal orphans from pre-fix runs that died before cleanup()
+// ran. The 30-minute age guard keeps a concurrent old-code run's
+// in-flight scratch beads (seconds old) out of the sweep — only true
+// orphans. Post-fix runs never write to the real store at all, so no new
+// orphans can appear there; the sweep is strictly legacy hygiene.
+let scratchDir = ''
+let restoreStoreEnv: (() => void) | null = null
+try {
+  sweepScratchBeadsSync(STORE, `${LEGACY_TAG} `, 30 * 60 * 1000)
+  scratchDir = initScratchStoreSync('inbox')
+  restoreStoreEnv = redirectStoreEnv(`${scratchDir}/.beads`)
+} catch (e) {
+  throw new Error(`heartbeat-live setup failed (isolation not installed): ${(e as Error)?.message ?? e}`)
+}
+
+after(() => {
+  restoreStoreEnv?.()
+  restoreStoreEnv = null
+  if (scratchDir) removeScratchStore(scratchDir)
+  scratchDir = ''
+})
 
 function scratchTitle(): string {
   return `${TAG} ${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
