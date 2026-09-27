@@ -43,6 +43,7 @@ import { closeBead, commentBead, formatReceipt, labelBead, noteBead } from '../l
 import { unverifiedMessage } from '../lib/receipts'
 import { formatRelayStatus, relayStatus } from '../lib/relay-status'
 import { currentScope, registerFollowon, withFollowonScope, withResponseFooter } from '../lib/followons'
+import { currentRequestCaller, withProvenance } from '../lib/provenance'
 import { HEARTBEAT_CALLER_ANONYMOUS, HEARTBEAT_CALLER_LOOPBACK, HEARTBEAT_EXCLUDED_TOOLS, advanceHeartbeatCursor, peekHeartbeatBlock, renderHeartbeatBlock } from '../lib/heartbeat'
 import { relayCatchup } from '../lib/catchup'
 import { attentionNext } from '../lib/attention'
@@ -379,12 +380,14 @@ const mcpHandler = createMcpHandler((server) => {
       const { ok: valid, bad } = validateCreateLabels(labels)
       if (bad.length) return err(`bad label: ${bad.join(', ')} (match ${LABEL_RE}, max 64 chars)`)
       try {
+        const provenance = { source: 'mcp' as const, caller: currentRequestCaller() }
         const { id, detail, verified } = await createBead({
           store,
           title,
           description,
           labels: valid,
           parent: parent?.trim() || undefined,
+          provenance,
         })
         relayStatus.touch({ id, kind: 'task', title })
         const receipt = { operation: 'created', id, store, verified, detail }
@@ -392,7 +395,7 @@ const mcpHandler = createMcpHandler((server) => {
           relayStatus.touch({ id, kind: 'verify', title, needsVerify: true })
           return err(unverifiedMessage(receipt))
         }
-        return ok(formatReceipt(receipt, `Labels: ${valid.join(', ') || '(none)'}${createAliasNote}`))
+        return ok(formatReceipt(receipt, `Labels: ${withProvenance(valid, provenance).join(', ') || '(none)'}${createAliasNote}`))
       } catch (e) {
         relayStatus.touch({ id: `new:${store}`, kind: 'failure', title: `create failed in ${store}: ${title}`, state: 'failed' })
         return err(`create failed: ${e instanceof Error ? e.message : String(e)}`)
@@ -440,7 +443,7 @@ const mcpHandler = createMcpHandler((server) => {
         b.store = br.store
       }
       try {
-        const r = await runBatch({ beads, relations })
+        const r = await runBatch({ beads, relations }, undefined, { caller: currentRequestCaller() })
         for (const bead of r.beads) {
           relayStatus.touch({ id: bead.id, kind: 'task', title: bead.name })
           if (!bead.verified) relayStatus.touch({ id: bead.id, kind: 'verify', title: bead.name, needsVerify: true })

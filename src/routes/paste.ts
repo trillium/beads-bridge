@@ -10,6 +10,7 @@ import { join, dirname } from 'path'
 import { BASE } from '../config'
 import { withCb, shortCode } from '../util'
 import { isWebAgent } from '../agent-detect'
+import { PASTE_SOURCE_LABEL, PASTE_UNTRIAGED_LABEL } from '../lib/provenance'
 
 export const pasteRouter = Router()
 
@@ -54,6 +55,14 @@ const deriveTitle = (text: string): string => {
   return clean || `pasted block ${new Date().toISOString().slice(0, 10)}`
 }
 
+// Pure argv builder for the paste create (task-mm2zq): the route's stamp
+// is `source:paste` + `paste:untriaged`, spelled via the shared provenance
+// constants so the scheme and the route cannot drift apart. Extracted pure
+// so the preservation test pins the exact labels without HTTP.
+export function buildPasteArgs(title: string, text: string): string[] {
+  return ['create', title, '--description', text, '--label', PASTE_SOURCE_LABEL, '--label', PASTE_UNTRIAGED_LABEL]
+}
+
 const run = (store: string, args: string[]): Promise<string> =>
   new Promise((resolve, reject) =>
     execFile(store, args, { timeout: 30000 }, (e, so, se) =>
@@ -89,7 +98,7 @@ pasteRouter.post('/paste', async (req: Request, res: Response) => {
     if (seen)
       return void res.json({ id: seen, store, url: `${BASE}/paste/inbox/${seen}`, duplicate: true })
     const title = String(req.body?.title ?? '').trim().slice(0, 120) || deriveTitle(text)
-    const args = ['create', title, '--description', text, '--label', 'source:paste', '--label', 'paste:untriaged']
+    const args = buildPasteArgs(title, text)
     const out = await run(store, args)
     const id = (out.match(/([a-z_]+-[a-z0-9]+)/) || [])[1] ?? 'unknown'
     if (id !== 'unknown') saveHash(hash, id)

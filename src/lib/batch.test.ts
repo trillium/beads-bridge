@@ -16,6 +16,7 @@ import {
 } from './batch'
 import { extractLinks } from '../util'
 import type { CreateInput } from './create'
+import { withProvenance } from './provenance'
 
 interface Fake extends BatchFns {
   created: CreateInput[]
@@ -282,5 +283,43 @@ describe('long descriptions survive the batch path intact', () => {
     assert.equal(f.created.length, 1)
     assert.equal(f.created[0].description?.length, long.length)
     assert.equal(f.created[0].description, long)
+  })
+})
+
+describe('creation provenance (task-mm2zq)', () => {
+  it('stamps source:batch on every bead in the batch', async () => {
+    const f = fake()
+    const r = await runBatch({
+      beads: [
+        { name: 'root', store: 'task', title: 'Root', labels: ['project:x'] },
+        { name: 'child', store: 'task', title: 'Child', parent: 'root' },
+      ],
+    }, f)
+    assert.equal(r.complete, true)
+    assert.equal(f.created.length, 2)
+    for (const c of f.created) {
+      assert.equal(c.provenance?.source, 'batch')
+      assert.deepEqual(withProvenance(c.labels ?? [], c.provenance).slice(0, 1), ['source:batch'])
+    }
+    // Caller labels survive alongside the stamp.
+    assert.ok(withProvenance(f.created[0].labels ?? [], f.created[0].provenance).includes('project:x'))
+  })
+  it('propagates the MCP caller as by: when given', async () => {
+    const f = fake()
+    const r = await runBatch({
+      beads: [{ name: 'a', store: 'task', title: 'A' }],
+    }, f, { caller: 'chatgpt-abc' })
+    assert.equal(r.complete, true)
+    assert.equal(f.created[0].provenance?.source, 'batch')
+    assert.equal(f.created[0].provenance?.caller, 'chatgpt-abc')
+    assert.deepEqual(withProvenance([], f.created[0].provenance), ['source:batch', 'by:chatgpt-abc'])
+  })
+  it('respects a caller-supplied source: label instead of double-stamping', async () => {
+    const f = fake()
+    const r = await runBatch({
+      beads: [{ name: 'a', store: 'task', title: 'A', labels: ['source:custom'] }],
+    }, f)
+    assert.equal(r.complete, true)
+    assert.deepEqual(withProvenance(f.created[0].labels ?? [], f.created[0].provenance), ['source:custom'])
   })
 })
