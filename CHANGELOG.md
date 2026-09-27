@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- `bead_create` receipt fix (task-d8ipc): `parseCreatedId` matched the
+  created id against the store *name* (`projects-`), but a store's id
+  *prefix* comes from its bd config (`project-`, `task-`, `idea-`,
+  `assert-`) — so creates in most of the federation succeeded and then
+  failed receipt parsing with `INVALID_ARGUMENT`. Receipt parsing now
+  derives candidate prefixes mechanically from the canonical-or-alias
+  store name (`expectedIdPrefixes`, `src/lib/create.ts`) and falls back
+  to the CLI-emitted id (the CLI is authoritative for its own prefix;
+  read-back `show` still decides ownership). Null now means only "no
+  bead id in output". Alias callers also get the `resolved alias →
+  canonical` note on the `bead_create` receipt, per the alias module's
+  rule. Pure spelling rule extracted to `src/lib/store-spellings.ts`
+  (re-exported by `store-aliases.ts`, single source kept).
+
 ## 1.5.0
 
 - Federated store-name aliases (task-4lb3r): MCP store parameters
