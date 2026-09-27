@@ -42,7 +42,7 @@ import { closeBead, commentBead, formatReceipt, labelBead, noteBead } from '../l
 import { unverifiedMessage } from '../lib/receipts'
 import { formatRelayStatus, relayStatus } from '../lib/relay-status'
 import { currentScope, registerFollowon, withFollowonScope, withResponseFooter } from '../lib/followons'
-import { HEARTBEAT_CALLER_ANONYMOUS, HEARTBEAT_CALLER_LOOPBACK, HEARTBEAT_EXCLUDED_TOOLS, advanceHeartbeatCursor, renderHeartbeatBlock } from '../lib/heartbeat'
+import { HEARTBEAT_CALLER_ANONYMOUS, HEARTBEAT_CALLER_LOOPBACK, HEARTBEAT_EXCLUDED_TOOLS, advanceHeartbeatCursor, peekHeartbeatBlock, renderHeartbeatBlock } from '../lib/heartbeat'
 import { relayCatchup } from '../lib/catchup'
 import { attentionNext } from '../lib/attention'
 import { inspectRead, inspectReadMany, inspectSearch, inspectTree } from '../lib/inspect'
@@ -76,15 +76,18 @@ const text = (t: string) => ({ type: 'text' as const, text: t })
 const ok = (t: string, bare = false) => ({ content: [text(bare ? t : withResponseFooter(t, 'ok'))] })
 const err = (t: string, bare = false) => ({ content: [text(bare ? t : withResponseFooter(t, 'error'))], isError: true as const })
 
-// Heartbeat as the default follow-on (task-ksmy1): every footered response
-// carries the caller's delta off the shared relay-status projection.
+// Heartbeat as the default follow-on (task-ksmy1, consumption fixed by
+// task-36na1): every footered response carries the caller's pending delta,
+// PEEKED — projected without advancing the cursor — so an intervening call
+// can report an async event but never silently consume it. Only explicit
+// `heartbeat` / `relay_status` reads acknowledge (advance the cursor).
 // Bare tools (heartbeat itself, relay_status, timeout_probe) stay bare —
 // footer output never re-triggers a follow-on (loop prevention).
 registerFollowon({
   name: 'heartbeat',
   priority: 100,
   excludeTools: HEARTBEAT_EXCLUDED_TOOLS,
-  run: (ctx) => renderHeartbeatBlock(ctx.caller, { now: ctx.at }),
+  run: (ctx) => peekHeartbeatBlock(ctx.caller, { now: ctx.at }),
 })
 
 // Canonical store for a bead id, with loud ambiguity: an id prefix that
