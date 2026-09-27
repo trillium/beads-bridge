@@ -48,7 +48,7 @@ export function buildFeedbackDoc(input: FeedbackInput, now: Date = new Date()): 
     'tool: bead_feedback',
     '---',
   ]
-  return { filename: feedbackFilename(now), doc: [...front, '', text.slice(0, 4000), ''].join('\n') }
+  return { filename: feedbackFilename(now), doc: [...front, '', text, ''].join('\n') }
 }
 
 export function writeFeedback(input: FeedbackInput, now: Date = new Date()): { path: string; filename: string } {
