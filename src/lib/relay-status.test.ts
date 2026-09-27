@@ -2,6 +2,7 @@ import { describe, it, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   RelayStatusTracker,
+  activityStateLabel,
   formatRelayStatus,
   relayStatusTtlMs,
   withRelayStatus,
@@ -80,6 +81,27 @@ describe('same-turn chaining', () => {
     const t = new RelayStatusTracker()
     t.touch({ id: 'task-v1', kind: 'verify', needsVerify: true })
     assert.match(formatRelayStatus(t), /followup: relay_verify or bead_show task-v1/)
+  })
+})
+
+describe('bridge-activity vocabulary (inbox-1uxt)', () => {
+  // The tracker's `state` is bridge bookkeeping, not bead lifecycle: a bead
+  // read as CLOSED must not be projected as `active` in the SAME response
+  // (that read + this projection compose one reply). Rendering the raw
+  // `active` token made one response assert OPEN and CLOSED at once.
+  it('renders the default touch state as a non-lifecycle activity label', () => {
+    const t = new RelayStatusTracker()
+    t.touch({ id: 'inbox-abc', kind: 'task', title: 'A bead the bridge touched' })
+    const out = formatRelayStatus(t)
+    assert.match(out, /- inbox-abc \[task\/touched\]/)
+    assert.doesNotMatch(out, /\[[^\]]*\/active\]/, 'a lifecycle-shaped `active` token would collide with bead lifecycle OPEN')
+    assert.match(out, /never bead lifecycle/)
+  })
+  it('activityStateLabel only relabels the lifecycle-colliding state', () => {
+    assert.equal(activityStateLabel('active'), 'touched')
+    for (const s of ['waiting', 'failed', 'done', 'stale'] as const) {
+      assert.equal(activityStateLabel(s), s)
+    }
   })
 })
 

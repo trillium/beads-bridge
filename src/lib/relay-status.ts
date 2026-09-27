@@ -37,6 +37,24 @@ export function relayStateOf(item: RelayItem, now: number = Date.now()): RelayIt
   return isRelayStale(item, now) ? 'stale' : item.state
 }
 
+/**
+ * Rendered label for an item's bridge-activity state.
+ *
+ * The projection's `state` is bridge bookkeeping, NOT bead lifecycle:
+ * `'active'` means "the bridge touched this id recently", never "the bead
+ * is open". Rendering the raw `active` token beside a bead id made one
+ * response assert OPEN and CLOSED for the same bead at once: `bead_show`
+ * read a bead as CLOSED while the footer counted that same id as
+ * `[task/active]`. Out-of-band closes (direct `bd`/store CLI) never enter
+ * the projection by design (docs/heartbeat.md "Coverage boundary"), so
+ * the lifecycle-looking vocabulary — not the tracked data — has to stop
+ * claiming a lifecycle state. `'active'` renders as `'touched'` so the
+ * token can never be read as lifecycle OPEN (task inbox-1uxt).
+ */
+export function activityStateLabel(state: RelayItemState): string {
+  return state === 'active' ? 'touched' : state
+}
+
 export class RelayStatusTracker {
   private items = new Map<string, RelayItem>()
 
@@ -148,7 +166,7 @@ export function formatRelayBody(
   now: number = Date.now(),
 ): string {
   const rows = tracker.list(now)
-  const lines = ['## relay-status (ephemeral projection — Beads stores are authoritative)']
+  const lines = ['## relay-status (ephemeral bridge-activity projection — never bead lifecycle; Beads stores are authoritative)']
   if (!rows.length) {
     lines.push('clear — nothing touched recently')
   } else {
@@ -157,7 +175,7 @@ export function formatRelayBody(
         item.pinned ? 'pinned' : null,
         item.needsVerify ? 'needs-verify' : null,
       ].filter(Boolean).join(',')
-      lines.push(`- ${item.id} [${item.kind}/${state}] ${item.title}${flags ? ` (${flags})` : ''} touched=${item.lastTouchedAt}`)
+      lines.push(`- ${item.id} [${item.kind}/${activityStateLabel(state)}] ${item.title}${flags ? ` (${flags})` : ''} touched=${item.lastTouchedAt}`)
     }
     for (const f of tracker.followups(now)) {
       lines.push(`followup: ${f.tool} ${f.id} — ${f.reason}`)

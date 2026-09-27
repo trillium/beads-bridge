@@ -14,6 +14,20 @@ or the minimal acknowledgement **Feeds current.** when nothing changed.
 The block is capped at 600 chars. The `staleness:` triple stays the last
 footer line; heartbeat lines sit between the relay-status block and it.
 
+### `<state>` is bridge activity, never bead lifecycle (inbox-1uxt)
+
+The projection's `state` is bridge bookkeeping: it records what the
+bridge itself did to an id, not the bead's OPEN/CLOSED lifecycle. The two
+compose into one reply — `bead_show` reads the authoritative lifecycle
+into the body and the footer adds this projection — so a lifecycle-shaped
+token would make a single response assert OPEN and CLOSED for the same
+bead at once. `'active'` is therefore rendered as **`touched`** ("the
+bridge touched this id recently"), which cannot be read as lifecycle
+OPEN. The remaining values (`waiting`, `failed`, `done`, `stale`) already
+name bridge outcomes. `activityStateLabel()` in `src/lib/relay-status.ts`
+owns this mapping; both renderers (relay-status footer and heartbeat
+block) use it.
+
 ## Cursor rule (acknowledge-on-read, task-36na1)
 
 - Key: OAuth `clientId` when the call bears an OAuth token,
