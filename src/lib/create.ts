@@ -5,6 +5,7 @@
 import { execStdout } from './exec'
 import { aliasesForStore } from './store-spellings'
 import { cleanLabel } from '../routes/query/params'
+import { withProvenance, type Provenance } from './provenance'
 
 export interface CreateInput {
   store: string
@@ -12,12 +13,17 @@ export interface CreateInput {
   description?: string
   labels?: string[]
   parent?: string
+  // Origin stamp (task-mm2zq): which creation path made this bead, plus
+  // the caller where one is known. Merged into labels by buildCreateArgs
+  // so every createBead caller stamps uniformly — MCP tool, batch, relay.
+  provenance?: Provenance
 }
 
 export function buildCreateArgs(input: CreateInput): string[] {
   const args = ['create', input.title]
   if (input.description) args.push('-d', input.description)
-  if (input.labels?.length) args.push('-l', input.labels.join(','))
+  const labels = withProvenance(input.labels ?? [], input.provenance)
+  if (labels.length) args.push('-l', labels.join(','))
   if (input.parent) args.push('--parent', input.parent)
   return args
 }

@@ -408,6 +408,7 @@ export async function captureEntry(input: CaptureInput): Promise<{ id: string; s
     // No slice: capture text passes through verbatim (see lib/limits.ts).
     description: slug ? `${text}\n\nproject: ${slug}` : text,
     labels: labels.map(cleanLabel).filter((x): x is string => !!x),
+    provenance: { source: 'relay' },
   })
   // False-success guardrail: an unverified create is an error naming the
   // bead, never a captured success.
@@ -481,7 +482,7 @@ export async function upsertTask(input: UpsertInput): Promise<{ mode: 'created' 
   }
   const extraLabels = (input.labels ?? []).map(cleanLabel).filter((x): x is string => !!x)
   const labels = [...(slug ? [`project:${slug}`] : []), ...extraLabels].slice(0, 10)
-  const created = await createBead({ store: 'task', title, description: input.description, labels })
+  const created = await createBead({ store: 'task', title, description: input.description, labels, provenance: { source: 'relay' } })
   requireVerified({ operation: 'created', id: created.id, store: 'task', verified: created.verified })
   await maybePromote()
   return { mode: 'created', id: created.id, slug, promoted, detail: created.detail }
@@ -535,7 +536,7 @@ export async function requestDispatch(input: DispatchInput): Promise<{ id: strin
     ``,
     `relay did not execute this work. An external agent should claim it.`,
   ].filter((x): x is string => x !== null).join('\n')
-  const dispatched = await createBead({ store: 'task', title, description: body, labels: dispatchLabels(slug) })
+  const dispatched = await createBead({ store: 'task', title, description: body, labels: dispatchLabels(slug), provenance: { source: 'relay' } })
   requireVerified({ operation: 'created', id: dispatched.id, store: 'task', verified: dispatched.verified })
   return { id: dispatched.id, slug, taskRef, detail: dispatched.detail }
 }

@@ -9,6 +9,7 @@ import { STORES } from '../config'
 import { storeFromId } from '../util'
 import { ambiguousStoreError, resolveStoreName, unknownStoreError } from './store-aliases'
 import { createBead, validateCreateLabels, type CreateInput } from './create'
+import { currentRequestCaller, type CreateSource } from './provenance'
 import { runMutation } from './mutate'
 import { unverifiedMessage } from './receipts'
 import { execStdout } from './exec'
@@ -305,8 +306,16 @@ export function validateBatch(input: BatchInput): { beads: ResolvedBead[]; relat
   return { beads: resolved, relations: resolvedRelations }
 }
 
-export async function runBatch(input: BatchInput, fns: BatchFns = defaultBatchFns): Promise<BatchResult> {
+export interface BatchOpts {
+  // Origin stamp for every bead in the batch (task-mm2zq). Defaults to
+  // source:batch; the MCP bead_batch_create tool passes its caller through.
+  source?: CreateSource
+  caller?: string
+}
+
+export async function runBatch(input: BatchInput, fns: BatchFns = defaultBatchFns, opts: BatchOpts = {}): Promise<BatchResult> {
   const { beads, relations } = validateBatch(input)
+  const provenance = { source: opts.source ?? ('batch' as const), caller: opts.caller ?? currentRequestCaller() }
   const storeByName = new Map(beads.map((b) => [b.name, b.store]))
   const receipts: BatchBeadReceipt[] = []
   const edges: BatchEdgeReceipt[] = []
@@ -331,6 +340,7 @@ export async function runBatch(input: BatchInput, fns: BatchFns = defaultBatchFn
         description: b.description,
         labels: b.labels,
         parent: parent ?? undefined,
+        provenance,
       })
       landed.set(b.name, id)
       receipts.push({ name: b.name, id, store: b.store, verified, detail })
