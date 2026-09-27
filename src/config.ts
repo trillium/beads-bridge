@@ -18,7 +18,12 @@ try {
   }
 } catch { /* no .env — env must come from the environment */ }
 
-export const PORT = 3737
+// Test-port override so a second instance (e.g. a fix under verification)
+// can run next to production without touching it. Unset = 3737.
+export const PORT = (() => {
+  const raw = Number(process.env.BEADS_BRIDGE_PORT ?? '')
+  return Number.isFinite(raw) && raw > 0 ? raw : 3737
+})()
 const funnel = (process.env.FUNNEL_BASE ?? '').replace(/\/$/, '')
 if (!funnel) throw new Error('FUNNEL_BASE is not set (add it to .env — see .env.example)')
 export const BASE = funnel

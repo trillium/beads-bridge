@@ -8,14 +8,27 @@
 // CURSOR RULE (also stated in docs/heartbeat.md):
 // - Key: OAuth clientId when the call bears an OAuth token,
 //   'loopback-local' for loopback service-bearer calls, 'anonymous' else.
+//   NOTE: every caller arriving via the MCPJungle gateway shares the
+//   single 'loopback-local' key (the gateway fans in with one bearer) —
+//   distinct humans behind the gateway are NOT isolated from each other.
 // - Delta: tracker items with lastTouchedAt strictly after the caller's
 //   cursor. First-ever query (no cursor) returns the current projection
 //   bounded, labeled mode 'baseline'; empty projection -> 'Feeds current.'
-// - After every composed footer and every heartbeat call the cursor
-//   advances to composition START (at-least-once: a concurrently touched
-//   item may repeat next time, never silently skipped).
-// - Concurrent callers hold independent cursors; one's advance never
-//   affects another's.
+// - ACKNOWLEDGE-ON-READ (task-36na1): the cursor advances ONLY on calls
+//   whose response shows the caller the state — the explicit `heartbeat`
+//   tool (the delta) and `relay_status` (the full projection). Automatic
+//   footers PEEK: they project the unacknowledged delta without advancing,
+//   so an intervening call can never silently consume an event the caller
+//   never asked to checkpoint. Trade-off: footers repeat the pending delta
+//   (bounded, <=600 chars) until the caller explicitly heartbeats.
+//   Cursor advances to composition START (at-least-once: a concurrently
+//   touched item may repeat next time, never silently skipped).
+// - SCOPE: the projection only ever contains bridge-mediated touches
+//   (relayStatus.touch/markDone in the MCP tool callbacks). Out-of-band
+//   store writes (direct `bd` CLI) never enter it — heartbeat cannot show
+//   them; `retrieval_activity` (live store reads) is the authoritative
+//   cross-check for those. Cursors AND the projection are in-memory: a
+//   bridge restart resets every caller to baseline.
 // SAFETY: observational only — reads tracker.list(), advances an
 // in-memory cursor map. No store reads, no writes, no agent requests.
 // BOUNDS: at most HEARTBEAT_MAX_ITEMS rows, HEARTBEAT_MAX_CHARS chars.
@@ -101,10 +114,14 @@ export function renderHeartbeatTemplate(tpl: string, input: HeartbeatRenderInput
 }
 
 /**
- * Compose the heartbeat footer block for a caller and advance its cursor.
- * Read-only over the tracker (list() never mutates); bounded output.
+ * Compose the heartbeat block for a caller WITHOUT advancing its cursor.
+ * Pure projection over the tracker (list() never mutates); bounded output.
+ * Automatic footers use this (peek): an intervening call reports the
+ * pending delta but never consumes it — only an explicit `heartbeat` or
+ * `relay_status` read acknowledges (advances). `now` is injected so tests
+ * (and the follow-on context's composition-start `at`) stay deterministic.
  */
-export function renderHeartbeatBlock(
+export function peekHeartbeatBlock(
   caller: string,
   opts: { tracker?: RelayStatusTracker; now?: number } = {},
 ): string {
@@ -130,6 +147,21 @@ export function renderHeartbeatBlock(
     count -= 1
     text = build(count)
   }
-  advanceHeartbeatCursor(caller, t0)
   return text.length > HEARTBEAT_MAX_CHARS ? `${text.slice(0, HEARTBEAT_MAX_CHARS - 1)}…` : text
+}
+
+/**
+ * Compose the heartbeat footer block for a caller and advance its cursor.
+ * Explicit acknowledge-on-read path: the `heartbeat` tool and
+ * `relay_status` reads (whose responses show the caller the state).
+ * Read-only over the tracker (list() never mutates); bounded output.
+ */
+export function renderHeartbeatBlock(
+  caller: string,
+  opts: { tracker?: RelayStatusTracker; now?: number } = {},
+): string {
+  const t0 = opts.now ?? Date.now()
+  const text = peekHeartbeatBlock(caller, { tracker: opts.tracker, now: t0 })
+  advanceHeartbeatCursor(caller, t0)
+  return text
 }

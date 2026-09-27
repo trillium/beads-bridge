@@ -33,7 +33,7 @@ export interface FollowonContext {
   outcome: FollowonOutcome
   /** Heartbeat cursor key: OAuth clientId | loopback-local | anonymous. */
   caller: string
-  /** Composition start, ms epoch (also the heartbeat cursor advance). */
+  /** Composition start, ms epoch (the cursor advance for acknowledging reads). */
   at: number
 }
 
