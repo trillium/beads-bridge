@@ -37,6 +37,7 @@ import { lookupAccess, mcpResource } from '../lib/oauth'
 import { LOOPBACK, hasForwardMarkers, socketPeer } from '../lib/access-gate'
 import { withCompatRequest } from '../lib/mcp-compat'
 import { withTelemetry } from '../lib/mcp-telemetry'
+import { withActivity } from '../lib/activity'
 import { captureEntry, editProject, formatFlow, formatProjectEdit, formatProjectList, formatResolve, formatVerify, listProjectsScoped, requestDispatch, resolveProject, runFlow, upsertTask, verifyWork } from '../lib/relay'
 import { closeBead, commentBead, formatReceipt, labelBead, noteBead } from '../lib/mutate'
 import { unverifiedMessage } from '../lib/receipts'
@@ -1352,9 +1353,13 @@ const telemetryMcpHandler = withTelemetry((fetchReq) => withCompatRequest(fetchR
 // (Express branch below), so its caller is loopback-local; the authed
 // chain resolves the OAuth clientId (anonymous fallback never reaches a
 // tool — withMcpAuth 401s first).
-const scopedBareHandler = withFollowonScope(telemetryBareHandler, () => HEARTBEAT_CALLER_LOOPBACK)
+// Live activity ring (project-s1rf.1.1.2): withActivity sits INSIDE the
+// follow-on scope so each event carries the canonical scoped tool/caller
+// key, reusing the task-ksmy1 session/caller identity with no new model.
+// Observational only — it clones the response, never alters it.
+const scopedBareHandler = withFollowonScope(withActivity(telemetryBareHandler), () => HEARTBEAT_CALLER_LOOPBACK)
 const scopedAuthedHandler = withFollowonScope(
-  telemetryMcpHandler,
+  withActivity(telemetryMcpHandler),
   (bearer) => (bearer ? (lookupAccess(bearer)?.clientId ?? HEARTBEAT_CALLER_ANONYMOUS) : HEARTBEAT_CALLER_ANONYMOUS),
 )
 
