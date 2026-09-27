@@ -276,61 +276,105 @@ function renderLivePage(autoFollow: boolean, viewFrameJson: string): string {
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Beads Bridge — Live MCP Activity</title>
 <style>
-:root { color-scheme: light dark; --edge: #8884; }
+:root {
+  color-scheme: light dark;
+  /* Light palette (default). Dark scheme overrides below via prefers-color-scheme. */
+  --bg: #f7f5f1;
+  --surface: #fffdf9;
+  --ink: #211e19;
+  --muted: #6b6459;
+  --edge: #d8d2c7;
+  --accent: #0b5bd3;
+  --accent-ink: #ffffff;
+  --ok: #1e7e34;
+  --ok-soft: #ddefe0;
+  --err: #b3261e;
+  --err-soft: #f9dedc;
+  --chip-bg: #e9e4d9;
+  --pre-bg: #efece4;
+  --scrim: rgba(20, 16, 10, .45);
+  --shadow: rgba(30, 25, 15, .25);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14120e;
+    --surface: #1e1b16;
+    --ink: #ece6d9;
+    --muted: #a89e8d;
+    --edge: #3d382e;
+    --accent: #7aa7ff;
+    --accent-ink: #0d1526;
+    --ok: #6fcf8b;
+    --ok-soft: #1d3a28;
+    --err: #ff8a80;
+    --err-soft: #4a2320;
+    --chip-bg: #2c2820;
+    --pre-bg: #24211b;
+    --scrim: rgba(0, 0, 0, .6);
+    --shadow: rgba(0, 0, 0, .55);
+  }
+}
 * { box-sizing: border-box; }
 html, body { max-width: 100%; overflow-x: hidden; }
-body { font-family: -apple-system, system-ui, sans-serif; margin: 0; }
-header { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--edge); background: Canvas; }
+body { font-family: -apple-system, system-ui, sans-serif; margin: 0; background: var(--bg); color: var(--ink); }
+header { position: sticky; top: 0; z-index: 20; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--edge); background: var(--surface); }
 header h1 { font-size: 15px; margin: 0; }
-#dot { width: 10px; height: 10px; border-radius: 50%; background: #c33; flex: 0 0 auto; }
-#dot.on { background: #3a3; }
-button.ctl { padding: 5px 11px; min-height: 32px; border-radius: 8px; border: 1px solid var(--edge); background: none; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+#dot { width: 10px; height: 10px; border-radius: 50%; background: var(--err); flex: 0 0 auto; }
+#dot.on { background: var(--ok); }
+/* Inline-SVG icon set: stroke inherits the control color, sized in em so it
+   scales with text and never needs a font download. Decorative instances are
+   marked aria-hidden in the markup. */
+.icon { width: 1.15em; height: 1.15em; flex: 0 0 auto; vertical-align: -0.22em; }
+.st { width: 1em; height: 1em; flex: 0 0 auto; vertical-align: -0.15em; }
+button.ctl { display: inline-flex; align-items: center; gap: .45em; padding: 5px 11px; min-height: 32px; border-radius: 8px; border: 1px solid var(--edge); background: var(--surface); color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+button.ctl.icon-only { padding: 5px 8px; }
+.follow { display: inline-flex; align-items: center; gap: .35em; font-size: 13px; color: var(--muted); }
 #count { font-size: 12px; opacity: .7; margin-left: auto; }
 main { display: block; }
 /* Mobile-first: the live content IS the document body; navigation is a drawer. */
-#panel { position: fixed; top: 0; bottom: 0; left: 0; z-index: 30; width: min(88vw, 360px); max-width: 100%; padding: 8px; padding-top: calc(8px + env(safe-area-inset-top)); padding-bottom: calc(8px + env(safe-area-inset-bottom)); overflow-y: auto; overflow-x: hidden; background: Canvas; border-right: 1px solid var(--edge); box-shadow: 0 0 24px #0004; transform: translateX(-105%); transition: transform .2s ease; }
+#panel { position: fixed; top: 0; bottom: 0; left: 0; z-index: 30; width: min(88vw, 360px); max-width: 100%; padding: 8px; padding-top: calc(8px + env(safe-area-inset-top)); padding-bottom: calc(8px + env(safe-area-inset-bottom)); overflow-y: auto; overflow-x: hidden; background: var(--surface); color: var(--ink); border-right: 1px solid var(--edge); box-shadow: 0 0 24px var(--shadow); transform: translateX(-105%); transition: transform .2s ease; }
 body.drawer-open #panel { transform: none; }
 body:not(.drawer-open) #panel { pointer-events: none; }
-#scrim { position: fixed; inset: 0; z-index: 25; background: #0007; opacity: 0; pointer-events: none; transition: opacity .2s ease; }
+#scrim { position: fixed; inset: 0; z-index: 25; background: var(--scrim); opacity: 0; pointer-events: none; transition: opacity .2s ease; }
 body.drawer-open #scrim { opacity: 1; pointer-events: auto; }
 .panelhead { display: flex; align-items: center; justify-content: space-between; padding: 2px 2px 8px; font-size: 13px; opacity: .8; }
 #detail { padding: 12px 14px calc(28px + env(safe-area-inset-bottom)); overflow-x: hidden; }
-.card { border: 1px solid var(--edge); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; cursor: pointer; }
-.card.sel { border-color: #06c; border-width: 2px; }
+.card { border: 1px solid var(--edge); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; cursor: pointer; background: var(--surface); }
+.card.sel { border-color: var(--accent); border-width: 2px; }
 .card .row1 { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
-.card .tool { font-weight: 700; overflow-wrap: anywhere; }
-.chip { font-size: 11px; padding: 1px 7px; border-radius: 10px; background: #8883; }
-.chip.ok { background: #3a32; } .chip.error { background: #c332; }
+.card .tool { font-weight: 700; overflow-wrap: anywhere; display: inline-flex; align-items: center; gap: .35em; }
+.chip { display: inline-flex; align-items: center; gap: .3em; font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--chip-bg); color: var(--ink); }
+.chip.ok { background: var(--ok-soft); color: var(--ok); } .chip.error { background: var(--err-soft); color: var(--err); }
 .card .meta { font-size: 12px; opacity: .75; margin-top: 2px; overflow-wrap: anywhere; }
 .card .sum { font-size: 13px; margin-top: 4px; overflow-wrap: anywhere; }
 .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; max-width: 100%; }
-.tabs button { padding: 4px 10px; border-radius: 12px; border: 1px solid #8886; background: none; color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
-.tabs button.on { background: #06c; color: #fff; border-color: #06c; }
+.tabs button { padding: 4px 10px; border-radius: 12px; border: 1px solid var(--edge); background: var(--surface); color: inherit; font: inherit; font-size: 12px; cursor: pointer; }
+.tabs button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 h2 { font-size: 17px; overflow-wrap: anywhere; }
 .meta { overflow-wrap: anywhere; }
 /* Anything wide scrolls inside its own box; the page body never goes sideways. */
-pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; background: #8881; padding: 10px; border-radius: 8px; max-width: 100%; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; background: var(--pre-bg); color: var(--ink); padding: 10px; border-radius: 8px; max-width: 100%; }
 @media (min-width: 900px) {
   #menu, #scrim, .panelhead { display: none; }
   main { display: flex; height: calc(100vh - 53px); }
-  #panel { position: static; transform: none; pointer-events: auto; width: 42%; min-width: 320px; max-width: 46%; padding: 8px; border-right: 1px solid var(--edge); box-shadow: none; overflow-y: auto; overflow-x: hidden; }
+  #panel { position: static; transform: none; pointer-events: auto; width: 42%; min-width: 320px; max-width: 46%; padding: 8px; border-right: 1px solid var(--edge); box-shadow: none; overflow-y: auto; overflow-x: hidden; background: var(--surface); }
   #detail { flex: 1; overflow-y: auto; }
 }
 </style>
 </head>
 <body>
 <header>
-<button class="ctl" id="menu" aria-controls="panel" aria-expanded="false" aria-label="Show activity navigation">☰</button>
+<button class="ctl icon-only" id="menu" aria-controls="panel" aria-expanded="false" aria-label="Show activity navigation"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12"/></svg></button>
 <span id="dot"></span>
 <h1>Live MCP Activity</h1>
-<label><input type="checkbox" id="follow"> auto-follow</label>
-<button class="ctl" id="pause">Pause</button>
+<label class="follow"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><circle cx="8" cy="8" r="1.2" fill="currentColor" stroke="none"/><path d="M8 1.5v2.4M8 12.1v2.4M1.5 8h2.4M12.1 8h2.4" stroke-linecap="round"/></svg><input type="checkbox" id="follow"> auto-follow</label>
+<button class="ctl" id="pause"><svg class="icon" id="iconPause" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5.5 3v10M10.5 3v10"/></svg><svg class="icon" id="iconPlay" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" style="display:none"><path d="M5 3.2l7.5 4.8L5 12.8z" stroke-linejoin="round"/></svg><span id="pauseLabel">Pause</span></button>
 <span id="count"></span>
 </header>
 <main>
 <div id="scrim"></div>
 <nav id="panel" aria-label="Activity navigation">
-<div class="panelhead"><span>Activity</span><button class="ctl" id="closeNav" aria-label="Hide activity navigation">Close</button></div>
+<div class="panelhead"><span>Activity</span><button class="ctl" id="closeNav" aria-label="Hide activity navigation"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg><span>Close</span></button></div>
 <div id="left"><p>No events yet.</p></div>
 </nav>
 <section id="detail"><div id="right"><p>Waiting for MCP activity… trigger any tool call and it appears here.</p></div></section>
@@ -346,6 +390,9 @@ var rightEl = document.getElementById('right');
 var dotEl = document.getElementById('dot');
 var followEl = document.getElementById('follow');
 var pauseEl = document.getElementById('pause');
+var pauseLabelEl = document.getElementById('pauseLabel');
+var iconPauseEl = document.getElementById('iconPause');
+var iconPlayEl = document.getElementById('iconPlay');
 var countEl = document.getElementById('count');
 var menuEl = document.getElementById('menu');
 var scrimEl = document.getElementById('scrim');
@@ -389,13 +436,19 @@ function ingest(ev) {
   }
   return true;
 }
+function stIcon(outcome) {
+  var open = '<svg class="st" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
+  if (outcome === 'ok') return open + '<circle cx="8" cy="8" r="6.2"/><path d="M5.4 8.2l1.9 1.9 3.3-3.8"/></svg>';
+  if (outcome === 'error') return open + '<circle cx="8" cy="8" r="6.2"/><path d="M6 6l4 4M10 6l-4 4"/></svg>';
+  return open + '<circle cx="8" cy="8" r="6.2"/><path d="M8 4.8V8l2.2 1.4"/></svg>';
+}
 function render() {
   var h = '';
   for (var i = 0; i < state.events.length; i++) {
     var e = state.events[i];
     var cls = e.seq === state.selected ? 'card sel' : 'card';
     h += '<div class="' + cls + '" data-seq="' + e.seq + '">'
-      + '<div class="row1"><span class="tool">' + esc(e.tool) + '</span>'
+      + '<div class="row1"><span class="tool">' + stIcon(e.outcome) + esc(e.tool) + '</span>'
       + '<span class="chip ' + esc(e.outcome) + '">' + esc(e.outcome) + '</span>'
       + '<span class="meta">' + tstr(e.at) + ' · ' + e.durationMs + 'ms</span></div>'
       + '<div class="meta">' + esc(e.caller) + ' · ' + esc(e.client) + (e.sessionId ? ' · ' + esc(e.sessionId.slice(0, 8)) : '')
@@ -480,7 +533,9 @@ function setLive(on) { if (on) dotEl.className = 'on'; else dotEl.className = ''
 followEl.addEventListener('change', function () { state.autoFollow = followEl.checked; });
 pauseEl.addEventListener('click', function () {
   state.paused = !state.paused;
-  pauseEl.textContent = state.paused ? 'Resume' : 'Pause';
+  if (pauseLabelEl) pauseLabelEl.textContent = state.paused ? 'Resume' : 'Pause';
+  if (iconPauseEl) iconPauseEl.style.display = state.paused ? 'none' : '';
+  if (iconPlayEl) iconPlayEl.style.display = state.paused ? '' : 'none';
 });
 menuEl.addEventListener('click', function () { setDrawer(!drawerOpen(), true); });
 closeNavEl.addEventListener('click', function () { setDrawer(false, true); });

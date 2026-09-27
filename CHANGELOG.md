@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Live page visual design (task-xpsoy, supersedes task-u9aal): the `/live`
+  page gets a real token palette (`:root` custom properties, light default
+  + `prefers-color-scheme: dark` override, `color-scheme: light dark`
+  retained) replacing every scattered literal, and an inline-SVG icon set
+  (menu / auto-follow / pause-play / close / per-row status glyphs, `em`
+  sized, decorative instances `aria-hidden`, controls keep their accessible
+  names). Still fully self-contained inline CSS+JS, mobile-first with no
+  sideways scroll, every `/live` route still GET-only, drawer contract and
+  `event: view` sync untouched. See docs/live-activity.md "Visual design".
+
 - Live MCP Activity UI is mobile-first with a multi-device-synced drawer
   (project-s1rf.1.1): below 900px the activity/navigation list is an off-canvas
   drawer and the live content is the ordinary document body (hamburger /
