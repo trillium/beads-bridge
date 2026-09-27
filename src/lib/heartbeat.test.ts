@@ -134,6 +134,13 @@ describe('cursor delta', () => {
     const out = renderHeartbeatBlock('c', { tracker: new RelayStatusTracker(), now: T0 })
     assert.match(out, new RegExp(HEARTBEAT_EMPTY_NOTICE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
   })
+  it('renders bridge activity, never a lifecycle-shaped state (inbox-1uxt)', () => {
+    const t = new RelayStatusTracker()
+    t.touch({ id: 'inbox-abc', kind: 'task', title: 'Closed outside the bridge', now: T0 })
+    const out = renderHeartbeatBlock('c', { tracker: t, now: T0 + 2000 })
+    assert.match(out, /- inbox-abc \[task\/touched\]/)
+    assert.doesNotMatch(out, /\[[^\]]*\/active\]/, '`active` beside a bead id reads as lifecycle OPEN')
+  })
 })
 
 describe('template rendering', () => {

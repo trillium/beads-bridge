@@ -34,7 +34,7 @@
 // BOUNDS: at most HEARTBEAT_MAX_ITEMS rows, HEARTBEAT_MAX_CHARS chars.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { relayStatus, type RelayStatusTracker } from './relay-status'
+import { activityStateLabel, relayStatus, type RelayStatusTracker } from './relay-status'
 
 export const HEARTBEAT_MAX_ITEMS = 5
 export const HEARTBEAT_MAX_CHARS = 600
@@ -134,7 +134,9 @@ export function peekHeartbeatBlock(
   const mode = cursor == null ? 'baseline' : 'delta'
   const build = (shownCount: number): string => {
     const shown = delta.slice(0, shownCount)
-    const lines = shown.map((r) => `- ${r.item.id} [${r.item.kind}/${r.state}] ${r.item.title}`)
+    // Same bridge-activity vocabulary as the relay-status footer: this
+    // projection's state is never bead lifecycle (see activityStateLabel).
+    const lines = shown.map((r) => `- ${r.item.id} [${r.item.kind}/${activityStateLabel(r.state)}] ${r.item.title}`)
     if (delta.length > shown.length) lines.push(`- … +${delta.length - shown.length} more`)
     return renderHeartbeatTemplate(tpl, { mode, count: delta.length, items: lines.join('\n') }).replace(/\s+$/, '')
   }
