@@ -14,17 +14,40 @@ or the minimal acknowledgement **Feeds current.** when nothing changed.
 The block is capped at 600 chars. The `staleness:` triple stays the last
 footer line; heartbeat lines sit between the relay-status block and it.
 
-## Cursor rule
+## Cursor rule (acknowledge-on-read, task-36na1)
 
 - Key: OAuth `clientId` when the call bears an OAuth token,
   `loopback-local` for loopback service-bearer calls, `anonymous` else.
+  Every caller arriving via the MCPJungle gateway shares the single
+  `loopback-local` key (the gateway fans in with one bearer) — distinct
+  humans behind the gateway are NOT isolated from each other. Fixing that
+  needs gateway-forwarded client identity, which the bridge never receives.
 - Delta: tracker items with `lastTouchedAt` strictly after the caller's
   cursor. First-ever query (no cursor) returns the current projection as
   mode `baseline`; later queries are mode `delta`.
-- The cursor advances to composition start on every footer and every
-  `heartbeat` / `relay_status` read (at-least-once: a concurrently
-  touched item may repeat next time, never silently skipped).
-- Concurrent callers hold independent cursors.
+- The cursor advances ONLY on calls whose response shows the caller the
+  state: the explicit `heartbeat` tool (the delta) and `relay_status`
+  (the full projection). Automatic footers PEEK — they project the
+  pending delta without advancing — so an intervening call can report an
+  async event but never silently consume it (before task-36na1 every
+  footered response consumed the delta: one-shot semantics, and a footer
+  nobody read still ate the event). Trade-off: footers repeat the pending
+  delta (bounded, 600 chars) until the caller explicitly heartbeats.
+- The cursor advances to composition start on every acknowledging read
+  (at-least-once: a concurrently touched item may repeat next time, never
+  silently skipped).
+- Concurrent callers hold independent cursors (per OAuth clientId).
+
+## Coverage boundary
+
+The projection only ever contains bridge-mediated touches. Out-of-band
+store writes (direct `bd` CLI, REST mutations that bypass the tracker)
+never enter it, so heartbeat structurally cannot report them — on
+2026-09-27 an inbox bead closed via `bd` was correctly absent from the
+next heartbeat while `retrieval_activity` (live store reads) showed it.
+`retrieval_activity` is the authoritative cross-check for external
+changes. Cursors and the projection are in-memory: a bridge restart
+resets every caller to baseline.
 
 ## Loop prevention
 
