@@ -38,6 +38,27 @@ viewport — `html, body { overflow-x: hidden }` and long content wraps
 (`pre { white-space: pre-wrap; overflow-wrap: anywhere }`) — so the page body
 never scrolls sideways in portrait.
 
+## Visual design (task-xpsoy): token palette + inline icon set
+
+The page carries its own tiny design system, still fully inline
+(no stylesheet, font, CDN, or icon download — served over Tailscale):
+
+- **Palette.** CSS custom properties on `:root` (light default) with a
+  `@media (prefers-color-scheme: dark)` override, so the OS scheme picks
+  the theme; `color-scheme: light dark` stays declared. Tokens: `bg`,
+  `surface`, `ink`, `muted`, `edge`, `accent`/`accent-ink`, `ok`/`ok-soft`,
+  `err`/`err-soft`, `chip-bg`, `pre-bg`, `scrim`, `shadow`. No scattered
+  hex literals remain.
+- **Icons.** Inline SVG only (`stroke="currentColor"`, sized in `em`,
+  decorative instances `aria-hidden`): hamburger (menu), crosshair
+  (auto-follow), pause/play (swap on toggle), X (close), plus a per-row
+  status glyph (check / x / clock by outcome). Every control keeps its
+  accessible name (`Show/Hide activity navigation` labels, `Close` and
+  `Pause/Resume` text).
+- **Invariants unchanged.** 900px drawer breakpoint, `nav#panel`,
+  `aria-controls="panel"`, scrim, Escape/Close/scrim dismissal, named
+  `event: view` sync, GET-only `/live` surface.
+
 ## Shared view state (`event: view` frames, `GET /live/view`)
 
 One **shared** view per bridge instance: which activity the sidecar points at

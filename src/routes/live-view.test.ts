@@ -229,6 +229,47 @@ describe('/live view state over HTTP', () => {
     })
   })
 
+  it('serves the design system: token palette, both schemes, inline icons', async () => {
+    await withApp(async (base) => {
+      const res = await fetch(`${base}/live`)
+      assert.equal(res.status, 200)
+      const html = await res.text()
+      // Token palette on :root, OS-driven scheme, both palettes deliberate.
+      for (const needle of [
+        ':root',
+        'color-scheme: light dark',
+        'prefers-color-scheme: dark',
+        '--bg',
+        '--surface',
+        '--ink',
+        '--accent',
+        '--ok-soft',
+        '--err-soft',
+      ]) {
+        assert.ok(html.includes(needle), `page is missing palette token ${needle}`)
+      }
+      // Inline-SVG icon set, decorative instances hidden, controls still named.
+      for (const needle of [
+        '<svg',
+        'aria-hidden="true"',
+        'aria-label="Show activity navigation"',
+        'aria-label="Hide activity navigation"',
+        'id="pauseLabel"',
+        'stIcon(e.outcome)',
+      ]) {
+        assert.ok(html.includes(needle), `page is missing icon contract ${needle}`)
+      }
+      // Scattered literals and the literal hamburger are gone (tokens only).
+      for (const banned of ['☰', '#06c', '#c33', 'background: Canvas', 'background: none', 'color: #fff']) {
+        assert.ok(!html.includes(banned), `page still contains design literal ${banned}`)
+      }
+      // Self-contained: no external stylesheet, font, or icon download.
+      for (const banned of ['<link rel="stylesheet"', '@import', 'fonts.googleapis', 'font-awesome', 'cdn.']) {
+        assert.ok(!html.includes(banned), `page must stay self-contained, found ${banned}`)
+      }
+    })
+  })
+
   it('serves the page with the responsive drawer contract baked in', async () => {
     setView({ drawer: 'open' }, 'test')
     await withApp(async (base) => {
