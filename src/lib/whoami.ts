@@ -50,8 +50,8 @@ export interface WhoamiInfo {
   // Durable personality document (task-xqj24): the complete operator-
   // controlled bootstrap record. Rendered in full — this is the point.
   personalityDoc?: string
-  // Bounded scratchpad tail (attached only for authenticated callers —
-  // never populated on the unauthenticated path, so no new leak surface).
+  // Bounded scratchpad tail (attached only for OAuth-identity callers —
+  // never populated on the loopback service path, so no new leak surface).
   recentNotes?: WhoamiNote[]
   scratchTotal?: number
 }
@@ -198,7 +198,11 @@ export function formatWhoami(info: WhoamiInfo): string {
         (info.auth.audience ? `, audience ${info.auth.audience}` : ''),
     )
   } else {
-    lines.push(`you are: unauthenticated (auth is required, so you should not see this)`)
+    // No OAuth identity: reachable only via the verified loopback-service
+    // branch (gateway path), where the service key was already checked
+    // against the socket — authorized, but with no OAuth client to name.
+    // Scratchpad notes stay withheld on this branch (see the caller).
+    lines.push(`you are: loopback service caller (no OAuth identity; authorized by service key on direct loopback)`)
   }
   const op = info.operator ?? {}
   const opBits = [`name: ${op.name ?? '(unset)'}`, `role: ${op.role ?? '(unset)'}` +
