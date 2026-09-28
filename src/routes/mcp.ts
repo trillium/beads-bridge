@@ -45,6 +45,7 @@ import { formatRelayStatus, relayStatus } from '../lib/relay-status'
 import { currentScope, registerFollowon, withFollowonScope, withResponseFooter } from '../lib/followons'
 import { currentRequestCaller, withProvenance } from '../lib/provenance'
 import { HEARTBEAT_CALLER_ANONYMOUS, HEARTBEAT_CALLER_LOOPBACK, HEARTBEAT_EXCLUDED_TOOLS, advanceHeartbeatCursor, peekHeartbeatBlock, renderHeartbeatBlock } from '../lib/heartbeat'
+import { recordLatestHeartbeat } from '../lib/heartbeat-latest'
 import { relayCatchup } from '../lib/catchup'
 import { attentionNext } from '../lib/attention'
 import { inspectRead, inspectReadMany, inspectSearch, inspectTree } from '../lib/inspect'
@@ -89,7 +90,17 @@ registerFollowon({
   name: 'heartbeat',
   priority: 100,
   excludeTools: HEARTBEAT_EXCLUDED_TOOLS,
-  run: (ctx) => peekHeartbeatBlock(ctx.caller, { now: ctx.at }),
+  run: (ctx) => {
+    const text = peekHeartbeatBlock(ctx.caller, { now: ctx.at })
+    // Feed the persistent /live heartbeat surface (observational only:
+    // recording never throws and never alters the response).
+    try {
+      recordLatestHeartbeat({ caller: ctx.caller, origin: 'footer', text, now: ctx.at })
+    } catch {
+      /* observation never fails a response */
+    }
+    return text
+  },
 })
 
 // Canonical store for a bead id, with loud ambiguity: an id prefix that
@@ -1296,7 +1307,15 @@ const mcpHandler = createMcpHandler((server) => {
     },
     async (_args: Record<string, never>) => {
       const caller = currentScope()?.caller ?? HEARTBEAT_CALLER_ANONYMOUS
-      return ok(renderHeartbeatBlock(caller), true)
+      const text = renderHeartbeatBlock(caller)
+      // Feed the persistent /live heartbeat surface (observational only:
+      // recording never throws and never alters the response).
+      try {
+        recordLatestHeartbeat({ caller, origin: 'heartbeat', text })
+      } catch {
+        /* observation never fails a response */
+      }
+      return ok(text, true)
     },
   )
 })

@@ -16,6 +16,12 @@ import {
   subscribeActivity,
 } from '../lib/activity'
 import { currentViewFrame, sseViewFrame } from '../lib/view-state'
+import {
+  HEARTBEAT_STALE_AFTER_MS,
+  currentHeartbeatFrame,
+  latestHeartbeat,
+  sseHeartbeatFrame,
+} from '../lib/heartbeat-latest'
 import { withDebug, failureDebug } from './debug-state'
 import { discoverScopeLabels } from './query/scope'
 import { mapLimit } from '../lib/exec'
@@ -196,6 +202,21 @@ liveRouter.get('/live/view', (_req: Request, res: Response) => {
   }
 })
 
+/**
+ * Latest observed heartbeat (read-only; null before any heartbeat observed).
+ * The persistent status surface: the most recently composed heartbeat block
+ * (footer peek or explicit `heartbeat` tool read), with its composition time
+ * and caller, so the page can show it in place instead of only transiently
+ * beside individual activity. Observational, bounded (cap 1), GET-only.
+ */
+liveRouter.get('/live/heartbeat', (_req: Request, res: Response) => {
+  try {
+    res.json({ heartbeat: latestHeartbeat(), staleAfterMs: HEARTBEAT_STALE_AFTER_MS })
+  } catch {
+    res.status(500).json({ error: 'heartbeat unavailable' })
+  }
+})
+
 /** Newest-first JSON snapshot of the ring. */
 liveRouter.get('/live/recent', (req: Request, res: Response) => {
   try {
@@ -241,6 +262,15 @@ liveRouter.get('/live/events', (req: Request, res: Response) => {
     // Current shared view state, so a connecting or reconnecting viewer lands
     // on it instead of holding a stale local guess.
     res.write(sseViewFrame(currentViewFrame()))
+    // Latest heartbeat when one has been observed, so a connecting or
+    // reconnecting viewer lands on the persistent status surface too.
+    // (Absent before any heartbeat: the page then shows its placeholder.)
+    try {
+      const hb = currentHeartbeatFrame()
+      if (hb) res.write(sseHeartbeatFrame(hb))
+    } catch {
+      /* replay degrades, the stream stays up */
+    }
     const ping = setInterval(() => {
       if (!open) return
       try {
@@ -267,7 +297,12 @@ liveRouter.get('/live/events', (req: Request, res: Response) => {
   }
 })
 
-function renderLivePage(autoFollow: boolean, viewFrameJson: string): string {
+function renderLivePage(
+  autoFollow: boolean,
+  viewFrameJson: string,
+  heartbeatJson: string,
+  staleAfterMs: number,
+): string {
   const auto = autoFollow ? 'true' : 'false'
   return `<!doctype html>
 <html lang="en">
@@ -330,6 +365,16 @@ button.ctl { display: inline-flex; align-items: center; gap: .45em; padding: 5px
 button.ctl.icon-only { padding: 5px 8px; }
 .follow { display: inline-flex; align-items: center; gap: .35em; font-size: 13px; color: var(--muted); }
 #count { font-size: 12px; opacity: .7; margin-left: auto; }
+/* Persistent heartbeat surface: always-visible latest bridge/agent status,
+   updated in place — never pushed out by activity elsewhere in the UI. */
+#heartbeat { display: flex; gap: 10px; align-items: flex-start; padding: 8px 12px; border-bottom: 1px solid var(--edge); background: var(--surface); font-size: 13px; }
+#hbDot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); margin-top: 3px; flex: 0 0 auto; }
+#hbDot.fresh { background: var(--ok); }
+#hbDot.stale { background: var(--err); }
+#hbBody { flex: 1; min-width: 0; }
+#hbBody .hbline { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+#hbBody .hbage { font-weight: 700; }
+#hbBody pre { margin: 6px 0 0; max-height: 120px; overflow-y: auto; }
 main { display: block; }
 /* Mobile-first: the live content IS the document body; navigation is a drawer. */
 #panel { position: fixed; top: 0; bottom: 0; left: 0; z-index: 30; width: min(88vw, 360px); max-width: 100%; padding: 8px; padding-top: calc(8px + env(safe-area-inset-top)); padding-bottom: calc(8px + env(safe-area-inset-bottom)); overflow-y: auto; overflow-x: hidden; background: var(--surface); color: var(--ink); border-right: 1px solid var(--edge); box-shadow: 0 0 24px var(--shadow); transform: translateX(-105%); transition: transform .2s ease; }
@@ -371,6 +416,10 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; backgro
 <button class="ctl" id="pause"><svg class="icon" id="iconPause" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M5.5 3v10M10.5 3v10"/></svg><svg class="icon" id="iconPlay" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" style="display:none"><path d="M5 3.2l7.5 4.8L5 12.8z" stroke-linejoin="round"/></svg><span id="pauseLabel">Pause</span></button>
 <span id="count"></span>
 </header>
+<section id="heartbeat" aria-label="Latest heartbeat" aria-live="polite">
+<span id="hbDot"></span>
+<div id="hbBody"><p>Waiting for a heartbeat… trigger any tool call and the latest bridge status lands here.</p></div>
+</section>
 <main>
 <div id="scrim"></div>
 <nav id="panel" aria-label="Activity navigation">
@@ -384,7 +433,13 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; backgro
 // drawer + selected-activity state for every viewer of this session, sent as
 // named 'event: view' SSE frames and replayed on connect.
 var sharedView = VIEW_JSON;
-var state = { events: [], bySeq: {}, selected: null, autoFollow: AUTO_TOKEN, paused: false, cache: {}, viewRevision: 0, drawerLocal: false };
+// Latest observed heartbeat, baked at load (null before any heartbeat).
+// Updated in place by GET /live/heartbeat + named SSE 'event: heartbeat'
+// frames — never appended as another transient card, never pushed out by
+// activity. Frames carry a monotonic rev; last-write-wins.
+var sharedHeartbeat = HB_JSON;
+var heartbeatStaleAfterMs = STALE_TOKEN;
+var state = { events: [], bySeq: {}, selected: null, autoFollow: AUTO_TOKEN, paused: false, cache: {}, viewRevision: 0, drawerLocal: false, heartbeat: null, heartbeatRev: 0 };
 var leftEl = document.getElementById('left');
 var rightEl = document.getElementById('right');
 var dotEl = document.getElementById('dot');
@@ -394,6 +449,8 @@ var pauseLabelEl = document.getElementById('pauseLabel');
 var iconPauseEl = document.getElementById('iconPause');
 var iconPlayEl = document.getElementById('iconPlay');
 var countEl = document.getElementById('count');
+var hbDotEl = document.getElementById('hbDot');
+var hbBodyEl = document.getElementById('hbBody');
 var menuEl = document.getElementById('menu');
 var scrimEl = document.getElementById('scrim');
 var closeNavEl = document.getElementById('closeNav');
@@ -421,6 +478,47 @@ function applyView(frame) {
 }
 function refreshView() {
   fetch('/live/view').then(function (r) { return r.json(); }).then(applyView).catch(function () {});
+}
+// ---- persistent heartbeat --------------------------------------------------
+// One always-visible status surface: the most recently composed heartbeat
+// block, refreshed in place. Age ticks locally so a stale heartbeat reads
+// as stale rather than as current.
+function ageStr(ms) {
+  if (!isFinite(ms) || ms < 0) ms = 0;
+  var s = Math.floor(ms / 1000);
+  if (s < 60) return s + 's ago';
+  var m = Math.floor(s / 60);
+  if (m < 60) return m + 'm ' + (s % 60) + 's ago';
+  return Math.floor(m / 60) + 'h ' + (m % 60) + 'm ago';
+}
+function renderHeartbeat() {
+  if (!hbDotEl || !hbBodyEl) return;
+  var hb = state.heartbeat;
+  if (!hb) {
+    hbDotEl.className = '';
+    hbBodyEl.innerHTML = '<p>Waiting for a heartbeat… trigger any tool call and the latest bridge status lands here.</p>';
+    return;
+  }
+  var age = Date.now() - hb.atMs;
+  var stale = age > heartbeatStaleAfterMs;
+  hbDotEl.className = stale ? 'stale' : 'fresh';
+  hbBodyEl.innerHTML = '<div class="hbline"><span class="hbage">heartbeat ' + esc(ageStr(age)) + '</span>'
+    + (stale ? '<span class="chip error">stale</span>' : '<span class="chip ok">live</span>')
+    + '<span class="meta">' + esc(hb.caller) + ' · via ' + esc(hb.origin) + ' · ' + esc(hb.at) + '</span></div>'
+    + '<pre>' + esc(hb.text || '(empty heartbeat)') + '</pre>';
+}
+// Apply one heartbeat frame; a lower-or-equal rev is a stale frame and is ignored.
+function applyHeartbeat(frame) {
+  if (!frame || typeof frame.rev !== 'number' || frame.rev <= state.heartbeatRev) return;
+  state.heartbeatRev = frame.rev;
+  state.heartbeat = frame;
+  renderHeartbeat();
+}
+function refreshHeartbeat() {
+  fetch('/live/heartbeat').then(function (r) { return r.json(); }).then(function (d) {
+    if (d && typeof d.staleAfterMs === 'number' && isFinite(d.staleAfterMs) && d.staleAfterMs > 0) heartbeatStaleAfterMs = d.staleAfterMs;
+    if (d) applyHeartbeat(d.heartbeat);
+  }).catch(function () {});
 }
 followEl.checked = state.autoFollow;
 function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -544,6 +642,9 @@ document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && dr
 // Baked state first (no flash on a phone), then the live read + stream.
 applyView(sharedView);
 refreshView();
+applyHeartbeat(sharedHeartbeat);
+refreshHeartbeat();
+setInterval(renderHeartbeat, 5000); // age ticker: stale reads as stale
 fetch('/live/config').then(function (r) { return r.json(); }).then(function (c) {
   if (c && typeof c.autoFollowDefault === 'boolean') { state.autoFollow = c.autoFollowDefault; followEl.checked = c.autoFollowDefault; }
 }).catch(function () {});
@@ -553,6 +654,7 @@ try {
   es.onopen = function () { setLive(true); };
   es.onmessage = function (m) { try { onEvent(JSON.parse(m.data)); setLive(true); } catch (e) {} };
   es.addEventListener('view', function (m) { try { applyView(JSON.parse(m.data)); } catch (e) {} });
+  es.addEventListener('heartbeat', function (m) { try { applyHeartbeat(JSON.parse(m.data)); } catch (e) {} });
   es.onerror = function () { setLive(false); startPoll(); };
 } catch (e) { startPoll(); }
 var polling = false;
@@ -562,6 +664,7 @@ function startPoll() {
   refreshView();
   setInterval(function () {
     refreshView();
+    refreshHeartbeat();
     fetch('/live/recent?limit=50').then(function (r) { return r.json(); }).then(function (d) {
       var arr = (d && d.events) || [];
       var changed = false;
@@ -580,7 +683,11 @@ function startPoll() {
     .split('AUTO_TOKEN')
     .join(auto)
     .split('VIEW_JSON')
-    .join(viewFrameJson);
+    .join(viewFrameJson)
+    .split('HB_JSON')
+    .join(heartbeatJson)
+    .split('STALE_TOKEN')
+    .join(String(staleAfterMs));
 }
 
 /** The responsive page: drawer on a phone, two panels on desktop. */
@@ -589,7 +696,10 @@ liveRouter.get('/live', (_req: Request, res: Response) => {
     // Escaped for an inline <script> block: JSON is valid JS, but a literal
     // `<` from a future origin value must not be able to close the tag.
     const frame = JSON.stringify(currentViewFrame()).replace(/</g, '\\u003c')
-    res.type('text/html').send(renderLivePage(activityAutoFollowDefault(), frame))
+    const hb = JSON.stringify(currentHeartbeatFrame()).replace(/</g, '\\u003c')
+    res
+      .type('text/html')
+      .send(renderLivePage(activityAutoFollowDefault(), frame, hb, HEARTBEAT_STALE_AFTER_MS))
   } catch {
     res.status(500).type('text/plain').send('live UI unavailable')
   }
