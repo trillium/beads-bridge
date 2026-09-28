@@ -103,6 +103,41 @@ the route exists, never touching beads or the ring. Today the client keeps
 local authority once the drawer is touched and adopts server state on load and
 reconnect, so a tap never fights a server frame.
 
+## Persistent heartbeat (`GET /live/heartbeat`, `event: heartbeat`)
+
+The footer delta each footered response carries is transient: once its
+activity scrolls or ages out of the ring, no always-visible indication of
+the latest heartbeat remains. The persistent surface fixes that: one
+in-memory snapshot (`src/lib/heartbeat-latest.ts`) holds the most recently
+composed heartbeat block and the page shows it in a region above the
+panels, updated in place — never appended as another card, never pushed
+out by activity.
+
+- **What "status" means.** WHEN the bridge last served a heartbeat
+  projection (composition time), to WHOM (caller key only — OAuth
+  clientId | `loopback-local` | `anonymous`, never a token), through
+  WHICH path (`footer`: the automatic peek on a footered response, or
+  `heartbeat`: an explicit `heartbeat` tool read), and the block TEXT
+  itself. `relay_status` reads advance the same cursor but return the
+  relay projection, not a heartbeat block, so they are not recorded.
+- **Age is honest.** The region ticks the snapshot age locally; past
+  `HEARTBEAT_STALE_AFTER_MS` (5 min, served as `staleAfterMs` so page and
+  server cannot drift) the region reads `stale`, never current.
+- **Transport.** Recorded at the composition call sites in
+  `src/routes/mcp.ts`, broadcast on the existing SSE fan-out as named
+  `event: heartbeat` frames (monotonic `rev`, last-write-wins), replayed
+  as `heartbeat:current` on every SSE (re)connect, readable any time at
+  `GET /live/heartbeat`, baked into `GET /live` at load. Activity frames
+  keep their unnamed shape; a page that does not know the event ignores
+  it. Sources are footer peeks + explicit `heartbeat` reads only.
+- **Bounds.** Cap 1: only the latest snapshot is retained, never a
+  history. Text re-sliced to `HEARTBEAT_MAX_CHARS`; caller is a sanitized
+  key (never arg values or tokens); SSE subscribers share the existing
+  cap. Recording never throws, so composing a response can never fail
+  because of display.
+- **Safety unchanged.** Observational only (memory, restart clears it),
+  GET-only, no bead mutation or work creation driven by display events.
+
 ## Safety model (inherited from the parent bead — do not weaken)
 
 - Observational only: no store reads, no writes, no agent requests.

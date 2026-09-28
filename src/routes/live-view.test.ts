@@ -13,6 +13,7 @@ import express from 'express'
 import { liveRouter } from './activity'
 import { recordEvent, resetActivity } from '../lib/activity'
 import { DEFAULT_DRAWER, resetViewState, setView, type SidecarViewFrame } from '../lib/view-state'
+import { resetLatestHeartbeat } from '../lib/heartbeat-latest'
 
 interface Viewer {
   views: SidecarViewFrame[]
@@ -123,6 +124,7 @@ describe('/live view state over HTTP', () => {
   beforeEach(() => {
     resetActivity()
     resetViewState()
+    resetLatestHeartbeat()
   })
 
   it('serves the current shared state read-only', async () => {
@@ -139,7 +141,7 @@ describe('/live view state over HTTP', () => {
 
   it('adds no write route: the whole /live surface stays GET-only', async () => {
     await withApp(async (base) => {
-      for (const path of ['/live', '/live/view', '/live/recent', '/live/config', '/live/events']) {
+      for (const path of ['/live', '/live/view', '/live/recent', '/live/config', '/live/events', '/live/heartbeat']) {
         const res = await fetch(`${base}${path}`, { method: 'POST' })
         assert.equal(res.status, 404, `POST ${path} should not exist`)
       }
