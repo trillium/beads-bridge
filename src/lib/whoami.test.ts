@@ -108,8 +108,27 @@ describe('formatWhoami', () => {
   })
   it('handles missing auth and operator', () => {
     const out = formatWhoami({ server: 'b', version: 'dev', base: 'https://x.example', stores: [] })
-    assert.ok(out.includes('unauthenticated'))
+    assert.ok(out.includes('loopback service caller'))
+    assert.ok(out.includes('no OAuth identity'))
+    assert.ok(!out.includes('unauthenticated'))
     assert.ok(out.includes('(unset)'))
+  })
+  it('names the loopback service path as authorized without an OAuth client', () => {
+    // No authInfo reaches formatWhoami only via the verified
+    // loopback-service branch (gateway path): the service key was already
+    // checked against the socket, so the caller is authorized — it just
+    // has no OAuth identity to name. The OAuth path is unchanged.
+    const service = formatWhoami({ server: 'b', version: 'dev', base: 'https://x.example', stores: [] })
+    assert.ok(service.includes('you are: loopback service caller (no OAuth identity; authorized by service key on direct loopback)'))
+    assert.ok(!service.includes('unauthenticated'))
+    const oauth = formatWhoami({
+      server: 'b',
+      version: 'dev',
+      base: 'https://x.example',
+      auth: { clientId: 'bbcid_x', scopes: ['mcp'] },
+      stores: [],
+    })
+    assert.ok(oauth.includes('you are: OAuth client bbcid_x'))
   })
 })
 
