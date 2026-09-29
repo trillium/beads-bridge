@@ -29,6 +29,7 @@ import { editBead } from '../lib/edit'
 import { formatWhoami, loadProfile, readWhoamiNotes, serverVersion, updateProfile } from '../lib/whoami'
 import { appendPersonality, editPersonalitySection, ensurePersonality, loadPersonality, savePersonality, PERSONALITY_MAX_CHARS } from '../lib/personality'
 import { backendCommit, BRIDGE_OP_NAMES, capabilitiesSince, capabilityStatus, formatBridgeInfo, isSemver, loadManifest, schemaHash, whoamiDescription } from '../lib/capabilities'
+import { findWildcard, formatWildcardDescribe, formatWildcardInvoke, formatWildcardList, formatWildcardSearch, formatWildcardUnknownDescribe, invokeWildcard, searchWildcards } from '../lib/wildcard'
 import { checkSurface, extractRecordedTriple, formatSurfaceCheck, latestFeedbackFilename, readFeedbackRecord } from '../lib/surface-compare'
 import { scratchAppend, scratchClear, scratchRead } from '../lib/scratchpad'
 import { pickStores, gatherCandidates, sampleIndices, formatPicks } from '../lib/random'
@@ -652,6 +653,50 @@ const mcpHandler = createMcpHandler((server) => {
         `# capabilities_since ${clean} — ${rows.length} newer`, ``,
         ...rows.map((e) => `- ${e.id} (${e.title}, op: ${e.op}) — since ${e.changed ?? e.introduced}`),
       ].join('\n'))
+    },
+  )
+
+  // Wildcard capability interface (inbox-hkfd): ONE stable outer tool whose
+  // schema never changes when sub-capabilities are added. Discovery
+  // (search/list/describe) advertises each capability's contract + its
+  // read/write effect BEFORE invocation; invoke dispatches by exact stable
+  // id with the payload validated against that capability's own contract.
+  // NOT an arbitrary-tool/code endpoint: the registry in lib/wildcard.ts
+  // is a static compiled-in allowlist of TypeScript handlers — no entry
+  // can name another MCP tool or caller-supplied code. Auth: this tool
+  // sits inside the same withMcpAuth(required: true) gate as every other
+  // tool (no new route, no gate change); handlers get the caller name for
+  // attribution only and cannot escalate it.
+  server.registerTool(
+    'capability',
+    {
+      title: 'Wildcard capability interface',
+      description: 'Stable escape hatch for backend abilities: search/list/describe the registered capability registry by intent, then invoke one by stable id with a structured payload. New capabilities appear here without a client tool-schema refresh. Each entry advertises read-only vs write effect before you invoke; writes return structured receipts.',
+      inputSchema: z.object({
+        action: z.enum(['search', 'list', 'describe', 'invoke']).describe('search: find capabilities by natural-language intent (needs query). list: every registered id with effect + version. describe: full contract for one id. invoke: run one id with payload.'),
+        query: z.string().max(500).optional().describe('search only: natural-language intent, e.g. "resolve resume manifest with provenance"'),
+        id: z.string().max(64).optional().describe('describe/invoke only: exact stable capability id from list/search'),
+        payload: z.record(z.string(), z.unknown()).optional().describe('invoke only: structured params for the selected capability (unknown params rejected)'),
+      }),
+    },
+    async ({ action, query, id, payload }: {
+      action: 'search' | 'list' | 'describe' | 'invoke'; query?: string; id?: string; payload?: Record<string, unknown>
+    }) => {
+      const caller = currentScope()?.caller ?? HEARTBEAT_CALLER_ANONYMOUS
+      if (action === 'list') return ok(formatWildcardList())
+      if (action === 'search') {
+        const q = query?.trim() ?? ''
+        if (!q) return err('capability search: empty query — say what you want to do, or action=list to browse')
+        return ok(formatWildcardSearch(q, searchWildcards(q)))
+      }
+      const clean = id?.trim() ?? ''
+      if (!clean) return err(`capability ${action}: empty id — action=list shows every registered id`)
+      if (action === 'describe') {
+        const def = findWildcard(clean)
+        return ok(def ? formatWildcardDescribe(def) : formatWildcardUnknownDescribe(clean))
+      }
+      const result = await invokeWildcard(clean, payload ?? {}, { caller })
+      return result.ok ? ok(formatWildcardInvoke(result, { caller })) : err(formatWildcardInvoke(result, { caller }))
     },
   )
 

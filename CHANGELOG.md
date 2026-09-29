@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.6.0
+
+- Wildcard capability interface (inbox-hkfd): one stable outer MCP tool
+  (`capability`) backed by a registry of named, contract-bearing
+  sub-capabilities (`src/lib/wildcard.ts`). Discovery via
+  search (natural-language intent) / list / describe, invocation via
+  invoke with the payload validated against the selected capability's own
+  contract (strict: unknown params rejected, payload size bounded).
+  Every entry advertises its read/write effect before invocation; writes
+  return structured receipts and fail loudly without one; unknown ids
+  fail with suggestions instead of guessing. NOT an arbitrary-tool or
+  arbitrary-code endpoint: the registry is a static compiled-in allowlist
+  of TypeScript handlers behind the existing withMcpAuth + access-gate
+  boundary — no new route, no gate change. Ships with two demonstration
+  capabilities (`echo_probe` read, `write_probe` write via namespaced
+  scratchpad append); the resume resolver is the intended first real
+  capability and waits on the resume-resolved-provenance investigation.
+  Manifest v5.
+
 ## Unreleased
 
 - Live page visual design (task-xpsoy, supersedes task-u9aal): the `/live`
