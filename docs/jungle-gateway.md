@@ -37,7 +37,7 @@ Server names may not contain `__` or end with `_`. Bridge tools arrive as
 
 History: the S2 wiring stored a bridge OAuth **access token**
 (`bb_at_…`, client `mcpjungle-gateway`) as the static bearer. Access
-tokens live 24h (`ACCESS_TTL_MS` in `src/lib/oauth.ts`) and the gateway
+tokens lived 24h at the time (then `ACCESS_TTL_MS` in `src/lib/oauth.ts`; granted tokens are now never-expiring until revoked) and the gateway
 holds no refresh logic, so the bearer expired silently and the gateway's
 `/mcp` calls 401'd from 2026-09-18T08:05Z while direct ChatGPT stayed
 200 (bridge log: `ALLOW:mcp 401 POST /mcp … ua=Go-http-client/1.1`).
