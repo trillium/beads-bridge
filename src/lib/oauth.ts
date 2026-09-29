@@ -14,9 +14,28 @@ import { tmpdir } from 'os'
 
 export const SUPPORTED_SCOPES = ['mcp']
 export const CODE_TTL_MS = 10 * 60 * 1000
-export const ACCESS_TTL_MS = 24 * 3600 * 1000
-export const REFRESH_TTL_MS = 30 * 24 * 3600 * 1000
 export const TX_TTL_MS = 15 * 60 * 1000
+// Granted credentials live until revoked (deleting the store file revokes).
+// expiresAt === NEVER_EXPIRES (0) means "never expires". 0 is the sentinel
+// because it JSON round-trips exactly (JSON.stringify(Infinity) becomes
+// null, which would compare as garbage against Date.now()) and can never
+// be confused with a real issuance timestamp. tokenLive() below is the ONE
+// place that interprets it — every reader must go through it so the
+// meaning cannot drift.
+export const NEVER_EXPIRES = 0
+// Wire compat: some OAuth clients require expires_in on the token response.
+// It no longer describes a server-enforced death (there is none) — a client
+// that sees a value may proactively refresh, which is harmless because
+// rotation still works. Ten years: far enough to mean "don't bother",
+// finite so it JSON-encodes exactly. Omitting the field would be the
+// purer "does not expire" signal, but strict clients error on a missing
+// field, and a client-side refresh loop against a live rotation endpoint
+// cannot lock anyone out — while a client that chokes on the response can.
+export const NO_EXPIRY_EXPIRES_IN_S = 10 * 365 * 24 * 3600
+/** Single enforcement point for credential liveness: never-expires, else future. */
+export function tokenLive(expiresAt: number): boolean {
+  return expiresAt === NEVER_EXPIRES || expiresAt > Date.now()
+}
 const CIMD_CACHE_TTL_MS = 5 * 60 * 1000
 
 const rand = (n: number): string => randomBytes(n).toString('base64url')
@@ -166,6 +185,8 @@ export interface TokenRec {
   clientId: string
   scope: string[]
   resource: string
+  // Granted credential: NEVER_EXPIRES (0) = live until revoked. Read only
+  // via tokenLive() — never compare directly against Date.now().
   expiresAt: number
 }
 
@@ -193,9 +214,19 @@ function blank(): StoreData {
 
 function prune(d: StoreData): StoreData {
   const now = Date.now()
+  // Flow-step artefacts stay short-lived: codes die on schedule.
   for (const [k, v] of Object.entries(d.codes)) if (v.expiresAt <= now) delete d.codes[k]
-  for (const [k, v] of Object.entries(d.access)) if (v.expiresAt <= now) delete d.access[k]
-  for (const [k, v] of Object.entries(d.refresh)) if (v.expiresAt <= now) delete d.refresh[k]
+  // Granted credentials: dead ones prune as before; still-live legacy ones
+  // (real timestamps from before the never-expire change) are promoted to
+  // NEVER_EXPIRES so a token that is live today stays live until revoked.
+  for (const [k, v] of Object.entries(d.access)) {
+    if (!tokenLive(v.expiresAt)) delete d.access[k]
+    else if (v.expiresAt !== NEVER_EXPIRES) v.expiresAt = NEVER_EXPIRES
+  }
+  for (const [k, v] of Object.entries(d.refresh)) {
+    if (!tokenLive(v.expiresAt)) delete d.refresh[k]
+    else if (v.expiresAt !== NEVER_EXPIRES) v.expiresAt = NEVER_EXPIRES
+  }
   for (const [k, v] of Object.entries(d.approvals)) if (v + 90 * 24 * 3600 * 1000 <= now) delete d.approvals[k]
   return d
 }
@@ -246,17 +277,16 @@ export function mintTokenPair(clientId: string, scope: string[], resource: strin
   const d = loadStore()
   const accessToken = `bb_at_${rand(24)}`
   const refreshToken = `bb_rt_${rand(24)}`
-  const now = Date.now()
-  d.access[accessToken] = { clientId, scope, resource, expiresAt: now + ACCESS_TTL_MS }
-  d.refresh[refreshToken] = { clientId, scope, resource, expiresAt: now + REFRESH_TTL_MS, accessToken }
+  d.access[accessToken] = { clientId, scope, resource, expiresAt: NEVER_EXPIRES }
+  d.refresh[refreshToken] = { clientId, scope, resource, expiresAt: NEVER_EXPIRES, accessToken }
   saveStore(d)
-  return { accessToken, refreshToken, expiresIn: Math.floor(ACCESS_TTL_MS / 1000) }
+  return { accessToken, refreshToken, expiresIn: NO_EXPIRY_EXPIRES_IN_S }
 }
 
 export function lookupAccess(token: string): (TokenRec & { token: string }) | null {
   const d = loadStore()
   const rec = d.access[token]
-  if (!rec || rec.expiresAt <= Date.now()) return null
+  if (!rec || !tokenLive(rec.expiresAt)) return null
   return { ...rec, token }
 }
 
@@ -264,16 +294,15 @@ export function lookupAccess(token: string): (TokenRec & { token: string }) | nu
 export function rotateRefresh(token: string): { accessToken: string; refreshToken: string; expiresIn: number } | null {
   const d = loadStore()
   const rec = d.refresh[token]
-  if (!rec || rec.expiresAt <= Date.now()) return null
+  if (!rec || !tokenLive(rec.expiresAt)) return null
   delete d.refresh[token]
   delete d.access[rec.accessToken]
   const accessToken = `bb_at_${rand(24)}`
   const refreshToken = `bb_rt_${rand(24)}`
-  const now = Date.now()
-  d.access[accessToken] = { clientId: rec.clientId, scope: rec.scope, resource: rec.resource, expiresAt: now + ACCESS_TTL_MS }
-  d.refresh[refreshToken] = { clientId: rec.clientId, scope: rec.scope, resource: rec.resource, expiresAt: now + REFRESH_TTL_MS, accessToken }
+  d.access[accessToken] = { clientId: rec.clientId, scope: rec.scope, resource: rec.resource, expiresAt: NEVER_EXPIRES }
+  d.refresh[refreshToken] = { clientId: rec.clientId, scope: rec.scope, resource: rec.resource, expiresAt: NEVER_EXPIRES, accessToken }
   saveStore(d)
-  return { accessToken, refreshToken, expiresIn: Math.floor(ACCESS_TTL_MS / 1000) }
+  return { accessToken, refreshToken, expiresIn: NO_EXPIRY_EXPIRES_IN_S }
 }
 
 export function grantApproval(): string {
