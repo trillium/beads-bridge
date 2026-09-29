@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 4,
+  "manifestVersion": 5,
   "note": "Source of truth for shipped Beads Bridge MCP capabilities. A capability is shipped only when implementation + tests + this entry + changelog/version land coherently. See task-qgplz.",
   "capabilities": [
     {
@@ -309,6 +309,13 @@
       "beads": [
         "task-qgplz"
       ]
+    },
+    {
+      "id": "capability",
+      "title": "Wildcard capability interface",
+      "op": "capability",
+      "introduced": "1.6.0",
+      "beads": ["inbox-hkfd"]
     },
     {
       "id": "tool_surface_check",
