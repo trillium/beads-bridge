@@ -166,6 +166,22 @@ async function toolNames(base: string, token: string, extraHeaders: Record<strin
   return { status: listed.status, names: tools.map((t) => t.name) }
 }
 
+async function toolText(base: string, token: string, name: string): Promise<string> {
+  const init = await rpc(base, INIT, token)
+  assert.equal(init.status, 200, `initialize failed: ${JSON.stringify(init.json)?.slice(0, 300)}`)
+  const sessionId = init.headers.get('mcp-session-id') ?? undefined
+  const called = await rpc(
+    base,
+    { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name, arguments: {} } },
+    token,
+    sessionId,
+  )
+  assert.equal(called.status, 200, `${name} failed: ${JSON.stringify(called.json)?.slice(0, 300)}`)
+  const content = called.json?.result?.content
+  assert.ok(Array.isArray(content) && typeof content[0]?.text === 'string', `${name}: no text content`)
+  return content[0].text
+}
+
 describe('/mcp over HTTP (dual-gate contract)', () => {
   it('OAuth /mcp-audience token lists unprefixed tools (existing path intact)', { timeout: 30000 }, async () => {
     const pair = mintTokenPair('chatgpt-direct', ['mcp'], mcpResource(BASE))
@@ -182,6 +198,16 @@ describe('/mcp over HTTP (dual-gate contract)', () => {
       const { names } = await toolNames(base, toolKey)
       assert.ok(names.includes('query_store'))
       assert.ok(names.includes('whoami'))
+    })
+  })
+
+  it('tool results exclude web/chat navigation while preserving their MCP content', { timeout: 30000 }, async () => {
+    await withApp(async (base) => {
+      const out = await toolText(base, toolKey, 'bridge_info')
+      assert.match(out, /Bridge|bridge|schema/, 'the substantive MCP result remains')
+      for (const webNavigation of ['## Next', '## Paste block', '## Research links', '/next?cache=']) {
+        assert.doesNotMatch(out, new RegExp(webNavigation.replace(/[?]/g, '\\?')), webNavigation)
+      }
     })
   })
 
