@@ -103,6 +103,61 @@ the route exists, never touching beads or the ring. Today the client keeps
 local authority once the drawer is touched and adopts server state on load and
 reconnect, so a tap never fights a server frame.
 
+## Candidate visualizations (`/live/<variant>`)
+
+The canonical page above is unchanged and stays canonical. Beside it, every
+viable *shape* for viewing the same activity stream is built as its own
+independently reachable endpoint, so they can be compared side by side rather
+than argued about. They are comparison/experimental surfaces: none of them is
+canonical until the captain explicitly promotes one.
+
+| Endpoint | Shape | Where the shape comes from |
+|---|---|---|
+| `GET /live/variants` | Index: every candidate, its trade-off, its provenance | — |
+| `GET /live/v1` | The canonical two-panel page, byte-identical to `/live` | The comparison baseline (shipped MVP) |
+| `GET /live/jumbotron` | Large-type, glanceable wall panel: live/idle, newest call at reading size, rolling tape, heartbeat age | Proposed for this stream in the jumbotron work (`firstmate` data/displayd-activity-bridge); the same data, shaped for across-the-room |
+| `GET /live/timeline` | Marks on a time axis — position by completion time, width by duration, colour by outcome — plus per-tool/per-caller roll-ups and window latency percentiles | The live MCP event *window* rendering (what displayd's activity renderer owns), ported to the shape this sidecar has no equivalent of |
+| `GET /live/log` | Dense monospace tail, one fixed-width line per call, highest call density | Derived candidate — added so the comparison has a genuinely different reading; not separately proposed in the record |
+| `GET /live/stats` | Aggregate only: totals, error rate, latency percentiles, per-tool/caller/client counts, 30-minute call histogram | Derived candidate, same caveat as `/live/log` |
+
+The displayd **beads-overview** directions (proportional parade, funnel,
+unblock chains, captain-first, store treemap, stale watch) are deliberately
+*not* here: they are proposed for displayd's beads overview renderer — a
+different surface with different data — so reusing them here would be an
+analogy, not an implementation of a proposal recorded for this sidecar.
+
+### One shared event model (the deterministic default)
+
+Chosen here rather than escalated, because the alternative was a second
+transport per surface. Every variant consumes the existing contract verbatim —
+`GET /live/config`, `GET /live/recent?limit=`, `GET /live/view`,
+`GET /live/heartbeat`, and the single `GET /live/events` SSE stream — through
+one client runtime (`liveClientJs()` in `src/lib/live-variants.ts`), inlined
+into each page. There is no second stream, no per-variant ring and no
+per-variant server state. Inherited determinism:
+
+- **Ordering:** by `seq` (monotonic per-process completion order), ascending,
+  deduped by `seq` so a replayed frame and the live frame of one event are one
+  event.
+- **View/heartbeat state:** whole-state frames carrying a monotonic
+  `revision`/`rev`, applied last-write-wins; a stale frame is ignored.
+- **Reconnect:** `/live/events` replays recent activity and writes the current
+  view and heartbeat frame on every connect, so a reconnecting surface lands
+  on current state. A dead stream degrades to polling the same two read-only
+  GETs — still the same event model.
+- **Bounded:** the client ring is capped by `/live/config`'s `maxEvents` with a
+  hard ceiling (`VARIANT_MAX_EVENTS`), and the stream's `?limit=` is clamped
+  server-side, exactly as for the canonical page.
+
+### Safety (unchanged, and asserted by tests)
+
+Observational only; GET-only (`src/routes/live-variants.ts` registers only
+`get` handlers, so POST/PUT/PATCH/DELETE on any variant path is 404 — the same
+loop-prevention property the canonical page has); no store reads, no bead
+mutation, no work creation, no MCP calls driven by a display event; argument
+*names* only, as the ring already records. `/live/v1` reuses the canonical
+renderer rather than copying it, so the two cannot drift.
+
 ## Persistent heartbeat (`GET /live/heartbeat`, `event: heartbeat`)
 
 The footer delta each footered response carries is transient: once its
