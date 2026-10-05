@@ -21,7 +21,8 @@ import { beadText, mapLimit } from '../lib/exec'
 import { bundleIds } from './beads'
 import { runList } from './query/store'
 import { cleanLabel, LABEL_RE } from './query/params'
-import { createBead, validateCreateLabels } from '../lib/create'
+import { validateCreateLabels } from '../lib/create'
+import { createOperationBead, formatReconciliation } from '../lib/idempotent-create'
 import { DEP_TYPES, MAX_BATCH_BEADS, formatBatch, runBatch } from '../lib/batch'
 import { beadConnections, formatConnections } from '../lib/connections'
 import { feedbackDir, writeFeedback } from '../lib/feedback'
@@ -363,17 +364,19 @@ const mcpHandler = createMcpHandler((server) => {
     'bead_create',
     {
       title: 'Create bead',
-      description: 'Create a new bead in a store. Labels attach it: project:<slug> links to a project, resume:<id> scopes it to a resume. Only report success when this call returns a receipt — report the ID verbatim from tool output, never from inference.',
+      description: 'Create a new bead in a store. Labels attach it: project:<slug> links to a project, resume:<id> scopes it to a resume. Supply operation_id (a logical id you choose and reuse for retried or continued versions of the SAME request): repeat submissions with one operation_id are reconciled onto ONE bead as revisions — never duplicates. Only report success when this call returns a receipt — report the ID verbatim from tool output, never from inference.',
       inputSchema: z.object({
         store: z.string().describe('Store name, e.g. task, stories, brain'),
         title: z.string().min(1).max(200).describe('Bead title'),
         description: bodyText('Body text'),
         labels: z.array(z.string()).max(10).optional().describe('Labels, e.g. project:parlay — invalid ones are rejected'),
         parent: z.string().optional().describe('Parent bead id for hierarchy'),
+        operation_id: z.string().min(1).max(200).optional().describe('Logical operation id for this request. Reuse the SAME value for retries, replays, or a continuation turn that adds scope; each reuse is recorded as a revision of the one bead instead of creating another. Omit it for a plain one-off create (no key, no revision history).'),
+        promote: z.boolean().optional().describe('With operation_id on an existing action: the added scope is materially DISTINCT work — create it as a child bead of the existing one instead of merging it into the body.'),
       }),
     },
-    async ({ store, title, description, labels, parent }: {
-      store: string; title: string; description?: string; labels?: string[]; parent?: string
+    async ({ store, title, description, labels, parent, operation_id, promote }: {
+      store: string; title: string; description?: string; labels?: string[]; parent?: string; operation_id?: string; promote?: boolean
     }) => {
       const req = resolveStoreName(store ?? '')
       if (req.kind === 'ambiguous') return err(ambiguousStoreError(req.requested, req.candidates))
@@ -393,21 +396,24 @@ const mcpHandler = createMcpHandler((server) => {
       if (bad.length) return err(`bad label: ${bad.join(', ')} (match ${LABEL_RE}, max 64 chars)`)
       try {
         const provenance = { source: 'mcp' as const, caller: currentRequestCaller() }
-        const { id, detail, verified } = await createBead({
+        const { id, detail, verified, disposition, revision, operationKey, applied, childId } = await createOperationBead({
           store,
           title,
           description,
           labels: valid,
           parent: parent?.trim() || undefined,
+          operationId: operation_id,
+          promote: promote === true,
           provenance,
         })
         relayStatus.touch({ id, kind: 'task', title })
-        const receipt = { operation: 'created', id, store, verified, detail }
+        const receipt = { operation: disposition === 'created' ? 'created' : `${disposition} of existing bead`, id, store, verified, detail }
         if (!verified) {
           relayStatus.touch({ id, kind: 'verify', title, needsVerify: true })
           return err(unverifiedMessage(receipt))
         }
-        return ok(formatReceipt(receipt, `Labels: ${withProvenance(valid, provenance).join(', ') || '(none)'}${createAliasNote}`))
+        const idem = operationKey ? `\n${formatReconciliation({ disposition, id, operationKey, revision, applied, childId })}` : ''
+        return ok(formatReceipt(receipt, `Labels: ${withProvenance(valid, provenance).join(', ') || '(none)'}${createAliasNote}${idem}`))
       } catch (e) {
         relayStatus.touch({ id: `new:${store}`, kind: 'failure', title: `create failed in ${store}: ${title}`, state: 'failed' })
         return err(`create failed: ${e instanceof Error ? e.message : String(e)}`)

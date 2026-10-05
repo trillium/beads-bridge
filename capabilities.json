@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 5,
+  "manifestVersion": 6,
   "note": "Source of truth for shipped Beads Bridge MCP capabilities. A capability is shipped only when implementation + tests + this entry + changelog/version land coherently. See task-qgplz.",
   "capabilities": [
     {
@@ -60,10 +60,10 @@
     },
     {
       "id": "bead_create",
-      "title": "Create bead",
+      "title": "Create bead (idempotent, revision-aware)",
       "op": "bead_create",
       "introduced": "1.0.0",
-      "changed": "1.5.0",
+      "changed": "1.6.1",
       "beads": ["task-4lb3r"]
     },
     {

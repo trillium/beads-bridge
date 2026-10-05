@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.6.1
+
+- Idempotent, revision-aware create (beads-bridge, after errors-5uf): the
+  same Mac mini provisioning request arrived twice over ChatGPT's
+  at-least-once delivery and was handled as two beads (inbox-zmj0 /
+  inbox-sx6k) — a duplicate triage pass. `bead_create` now takes an
+  optional client-generated `operation_id`: submissions carrying the same
+  logical id are reconciled onto ONE bead as durable revisions, never as
+  duplicates. The tolerance lives on the bridge's side of the boundary —
+  nothing asks the caller to delay, deduplicate, or retry carefully.
+  Key: `opkey:<12 hex of sha256(store + operation_id)>` stamped as a label
+  (raw client id never lands in a label; the bead id stays server-generated);
+  lookup is a label query, so idempotency survives a restart. Reconciliation
+  is explicit: title authoritative (latest), body additive (a superseding
+  body wins wholesale), labels additive union, materially distinct added
+  scope promoted to a child only on explicit `promote: true`. Every delivery is
+  recorded (two submissions = one bead, two readable revisions, the shape the
+  incident demands); a byte-identical replay is recorded with mode
+  `duplicate` and writes nothing to the bead. Ordering rule: monotonic
+  per-operation sequence number, content hash as identity and tiebreak —
+  arrival time never orders revisions, so replays cannot reorder history. One logical action is serialized by a per-operation lock; a
+  cross-process race collapses onto the earliest-created bead. Callers
+  supplying no `operation_id` keep the previous single-create behaviour
+  exactly. See docs/idempotent-create.md. Manifest v6.
+
 ## 1.6.0
 
 - Wildcard capability interface (inbox-hkfd): one stable outer MCP tool
