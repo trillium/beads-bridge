@@ -46,6 +46,28 @@
 
 ## Unreleased
 
+- Candidate visualization surfaces for the live activity sidecar
+  (project-s1rf.1.1, captain direction 2026-10-05): every viable shape for
+  viewing the same MCP activity stream now sits beside the canonical page at
+  its own independently reachable `/live/<variant>` URL — `/live/variants`
+  (index, with where each shape came from), `/live/v1` (the canonical page,
+  byte-identical, as the comparison baseline), `/live/jumbotron` (large-type
+  glanceable wall panel), `/live/timeline` (marks on a time axis, width by
+  duration, colour by outcome, with per-tool/caller roll-ups), `/live/log`
+  (dense one-line-per-call tail) and `/live/stats` (aggregate readouts:
+  totals, error rate, latency percentiles, 30-minute histogram).
+  Canonical `GET /live` is unchanged: variants are additions, and none is
+  canonical until the captain promotes one. ONE shared event model — every
+  surface consumes the existing `/live/config`, `/live/recent`, `/live/view`,
+  `/live/heartbeat` and the single `GET /live/events` SSE stream through one
+  client runtime (`src/lib/live-variants.ts`), so ordering (by `seq`),
+  last-write-wins view/heartbeat frames, reconnect replay and the client ring
+  cap behave identically everywhere and no transport is duplicated. Still
+  GET-only and observational: every variant path answers
+  POST/PUT/PATCH/DELETE with 404, and no surface mutates a bead, creates work
+  or triggers an MCP call. See docs/live-activity.md "Candidate
+  visualizations".
+
 - Live page visual design (task-xpsoy, supersedes task-u9aal): the `/live`
   page gets a real token palette (`:root` custom properties, light default
   + `prefers-color-scheme: dark` override, `color-scheme: light dark`
