@@ -23,14 +23,14 @@
 import { describe, it, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, existsSync } from 'node:fs'
+import { mkdirSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createOperationBead, findByOperationKey, readRevisionHistory, type OperationCreateResult } from './idempotent-create'
 import { operationKey } from './idempotency'
 import { showBeadAsync } from '../routes/query/store'
 import { execStdout } from './exec'
-import { liveRunTag, removeScratchStore, shimBdRouter } from './live-test-store'
+import { liveRunTag, shimBdRouter } from './live-test-store'
 
 const STORE = 'task'
 // Run-derived tag: unique per run, never a hardcoded string.
@@ -38,30 +38,51 @@ const TAG = liveRunTag('bb-live-idem')
 
 // Setup at import time as blocking sync statements (type:commonjs rejects
 // top-level await; the runner's 5s hook budget cannot cover `bd init`).
-function initScratchStoreTolerant(issuePrefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `bb-live-${issuePrefix}-`))
+//
+// The scratch store is CACHED across runs under a suite-owned path in
+// TMPDIR. `bd init` is by far the slowest thing here — seconds when the host
+// is quiet, but minutes when other lanes saturate it (measured: >5 min at
+// load average ~105, while ordinary store calls stayed at 0.8s) — and
+// re-initializing per run left this suite unable to report at all on a busy
+// host. Reuse is safe: each run tags its beads with a run-derived TAG and
+// deletes them afterwards, and the store lives in TMPDIR (no production
+// store is ever touched). It is still PROVEN to answer a real query first.
+const CACHE_DIR = join(process.env.TMPDIR ?? tmpdir(), 'bb-idem-scratch-store')
+
+function initEnv(): Record<string, string> {
   const env = { ...process.env, BD_NON_INTERACTIVE: '1', GIT_EDITOR: ':', GIT_PAGER: 'cat' } as Record<string, string>
   delete env.BEADS_DIR
   delete env.BD_NAME
+  return env
+}
+
+function storeAnswers(dir: string): boolean {
   try {
-    execFileSync('bd', ['init', '-p', issuePrefix], { encoding: 'utf8', timeout: 90000, cwd: dir, env })
-  } catch (e) {
-    // A host where `bd init` hangs after finishing still leaves a usable
-    // store; prove that rather than assume it.
-    if (!existsSync(join(dir, '.beads'))) throw new Error(`scratch store init failed: ${(e as Error).message}`)
+    execFileSync('bd', ['list', '--json', '--limit', '1'], { encoding: 'utf8', timeout: 60000, cwd: dir, env: initEnv() })
+    return true
+  } catch {
+    return false
   }
+}
+
+function scratchStore(): string {
+  if (existsSync(join(CACHE_DIR, '.beads')) && storeAnswers(CACHE_DIR)) return CACHE_DIR
+  mkdirSync(CACHE_DIR, { recursive: true })
   try {
-    execFileSync('bd', ['list', '--json', '--limit', '1'], { encoding: 'utf8', timeout: 30000, cwd: dir, env })
+    // Bounded: `bd init` can hang after finishing its work (a trailing
+    // `git commit` on some hosts) and can crawl badly on a saturated one.
+    execFileSync('bd', ['init', '-p', 'task'], { encoding: 'utf8', timeout: 900000, cwd: CACHE_DIR, env: initEnv() })
   } catch (e) {
-    throw new Error(`scratch store did not answer after init: ${(e as Error).message}`)
+    if (!existsSync(join(CACHE_DIR, '.beads'))) throw new Error(`scratch store init failed: ${(e as Error).message}`)
   }
-  return dir
+  if (!storeAnswers(CACHE_DIR)) throw new Error('scratch store did not answer after init')
+  return CACHE_DIR
 }
 
 let scratchDir = ''
 let restoreShim: (() => void) | null = null
 try {
-  scratchDir = initScratchStoreTolerant('task')
+  scratchDir = scratchStore()
   restoreShim = shimBdRouter({ task: scratchDir })
 } catch (e) {
   throw new Error(`idempotency-live setup failed (isolation not installed): ${(e as Error)?.message ?? e}`)
@@ -70,7 +91,8 @@ try {
 after(() => {
   restoreShim?.()
   restoreShim = null
-  if (scratchDir) removeScratchStore(scratchDir)
+  // The store itself is left in TMPDIR for the next run; this run's beads
+  // are deleted by the per-test cleanups.
   scratchDir = ''
 })
 
