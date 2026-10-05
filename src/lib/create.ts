@@ -17,6 +17,11 @@ export interface CreateInput {
   // the caller where one is known. Merged into labels by buildCreateArgs
   // so every createBead caller stamps uniformly — MCP tool, batch, relay.
   provenance?: Provenance
+  // Client-generated logical operation id (beads-bridge idempotent create).
+  // Carried on the input for provenance parity, but the KEYING itself lives
+  // in idempotent-create.ts — createBead stays the raw single-create path so
+  // a caller with no operation id keeps exactly the old behaviour.
+  operationId?: string
 }
 
 export function buildCreateArgs(input: CreateInput): string[] {
