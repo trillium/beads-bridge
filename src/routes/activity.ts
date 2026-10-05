@@ -297,7 +297,13 @@ liveRouter.get('/live/events', (req: Request, res: Response) => {
   }
 })
 
-function renderLivePage(
+/**
+ * The canonical page markup. Exported so `/live/v1` (the comparison baseline
+ * for the candidate visualization surfaces in src/routes/live-variants.ts) can
+ * serve the SAME page rather than a copy — the two cannot drift, and the
+ * canonical `/live` route itself is unchanged.
+ */
+export function renderLivePage(
   autoFollow: boolean,
   viewFrameJson: string,
   heartbeatJson: string,
