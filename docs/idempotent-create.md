@@ -45,7 +45,7 @@ The bridge derives a deterministic, label-safe key from
 `(store, operation_id)`:
 
 ```
-opkey:<first 12 hex of sha256(store + " " + operation_id)>
+opkey:<first 12 hex of sha256(store + NUL + operation_id)>
 ```
 
 and stamps it on the bead as a label. Consequences, all deliberate:
