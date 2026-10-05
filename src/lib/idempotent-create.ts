@@ -9,7 +9,15 @@
 //   2. LOGICAL ID, no bead carrying the key yet -> create once, stamp
 //      `opkey:<hash>`, record revision 1.
 //   3. LOGICAL ID, bead exists -> NEVER create. Reconcile onto the canonical
-//      bead and record a revision note.
+//      bead and record a revision.
+//
+// EVERY DELIVERY IS RECORDED. Two submissions of one logical request give
+// one bead and two readable revisions — that is the incident's expected
+// shape, and "the same thing arrived twice" is itself information an
+// operator wants later. A byte-identical replay therefore still appends a
+// revision note (mode `duplicate`) but writes NOTHING to the bead's title,
+// body, or labels: the history records the delivery, the bead does not
+// absorb a redundant change.
 //
 // Reconciliation policy (deliberate, not implied):
 //   - TITLE: the later submission is authoritative. A re-stated title
@@ -308,25 +316,6 @@ async function runOperation(input: OperationCreateInput, opKey: string, opId: st
   const history = await readRevisionHistory(store, canonical.id)
   const seq = nextSeq(history)
 
-  // Byte-identical replay (network retry, duplicate tool call, a second
-  // runtime replaying the same request): already recorded -> no write at
-  // all. This is what makes replay a no-op instead of revision noise.
-  if (history.some((r) => r.hash === hash)) {
-    const existing = history.find((r) => r.hash === hash) as Revision
-    const shown = (await verifyBead(store, canonical.id)) ?? 'unreadable'
-    return {
-      id: canonical.id,
-      store,
-      disposition: 'duplicate',
-      revision: existing.seq,
-      operationKey: opKey,
-      applied: collapsed.length ? [`collapsed duplicate bead(s) ${collapsed.join(', ')}`] : [],
-      verified: shown !== 'unreadable',
-      detail: shown,
-      ...(collapsed.length ? { collapsed } : {}),
-    }
-  }
-
   const state = await readBeadState(store, canonical.id)
   const applied: string[] = collapsed.length ? [`collapsed duplicate bead(s) ${collapsed.join(', ')}`] : []
 
@@ -383,6 +372,14 @@ async function runOperation(input: OperationCreateInput, opKey: string, opId: st
   const titleChanged = Boolean(nextTitle) && nextTitle !== state.title.trim()
   const bodyNext = mergeBody(state.description, input.description ?? '', seq, opKey)
   const bodyChanged = bodyNext !== state.description
+  const newLabels = mergeLabels(state.labels, input.labels ?? [])
+  const toAdd = newLabels.filter((l) => !state.labels.includes(l))
+  // A replay of the last recorded submission changes nothing: the delivery
+  // is still recorded, the bead is not rewritten.
+  const lastHash = history.length ? history[history.length - 1].hash : null
+  const replayed = lastHash === hash && !(titleChanged || bodyChanged || toAdd.length)
+  const changed = titleChanged || bodyChanged || toAdd.length > 0
+
   if (titleChanged || bodyChanged) {
     await editBead({
       store,
@@ -398,12 +395,12 @@ async function runOperation(input: OperationCreateInput, opKey: string, opId: st
           : 'body merged additively',
       )
     }
+  } else if (replayed) {
+    applied.push('replay of the last recorded submission — bead left untouched')
   } else {
     applied.push('no field-level change (submission adds nothing new)')
   }
 
-  const newLabels = mergeLabels(state.labels, input.labels ?? [])
-  const toAdd = newLabels.filter((l) => !state.labels.includes(l))
   if (toAdd.length) {
     await labelBead(store, canonical.id, { add: toAdd.join(',') })
     applied.push(`labels added: ${toAdd.join(', ')}`)
@@ -412,13 +409,14 @@ async function runOperation(input: OperationCreateInput, opKey: string, opId: st
   const rev: Revision = {
     seq,
     hash,
-    mode: 'revision',
+    mode: changed ? 'revision' : 'duplicate',
     at: new Date().toISOString(),
     operationKey: opKey,
     payload: {
       title: input.title,
       description: input.description,
       labels: input.labels,
+      ...(input.parent ? { parent: input.parent } : {}),
       applied: [...applied],
     },
   }
@@ -429,7 +427,7 @@ async function runOperation(input: OperationCreateInput, opKey: string, opId: st
   return {
     id: canonical.id,
     store,
-    disposition: 'revision',
+    disposition: changed ? 'revision' : 'duplicate',
     revision: seq,
     operationKey: opKey,
     applied,
