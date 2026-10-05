@@ -303,8 +303,14 @@ describe('a second process races the same operation', () => {
 
     assert.equal(mine.id, squatterId, 'the earliest bead for the operation is canonical')
     assert.deepEqual(mine.collapsed, [laterId], 'the later duplicate is collapsed onto the canonical bead')
+
+    // The key lookup spans open AND closed beads on purpose: the collapsed
+    // duplicate must stay discoverable, or the next submission would create
+    // a second live bead for an operation that already has one.
     const rows = await findByOperationKey(STORE, key)
-    assert.equal(rows.length, 1, 'the operation resolves to exactly one open bead')
+    assert.equal(rows.length, 2, 'both beads remain findable by the key')
+    assert.equal(rows.find((r) => r.id === squatterId)?.status, 'open', 'the canonical bead is the live one')
+    assert.equal(rows.find((r) => r.id === laterId)?.status, 'closed', 'the duplicate is closed, not deleted')
 
     const loser = await showBeadAsync(STORE, laterId)
     assert.match(loser as string, /closed/i, 'the duplicate is closed, not deleted — the race stays auditable')

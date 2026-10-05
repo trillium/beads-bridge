@@ -91,13 +91,17 @@ interface StoreRow {
   description?: string
   labels?: string[]
   created_at?: string
+  status?: string
 }
 
 const LIST_TIMEOUT = 20000
 const SHOW_TIMEOUT = 15000
 
-// Beads carrying this operation key. The key is a sha256 digest, so an
-// existing hit is the SAME logical action, not a similar one.
+// Beads carrying this operation key, OPEN AND CLOSED. The key is a sha256
+// digest, so an existing hit is the SAME logical action, not a similar one.
+// Closed beads are included deliberately: a duplicate collapsed by
+// cross-process reconciliation stays discoverable here, so it can never be
+// resurrected as a second live bead for an operation that already has one.
 export async function findByOperationKey(store: string, key: string): Promise<StoreRow[]> {
   const out = await execStdout(store, ['list', '--all', '--json', '--limit', '100', '--label', key], LIST_TIMEOUT).catch(() => '[]')
   try {
@@ -110,6 +114,7 @@ export async function findByOperationKey(store: string, key: string): Promise<St
         description: typeof r.description === 'string' ? r.description : undefined,
         labels: Array.isArray(r.labels) ? r.labels.map(String) : [],
         created_at: typeof r.created_at === 'string' ? r.created_at : undefined,
+        status: typeof r.status === 'string' ? r.status : undefined,
       }))
       .filter((r) => r.id)
   } catch {
