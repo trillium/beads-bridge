@@ -258,6 +258,7 @@ export async function createOperationBead(input: OperationCreateInput): Promise<
       applied: ['created (no logical operation id — single-create behaviour)'],
       verified: created.verified,
       detail: created.detail,
+      collapsed: [],
     }
   }
 
@@ -334,6 +335,12 @@ async function runOperation(input: OperationCreateInput, opKey: string, opId: st
         provenance: input.provenance,
       })
       childId = child.id
+      // `bd create --parent` INHERITS the parent's labels, which would hand
+      // the child the parent's operation key — and a later submission of
+      // the parent operation would then read the child as a second bead
+      // for that key and close it. Strip the parent key explicitly; every
+      // other inherited label (project:, resume:, …) is left alone.
+      await labelBead(store, childId, { remove: opKey }).catch(() => null)
     }
     applied.push(`promoted added scope to child bead ${childId} (${childKey})`)
     const rev: Revision = {
@@ -362,7 +369,7 @@ async function runOperation(input: OperationCreateInput, opKey: string, opId: st
       childId,
       verified: (await verifyBead(store, canonical.id)) !== null,
       detail: (await verifyBead(store, canonical.id)) ?? 'unreadable',
-      ...(collapsed.length ? { collapsed } : {}),
+      collapsed,
     }
   }
 
@@ -433,7 +440,7 @@ async function runOperation(input: OperationCreateInput, opKey: string, opId: st
     applied,
     verified: detail !== 'unreadable after revision',
     detail,
-    ...(collapsed.length ? { collapsed } : {}),
+    collapsed,
   }
 }
 

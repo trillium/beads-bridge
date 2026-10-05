@@ -257,8 +257,8 @@ describe('a second process races the same operation', () => {
     const key = operationKey(STORE, operationId)
     const ask = title('crossproc')
 
-    // Another bridge process created a bead for this operation before our
-    // lookup ran, so the key already resolves to two beads.
+    // Another bridge process created beads for this operation before our
+    // lookup ran — the cross-process shape, where two beads carry one key.
     const squatter = await execStdout(
       STORE,
       ['create', ask, '-d', 'created elsewhere', '-l', `ops,${key}`],
@@ -266,15 +266,28 @@ describe('a second process races the same operation', () => {
     )
     const squatterId = (squatter.match(/task-[A-Za-z0-9]+/) ?? [])[0]
     assert.ok(squatterId, `scratch create must emit an id, got: ${squatter}`)
-    t.after(() => cleanup(squatterId))
+    const later = await execStdout(
+      STORE,
+      ['create', `${ask} (raced)`, '-d', 'created elsewhere too', '-l', `ops,${key}`],
+      30000,
+    )
+    const laterId = (later.match(/task-[A-Za-z0-9]+/) ?? [])[0]
+    assert.ok(laterId, `second scratch create must emit an id, got: ${later}`)
+    t.after(() => cleanup(squatterId, laterId))
+    assert.equal((await findByOperationKey(STORE, key)).length, 2, 'precondition: two beads carry the one key')
 
     const mine = await createOperationBead({ store: STORE, title: ask, description: 'created here', labels: ['ops'], operationId })
     t.after(() => cleanup(mine.id, mine.childId ?? ''))
 
     assert.equal(mine.id, squatterId, 'the earliest bead for the operation is canonical')
-    assert.deepEqual(mine.collapsed, [], 'nothing to collapse — the pre-existing bead is the canonical one')
+    assert.deepEqual(mine.collapsed, [laterId], 'the later duplicate is collapsed onto the canonical bead')
     const rows = await findByOperationKey(STORE, key)
-    assert.equal(rows.length, 1)
+    assert.equal(rows.length, 1, 'the operation resolves to exactly one open bead')
+
+    const loser = await showBeadAsync(STORE, laterId)
+    assert.match(loser as string, /closed/i, 'the duplicate is closed, not deleted — the race stays auditable')
+    assert.match(loser as string, new RegExp(squatterId), 'the closed duplicate names the canonical bead')
+
     const history = await readRevisionHistory(STORE, squatterId)
     assert.equal(history.length, 1, 'our submission is revision 1 of the operation')
     assert.match(history[0].payload.description as string, /created here/)
