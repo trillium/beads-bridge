@@ -149,6 +149,16 @@ per-variant server state. Inherited determinism:
   hard ceiling (`VARIANT_MAX_EVENTS`), and the stream's `?limit=` is clamped
   server-side, exactly as for the canonical page.
 
+`bead_show`/`query_store`/`whoami` through `/mcp` fill it.
+
+### Seeing them deployed
+
+The variant surfaces ship with the bridge service, not with a dev `bun src/server.ts`: until `ops/deploy.sh` has run (see [deploy.md](deploy.md)), a service serving an older commit answers 404 for every one of them. After a deploy, `http://localhost:3737/live/variants` is the index and each candidate is one click away.
+
+### Capturing them (they never finish loading)
+
+Every data-bearing surface here holds `EventSource(/live/events)` open for the life of the page, so the document never fires `load`. A human in a browser never notices; automated capture does — headless `--screenshot` and `--virtual-time-budget` wait on that event indefinitely and write nothing (they hang rather than fail). `/live/variants` has no EventSource and captures normally. Use `ops/live-shot.mjs <url> <out.png>`, which navigates over CDP, waits a fixed settle time, and captures what has rendered.
+
 ### Safety (unchanged, and asserted by tests)
 
 Observational only; GET-only (`src/routes/live-variants.ts` registers only

@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- Deployment path for the bridge service (project-s1rf.1.1.2): the launchd job
+  now serves a dedicated clean checkout
+  (`~/.local/share/beads-bridge/app`, fast-forwarded to `origin/main`) instead
+  of the working clone, so an uncommitted dev tree is never part of the
+  running server and a deploy can no longer deadlock behind a dirty tree. That
+  deadlock is what left all six `/live` variant surfaces (PR #25) serving 404
+  from a service pinned at PR #23. `ops/deploy.sh` fast-forwards, installs,
+  restarts the job, and fails unless `/live` and every variant return 200;
+  `ops/launchd/com.beads-bridge.server.plist` is the job definition it drives.
+  `ops/live-shot.mjs` captures a `/live` page over CDP, which is the only way
+  to screenshot those pages: their EventSource keeps the document from ever
+  firing `load`, so headless `--screenshot`/`--virtual-time-budget` hang
+  forever. See docs/deploy.md, docs/live-activity.md.
+
 ## 1.6.1
 
 - Idempotent, revision-aware create (beads-bridge, after errors-5uf): the
