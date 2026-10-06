@@ -41,16 +41,56 @@ pnpm install --frozen-lockfile
 echo "    now at $(git log --oneline -1)"
 
 echo "==> restarting $APP_NAME"
-launchctl bootout "gui/$(id -u)/$APP_NAME" 2>/dev/null || true
-launchctl bootstrap "gui/$(id -u)" "$PLIST"
+DOMAIN="gui/$(id -u)"
+launchctl bootout "$DOMAIN/$APP_NAME" 2>/dev/null || true
 
+# bootout is asynchronous. Until it finishes, the job is still `print`-able
+# (state: SIGTERMed, cleanup scheduled) and the OLD process is still answering
+# :$PORT during its shutdown grace period. Observed on 2026-10-06: a deploy
+# checked routes 200ms after bootout, got 200s from the dying process, and
+# reported success while the service was in fact being removed — a false pass
+# that left the bridge down. So wait for the job to genuinely disappear first.
+i=0
+while launchctl print "$DOMAIN/$APP_NAME" >/dev/null 2>&1; do
+  i=$((i + 1))
+  if [ "$i" -ge 60 ]; then
+    echo "!! $APP_NAME did not unload within 30s" >&2
+    exit 1
+  fi
+  sleep 0.5
+done
+
+# bootstrap can race the bootout that just finished and answer EIO
+# ("Bootstrap failed: 5: Input/output error"). A deploy that leaves the service
+# down is worse than a slow deploy, so retry a bounded number of times.
+tries=0
+while :; do
+  if err=$(launchctl bootstrap "$DOMAIN" "$PLIST" 2>&1); then break; fi
+  tries=$((tries + 1))
+  if [ "$tries" -ge 10 ]; then
+    echo "!! launchctl bootstrap failed after $tries attempts: $err" >&2
+    exit 1
+  fi
+  sleep 1
+done
+
+# Wait for a RUNNING pid, not merely an answered port: the port alone cannot
+# tell the new process from the old one draining.
 echo "==> waiting for :$PORT"
 i=0
-while [ $i -lt 60 ]; do
-  if curl -fsS -m 2 -o /dev/null "http://127.0.0.1:$PORT/live"; then break; fi
+pid=""
+while [ $i -lt 120 ]; do
+  pid=$(launchctl list | awk -v n="$APP_NAME" '$3 == n { print $1 }')
+  if [ -n "$pid" ] && [ "$pid" != "-" ] && curl -fsS -m 2 -o /dev/null "http://127.0.0.1:$PORT/live" 2>/dev/null; then break; fi
+  pid=""
   i=$((i + 1))
   sleep 0.5
 done
+if [ -z "$pid" ]; then
+  echo "!! $APP_NAME has no running pid after 60s" >&2
+  exit 1
+fi
+echo "    running as pid $pid"
 
 echo "==> live route check"
 rc=0
@@ -59,4 +99,26 @@ for p in /live /live/variants /live/v1 /live/jumbotron /live/timeline /live/log 
   printf '    %-16s %s\n' "$p" "$code"
   [ "$code" = 200 ] || rc=1
 done
+
+# MCP smoke check. The /live routes above stayed green through the 2026-10-06
+# outage in which every MCP call answered "Session terminated" because the
+# deployed revision lacked the MCP/auth work — so the route gate alone cannot
+# tell a working bridge from a dead MCP path. Probe the real path the clients
+# use: a tools/list on /mcp with the service key over loopback.
+KEY_FILE="$HOME/.config/pai/beads-bridge-toolkey"
+if [ -r "$KEY_FILE" ]; then
+  body=$(curl -s -m 10 -X POST "http://127.0.0.1:$PORT/mcp" \
+    -H "Authorization: Bearer $(cat "$KEY_FILE")" \
+    -H 'Content-Type: application/json' \
+    -H 'Accept: application/json, text/event-stream' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' || true)
+  if printf '%s' "$body" | grep -q '"tools":\[{'; then
+    printf '    %-16s %s\n' 'MCP tools/list' "$(printf '%s' "$body" | grep -o '"name":"[a-z_]*"' | wc -l | tr -d ' ') tools"
+  else
+    printf '    %-16s %s\n' 'MCP tools/list' 'EMPTY OR UNREACHABLE'
+    rc=1
+  fi
+else
+  echo "    !! $KEY_FILE unreadable; skipping MCP smoke check" >&2
+fi
 exit $rc
