@@ -10,10 +10,11 @@
 // Policy (addresses and User-Agent are routing hints only, never auth):
 // - `/.well-known/*`, `/oauth/*` — public by design (connector setup:
 //   discovery, dynamic registration, approval, token exchange).
-// - `/mcp`, `/jungle/mcp`, `/chatgpt/mcp` — public by design at this layer;
-//   the bearer credential is enforced downstream (`withMcpAuth(required:
-//   true)` with exact-audience checks in `src/routes/mcp.ts` /
-//   `src/routes/jungle.ts` / `src/routes/chatgpt.ts`).
+// - `/mcp`, `/jungle/mcp`, `/chatgpt/mcp`, `/grok/mcp`, `/gemini/mcp` —
+//   public by design at this layer; the bearer credential is enforced
+//   downstream (`withMcpAuth(required: true)` with exact-audience checks in
+//   `src/routes/mcp.ts` / `src/routes/jungle.ts` / `src/routes/chatgpt.ts` /
+//   `src/routes/grok.ts` / `src/routes/gemini.ts`).
 // - Every other route requires a valid bearer credential (a live OAuth
 //   access token from `lookupAccess`, either audience, or the existing
 //   `toolKey` service credential) — from anywhere, Funnel included. This
@@ -95,6 +96,8 @@ export function classifyIngress(req: Request): IngressVerdict {
     p === '/mcp' ||
     p === '/jungle/mcp' ||
     p === '/chatgpt/mcp' ||
+    p === '/grok/mcp' ||
+    p === '/gemini/mcp' ||
     p.startsWith('/.well-known/') ||
     p.startsWith('/oauth/')
   ) {

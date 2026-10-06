@@ -12,7 +12,7 @@ import { join } from 'node:path'
 import { readFileSync } from 'node:fs'
 import express from 'express'
 import { BASE } from '../config'
-import { chatgptResource, jungleResource, mcpResource, mintTokenPair } from '../lib/oauth'
+import { chatgptResource, geminiResource, grokResource, jungleResource, mcpResource, mintTokenPair } from '../lib/oauth'
 import { CHATGPT_UPSTREAM, chatgptRouter, verifyChatgptToken } from './chatgpt'
 
 const root = join(__dirname, '..', '..')
@@ -32,6 +32,12 @@ describe('verifyChatgptToken', () => {
     assert.equal(verifyChatgptToken(direct.accessToken), undefined)
     const jungle = mintTokenPair('chatgpt-jungle', ['mcp'], jungleResource(BASE))
     assert.equal(verifyChatgptToken(jungle.accessToken), undefined)
+  })
+  it('refuses the sibling scoped doors — grok and gemini tokens never open chatgpt', () => {
+    const grok = mintTokenPair('grok-scoped', ['mcp'], grokResource(BASE))
+    assert.equal(verifyChatgptToken(grok.accessToken), undefined)
+    const gemini = mintTokenPair('gemini-scoped', ['mcp'], geminiResource(BASE))
+    assert.equal(verifyChatgptToken(gemini.accessToken), undefined)
   })
   it('accepts a chatgpt-audience token', () => {
     const pair = mintTokenPair('chatgpt-scoped', ['mcp'], chatgptResource(BASE))
@@ -53,8 +59,16 @@ describe('chatgpt wiring (source contract)', () => {
   })
   it('keeps the chatgpt gate on the chatgpt audience (exact equality)', () => {
     const code = readFileSync(join(root, 'src/routes/chatgpt.ts'), 'utf8')
-    assert.ok(code.includes('rec.resource !== chatgptResource(BASE)'))
-    assert.ok(!code.includes("'authorization'"), 'client bearer never crosses the loopback hop')
+    assert.ok(
+      code.includes('rec.resource === chatgptResource(BASE)'),
+      'the audience rule is exact equality, declared in this door\'s own file',
+    )
+  })
+  it('keeps the client bearer off the loopback hop', () => {
+    // The hop mechanism lives in the shared factory now; the rule is asserted
+    // where a new door would have to break it (see scoped-door.test.ts).
+    const shared = readFileSync(join(root, 'src/lib/scoped-door.ts'), 'utf8')
+    assert.ok(!shared.includes("'authorization'"), 'client bearer never crosses the loopback hop')
   })
   it('lets the access gate pass the front door for public clients', () => {
     const gate = readFileSync(join(root, 'src/lib/access-gate.ts'), 'utf8')

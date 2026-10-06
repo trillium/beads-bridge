@@ -250,3 +250,64 @@ sharing: `https://<funnel-host>/chatgpt/mcp`. Regression tests in
 `src/routes/chatgpt.test.ts` (gate matrix incl. wrong-audience refusal +
 `JUNGLE_LIVE=1` proof asserting every tool is `beads-bridge__`-prefixed with
 zero leakage from sibling servers).
+
+## S8/S9 scoped Grok and Gemini doorways (2026-10-06)
+
+Two more scoped group doors, same shape as S7: `/grok/mcp`
+(`src/routes/grok.ts`) and `/gemini/mcp` (`src/routes/gemini.ts`), each
+proxying to its own loopback group endpoint
+(`http://127.0.0.1:8338/v0/groups/{grok,gemini}/mcp`, both
+`included_servers: ["beads-bridge"]` — verify with `mcpjungle get group
+<name>`). Groups are created from the registry side
+(`mcpjungle --registry http://127.0.0.1:8338 create group --conf <file>`;
+the CLI defaults to port 8080 and refuses there, so the flag is required and
+no gateway restart is involved — new groups are visible to new sessions
+immediately).
+
+Why one door per assistant rather than sharing ChatGPT's:
+
+- **Grok** (xAI) uses the same OAuth 2.1 machinery as ChatGPT's connector —
+  RFC 9728 protected-resource metadata, RFC 8414 auth-server metadata, PKCE,
+  Streamable HTTP, DCR — so a bridge that satisfies the ChatGPT connector
+  satisfies Grok's. The same endpoint serves the consumer connector surface
+  (grok.com/connectors → New Connector → Custom) and the Responses API
+  remote-MCP tool.
+- **Gemini** takes a remote HTTPS MCP server URL with OAuth on both surfaces
+  Google documents: the consumer Gemini app (Settings → Connected apps →
+  Custom apps) and Gemini Enterprise (Connected apps → Add MCP Server, or
+  Cloud Console → Data Stores → Custom MCP Server).
+
+Audience isolation is per-door and unchanged in kind: a token minted for
+`/grok/mcp` never opens `/gemini/mcp`, `/chatgpt/mcp`, `/mcp` or
+`/jungle/mcp`, and vice versa. The mechanism (gate, loopback hop, streaming
+sender) lives once in `src/lib/scoped-door.ts`; that factory asserts its
+upstream hostname is `127.0.0.1` at module load, so the loopback boundary is
+mechanical rather than editorial. `src/routes/jungle.ts` deliberately keeps
+its own copy of the mechanism: it aims at the whole gateway (`/mcp`) rather
+than one tool group, it predates the helper, and task scope excluded
+`/jungle/mcp` from refactoring.
+
+### Operator prerequisites a reader will actually hit
+
+- **Gemini Enterprise additionally requires egress allowlisting** of the
+  FQDNs of the MCP server URL, the authorization URL and the token URL. On a
+  funnel host all three are the same hostname
+  (`macbook.hippo-tilapia.ts.net`), so one entry covers them — but the entry
+  must exist before the connector will work, and no route change can supply
+  it. The consumer Gemini app is also eligibility-gated (Gemini Spark, 18+,
+  US) as of this writing.
+- **Gemini CLI is deliberately not wired.** `~/.gemini/settings.json`
+  `mcpServers.<name>.httpUrl` plus optional static `headers` runs no OAuth
+  flow, so it would need a long-lived bearer pasted into a config file rather
+  than the connector flow. If that is ever wanted, mint a dedicated audience
+  and store the token outside the repo.
+- **Registering the connector itself needs a human** in grok.com/connectors
+  or the Gemini app. This document proves the server side (endpoint, auth
+  challenge, discovery, audience separation); it cannot prove the client
+  side.
+
+Regression tests: `src/routes/scoped-doors.test.ts` (table-driven over all
+three doors — gate matrix incl. the all-pairs audience refusal, loopback pin,
+discovery served for real, all-pairs source contract) plus
+`JUNGLE_LIVE=1` parity for the `grok` and `gemini` groups in
+`src/routes/jungle-parity.test.ts`.

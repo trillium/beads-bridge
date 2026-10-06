@@ -25,7 +25,11 @@ import { mcpResource, mintTokenPair } from '../lib/oauth'
 import { mcpRouter } from './mcp'
 
 const JUNGLE_BASE = process.env.JUNGLE_URL ?? 'http://127.0.0.1:8338'
-const CHATGPT_GROUP = `${JUNGLE_BASE}/v0/groups/chatgpt/mcp`
+// Every scoped group door: one beads-bridge-only group each, so a new door
+// whose group was created without the server (or with extra servers) fails
+// parity here rather than in a client session.
+const SCOPED_GROUPS = ['chatgpt', 'grok', 'gemini'] as const
+const groupEndpoint = (name: string): string => `${JUNGLE_BASE}/v0/groups/${name}/mcp`
 
 beforeEach(() => {
   process.env.OAUTH_STORE_PATH = join(mkdtempSync(join(tmpdir(), 'parity-test-')), 'store.json')
@@ -160,11 +164,13 @@ it('full gateway deals every bridge-direct tool (beads-bridge__*)', { timeout: 1
     assertParity(direct, strip(gateway, 'beads-bridge__'), 'jungle full gateway')
   })
 
-it('chatgpt group deals every bridge-direct tool and nothing else', { timeout: 120000 }, async () => {
+for (const group of SCOPED_GROUPS) {
+  it(`${group} group deals every bridge-direct tool and nothing else`, { timeout: 120000 }, async () => {
     if (!process.env.JUNGLE_LIVE) return
     const direct = await bridgeDirectTools()
-    const group = await listTools(CHATGPT_GROUP)
-    assert.ok(group.every((n) => n.startsWith('beads-bridge__')), 'chatgpt group must stay beads-bridge-only')
-    assertParity(direct, strip(group, 'beads-bridge__'), 'chatgpt group')
+    const tools = await listTools(groupEndpoint(group))
+    assert.ok(tools.every((n) => n.startsWith('beads-bridge__')), `${group} group must stay beads-bridge-only`)
+    assertParity(direct, strip(tools, 'beads-bridge__'), `${group} group`)
   })
+}
 })
