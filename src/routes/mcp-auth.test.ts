@@ -20,7 +20,7 @@ import { join } from 'node:path'
 import express from 'express'
 import type { Request } from 'express'
 import { BASE, toolKey } from '../config'
-import { chatgptResource, jungleResource, mcpResource, mintTokenPair } from '../lib/oauth'
+import { chatgptResource, geminiResource, grokResource, jungleResource, mcpResource, mintTokenPair } from '../lib/oauth'
 import { isLoopbackServiceCall, mcpRouter } from './mcp'
 
 beforeEach(() => {
@@ -208,6 +208,22 @@ describe('/mcp over HTTP (dual-gate contract)', () => {
 
   it('chatgpt-audience token does not cross-accept on /mcp', { timeout: 30000 }, async () => {
     const pair = mintTokenPair('chatgpt-scoped', ['mcp'], chatgptResource(BASE))
+    await withApp(async (base) => {
+      const denied = await rpc(base, { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }, pair.accessToken)
+      assert.equal(denied.status, 401)
+    })
+  })
+
+  it('grok-audience token does not cross-accept on /mcp', { timeout: 30000 }, async () => {
+    const pair = mintTokenPair('grok-scoped', ['mcp'], grokResource(BASE))
+    await withApp(async (base) => {
+      const denied = await rpc(base, { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }, pair.accessToken)
+      assert.equal(denied.status, 401)
+    })
+  })
+
+  it('gemini-audience token does not cross-accept on /mcp', { timeout: 30000 }, async () => {
+    const pair = mintTokenPair('gemini-scoped', ['mcp'], geminiResource(BASE))
     await withApp(async (base) => {
       const denied = await rpc(base, { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }, pair.accessToken)
       assert.equal(denied.status, 401)

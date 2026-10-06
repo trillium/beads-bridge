@@ -73,7 +73,7 @@ const funnelHeaders = (extra: Record<string, string> = {}): Record<string, strin
 })
 
 describe('classifier: public-by-design setup paths', () => {
-  for (const p of ['/mcp', '/jungle/mcp', '/oauth/token', '/oauth/authorize', '/.well-known/oauth-protected-resource', '/.well-known/oauth-authorization-server/mcp']) {
+  for (const p of ['/mcp', '/jungle/mcp', '/chatgpt/mcp', '/grok/mcp', '/gemini/mcp', '/oauth/token', '/oauth/authorize', '/.well-known/oauth-protected-resource', '/.well-known/oauth-authorization-server/mcp']) {
     it(`${p} passes the gate without a credential (downstream owns auth)`, () => {
       assert.equal(verdictOf({ path: p, headers: funnelHeaders() }), 'ALLOW:mcp')
     })

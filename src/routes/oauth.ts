@@ -12,13 +12,16 @@ import { mountFetch } from '../lib/express-fetch'
 import {
   SUPPORTED_SCOPES,
   TX_TTL_MS,
+  audienceResources,
   buildAuthorizationServerMetadata,
   chatgptResource,
   checkApproval,
   cimdRedirectUris,
   consumeCode,
+  geminiResource,
   getSetupKey,
   grantApproval,
+  grokResource,
   jungleResource,
   lookupAccess,
   mcpResource,
@@ -101,6 +104,12 @@ mountFetch(oauthRouter, '/.well-known/oauth-protected-resource/jungle/mcp', jung
 // cross-accept with bridge-direct or full-jungle tokens.
 const chatgptProtectedHandler = protectedResourceHandler({ authServerUrls: [ISSUER], resourceUrl: chatgptResource(BASE) })
 mountFetch(oauthRouter, '/.well-known/oauth-protected-resource/chatgpt/mcp', chatgptProtectedHandler)
+// Scoped Grok front-door audience (resource https://host/grok/mcp).
+const grokProtectedHandler = protectedResourceHandler({ authServerUrls: [ISSUER], resourceUrl: grokResource(BASE) })
+mountFetch(oauthRouter, '/.well-known/oauth-protected-resource/grok/mcp', grokProtectedHandler)
+// Scoped Gemini front-door audience (resource https://host/gemini/mcp).
+const geminiProtectedHandler = protectedResourceHandler({ authServerUrls: [ISSUER], resourceUrl: geminiResource(BASE) })
+mountFetch(oauthRouter, '/.well-known/oauth-protected-resource/gemini/mcp', geminiProtectedHandler)
 
 const authorizationHandler = (_req: Request, res: Response) => {
   res.json(buildAuthorizationServerMetadata(ISSUER))
@@ -115,6 +124,10 @@ oauthRouter.get('/.well-known/oauth-authorization-server/mcp', authorizationHand
 oauthRouter.get('/.well-known/oauth-authorization-server/jungle/mcp', authorizationHandler)
 // Scoped ChatGPT front-door audience (resource https://host/chatgpt/mcp).
 oauthRouter.get('/.well-known/oauth-authorization-server/chatgpt/mcp', authorizationHandler)
+// Scoped Grok front-door audience (resource https://host/grok/mcp).
+oauthRouter.get('/.well-known/oauth-authorization-server/grok/mcp', authorizationHandler)
+// Scoped Gemini front-door audience (resource https://host/gemini/mcp).
+oauthRouter.get('/.well-known/oauth-authorization-server/gemini/mcp', authorizationHandler)
 
 // ── Dynamic client registration (RFC 7591, public clients) ──────────────────
 
@@ -197,7 +210,7 @@ oauthRouter.get('/oauth/authorize', async (req: Request, res: Response) => {
   }
   const resource = normalizeResource(BASE, str(q.resource))
   if (!resource) {
-    return void redirectError(res, redirectUri, 'invalid_target', state, `resource must be one of ${RESOURCE}, ${jungleResource(BASE)}, ${chatgptResource(BASE)}`)
+    return void redirectError(res, redirectUri, 'invalid_target', state, `resource must be one of ${audienceResources(BASE).join(', ')}`)
   }
   const scope = parseScope(str(q.scope) || undefined)
   if (!scope) {

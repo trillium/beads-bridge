@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+- Scoped front doors for Grok and Gemini (`/grok/mcp`, `/gemini/mcp`), each an
+  OAuth-gated streaming proxy to its own loopback MCPJungle tool group
+  (`grok` / `gemini`, both `included_servers: ["beads-bridge"]`) with its own
+  OAuth audience — so a token minted for one assistant's door never opens
+  another's, nor `/mcp` or `/jungle/mcp`. Discovery is served per audience at
+  `/.well-known/oauth-protected-resource{/grok/mcp,/gemini/mcp}` and
+  `/.well-known/oauth-authorization-server{…}`, and both paths are
+  public-by-design at the access gate (the bearer is enforced downstream, as
+  for the existing doors). No new public exposure: these routes only serve
+  wherever the bridge already serves. Grok and Gemini both consume remote MCP
+  over OAuth 2.1 (RFC 9728 + RFC 8414 discovery, PKCE, Streamable HTTP, DCR),
+  which is the machinery the bridge already ran for ChatGPT.
+
+  The mechanism for the group-scoped doors is now written once
+  (`src/lib/scoped-door.ts`) instead of copy-pasted per assistant: the shared
+  factory asserts its upstream hostname is `127.0.0.1` at load, so the
+  loopback boundary cannot be edited away by changing a URL, while each door
+  file still declares its exact-audience predicate in one readable line and
+  keeps its own loopback const. `src/routes/chatgpt.ts` moved onto that
+  factory with byte-identical behaviour; `src/routes/jungle.ts` (the
+  full-gateway door, which aims at `/mcp` rather than a tool group) is
+  deliberately left as the original. Every audience the server mints for now
+  comes from one list (`audienceResources`) that both resource normalization
+  and the `invalid_target` rejection read, so a door cannot be mounted but
+  forgotten there. Tests: `src/routes/scoped-doors.test.ts` (table-driven
+  across all three doors — all-pairs audience refusal, loopback pin,
+  discovery served for real, source contract) plus per-group `JUNGLE_LIVE=1`
+  parity. See docs/jungle-gateway.md "S8/S9", which also records what a
+  Gemini Enterprise setup additionally needs (egress FQDN allowlisting for
+  the server, authorization and token URLs) and why Gemini CLI is not wired.
+
 - Store-name aliases resolve in BOTH directions (task-7pqcz): the
   singular/plural rule was one-way — it derived a plural from a registered
   singular (`inbox` → `inboxes`) but never a singular from a registered

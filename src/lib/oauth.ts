@@ -91,17 +91,29 @@ export function validateCimdDoc(clientId: string, doc: unknown): { ok: boolean; 
   return { ok: true, redirectUris: d.redirect_uris as string[] }
 }
 
-// Canonical MCP resources this server protects. Null when the client asks
-// for anything else (RFC 8707 audience binding). All entries are returned
-// verbatim so each gate can enforce exact-audience equality: a token minted
-// for one audience never opens another (/mcp, /jungle/mcp, /chatgpt/mcp).
+// Canonical MCP resources this server protects, in one place. Null when the
+// client asks for anything else (RFC 8707 audience binding). All entries are
+// returned verbatim so each gate can enforce exact-audience equality: a token
+// minted for one audience never opens another (/mcp, /jungle/mcp, and the
+// scoped group doors /chatgpt/mcp, /grok/mcp, /gemini/mcp).
+//
+// One source of truth on purpose: `normalizeResource` and the
+// `invalid_target` rejection both read this list, so a door cannot be mounted
+// but forgotten here, nor listed here but not mounted.
+export function audienceResources(base: string): string[] {
+  const bare = base.replace(/\/$/, '')
+  return [
+    `${bare}/mcp`,
+    `${bare}/jungle/mcp`,
+    `${bare}/chatgpt/mcp`,
+    `${bare}/grok/mcp`,
+    `${bare}/gemini/mcp`,
+  ]
+}
+
 export function normalizeResource(base: string, resource: string): string | null {
   const got = resource.replace(/\/$/, '')
-  const bare = `${base.replace(/\/$/, '')}`
-  if (got === `${bare}/mcp`) return `${bare}/mcp`
-  if (got === `${bare}/jungle/mcp`) return `${bare}/jungle/mcp`
-  if (got === `${bare}/chatgpt/mcp`) return `${bare}/chatgpt/mcp`
-  return null
+  return audienceResources(base).find((r) => r === got) ?? null
 }
 
 export function mcpResource(base: string): string {
@@ -122,6 +134,27 @@ export function jungleResource(base: string): string {
 // scoped tokens never cross-accept with /mcp or /jungle/mcp.
 export function chatgptResource(base: string): string {
   return `${base.replace(/\/$/, '')}/chatgpt/mcp`
+}
+
+// Scoped Grok front-door resource: the same shape as the ChatGPT door, aimed
+// at the loopback MCPJungle `grok` tool group (see src/routes/grok.ts), which
+// contains only the beads-bridge server. Grok's connector flow is the same
+// OAuth 2.1 machinery (RFC 9728 + RFC 8414 discovery, DCR, PKCE, Streamable
+// HTTP), so it is served by the same bridge OAuth server with its own
+// audience. A distinct audience so grok tokens never cross-accept.
+export function grokResource(base: string): string {
+  return `${base.replace(/\/$/, '')}/grok/mcp`
+}
+
+// Scoped Gemini front-door resource: same shape again, aimed at the loopback
+// MCPJungle `gemini` tool group (see src/routes/gemini.ts). The consumer
+// Gemini app and Gemini Enterprise both take a remote HTTPS MCP server URL
+// with OAuth; Gemini CLI (`~/.gemini/settings.json` `httpUrl` + static
+// headers) has no OAuth flow, so it would need a static header instead — see
+// docs/jungle-gateway.md. A distinct audience so gemini tokens never
+// cross-accept.
+export function geminiResource(base: string): string {
+  return `${base.replace(/\/$/, '')}/gemini/mcp`
 }
 
 export function parseScope(scope: string | undefined): string[] | null {
