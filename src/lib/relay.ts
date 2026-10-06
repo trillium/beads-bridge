@@ -1,11 +1,12 @@
 import { beadText, execStdout, mapLimit } from './exec'
-import { runList, runListAsync, showBeadAsync } from '../routes/query/store'
+import { runList, runListAsync, showBeadAsync, beadUpdatedAt } from '../routes/query/store'
 import { cleanLabel, type Row } from '../routes/query/params'
 import { createBead } from './create'
 import { editBead } from './edit'
 import { commentBead, labelBead, noteBead } from './mutate'
 import { requireVerified } from './receipts'
 import { storeFromId } from '../util'
+import { renderStamp } from './age'
 import { STORES } from '../config'
 import {
   ambiguousBeadIdError,
@@ -547,6 +548,13 @@ export interface VerifyHit {
   id: string
   title: string
   store: string
+  /**
+   * The STORE's own update time for the bead (`updated_at` from the list
+   * read). A source timestamp for "this bead last changed then" — carried
+   * so the verification is stamped with the store's time, not the bridge's
+   * touch time (task-60f3z). Absent when the store reported none.
+   */
+  updatedAt?: string
 }
 
 export async function verifyWork(query: string, store?: string): Promise<{ found: boolean; hits: VerifyHit[]; detail: string }> {
@@ -565,14 +573,18 @@ export async function verifyWork(query: string, store?: string): Promise<{ found
   }
   const idStore = storeFromId(q)
   if (idStore && (!canonicalStore || canonicalStore === idStore)) {
-    const [body, comments] = await Promise.all([
+    const [body, comments, updatedAt] = await Promise.all([
       beadText(idStore, ['show', q]),
       beadText(idStore, ['comments', q]),
+      // The store's own last-change time (source): a verification is
+      // evidence about the bead, so its reported time must be the bead's
+      // time, not the moment the bridge looked (task-60f3z).
+      beadUpdatedAt(idStore, q),
     ])
     const found = !/unknown|no such|not found/i.test(body.slice(0, 200))
     return {
       found,
-      hits: found ? [{ id: q, title: body.split('\n')[0].slice(0, 160), store: idStore }] : [],
+      hits: found ? [{ id: q, title: body.split('\n')[0].slice(0, 160), store: idStore, ...(updatedAt ? { updatedAt } : {}) }] : [],
       detail: found ? (comments ? `${body}\n\n## Comments\n${comments}` : body).slice(0, 2000) : `no bead ${q} in ${idStore}`,
     }
   }
@@ -587,7 +599,7 @@ export async function verifyWork(query: string, store?: string): Promise<{ found
         limit: 8,
         allStates: true,
       })
-      return rows.map((r: Row) => ({ id: r.id, title: r.title, store: s }))
+      return rows.map((r: Row) => ({ id: r.id, title: r.title, store: s, ...(r.updatedAt ? { updatedAt: r.updatedAt } : {}) }))
     } catch {
       return [] as VerifyHit[]
     }
@@ -698,9 +710,12 @@ export function formatProjectList(rows: RankRow[], scope: string): string {
   })].join('\n')
 }
 
-export function formatVerify(found: boolean, hits: VerifyHit[], detail: string): string {
+export function formatVerify(found: boolean, hits: VerifyHit[], detail: string, now: number = Date.now()): string {
   const head = found ? `# verify — found (${hits.length})` : `# verify — not found`
-  const lines = hits.slice(0, 10).map((h) => `- ${h.id} — ${h.title} [${h.store}]`)
+  // Each hit carries the STORE's own last-change time plus its age against
+  // this read: "found" alone never says whether the work is fresh or stale
+  // evidence (task-60f3z).
+  const lines = hits.slice(0, 10).map((h) => `- ${h.id} — ${h.title} [${h.store}] — ${renderStamp(h.updatedAt, now)}`)
   return [head, ``, ...lines, ``, detail].join('\n')
 }
 

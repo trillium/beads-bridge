@@ -15,6 +15,7 @@ import {
   HEARTBEAT_TEMPLATE_ENV,
   advanceHeartbeatCursor,
   heartbeatCursor,
+  heartbeatReading,
   loadHeartbeatTemplate,
   renderHeartbeatBlock,
   renderHeartbeatTemplate,
@@ -147,10 +148,10 @@ describe('template rendering', () => {
   it('selects changed/empty blocks and fills placeholders', () => {
     const tpl = '[{{mode}}:{{count}}]{{#changed}}<{{items}}>{{/changed}}{{#empty}}E{{/empty}}'
     assert.equal(
-      renderHeartbeatTemplate(tpl, { mode: 'delta', count: 2, items: 'a\nb' }),
+      renderHeartbeatTemplate(tpl, { mode: 'delta', count: 2, items: 'a\nb', read: 'T0' }),
       '[delta:2]<a\nb>',
     )
-    assert.equal(renderHeartbeatTemplate(tpl, { mode: 'delta', count: 0, items: '' }), '[delta:0]E')
+    assert.equal(renderHeartbeatTemplate(tpl, { mode: 'delta', count: 0, items: '', read: 'T0' }), '[delta:0]E')
   })
   it('loads a filesystem template so wording evolves without code changes', () => {
     const dir = mkdtempSync(join(tmpdir(), 'hb-'))
@@ -184,5 +185,112 @@ describe('template rendering', () => {
     advanceHeartbeatCursor('c', T0 + 2000)
     const out = renderHeartbeatBlock('c', { tracker: t, now: T0 + 3000 })
     assert.match(out, new RegExp(HEARTBEAT_EMPTY_NOTICE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+  })
+})
+
+// ---- timestamps + computed ages (task-60f3z) ----
+//
+// The 2026-10-06 failure: a worker status said "working" while its last
+// meaningful action was minutes old, because the heartbeat row carried no
+// time at all. These tests pin the three rules that fix it — source time is
+// preserved, a touch-only time is labeled as such, and the age is measured
+// against the read.
+describe('event timestamps and ages (task-60f3z)', () => {
+  const READ = T0 + 30 * 60_000
+
+  function mixed(): RelayStatusTracker {
+    const t = new RelayStatusTracker()
+    // Source timestamp: the store's own last-change time for this bead.
+    t.touch({
+      id: 'task-src',
+      kind: 'task',
+      title: 'Store says it changed 20 minutes ago',
+      now: T0 + 60_000,
+      at: new Date(READ - 20 * 60_000).toISOString(),
+    })
+    // Touch only: the bridge acted, but nothing carries an event time.
+    t.touch({ id: 'task-touch', kind: 'dispatch', title: 'Dispatched, no source time', now: T0 + 2 * 60_000 })
+    return t
+  }
+
+  it('renders every row with a timestamp and an age against this read', () => {
+    const out = renderHeartbeatBlock('c', { tracker: mixed(), now: READ })
+    assert.match(out, /read at \d{4}-\d\d-\d\dT/)
+    assert.match(out, /- task-src \[task\/touched\].*20 minutes ago/)
+    assert.match(out, /- task-touch \[dispatch\/touched\].*28 minutes ago/)
+  })
+
+  it('makes stale and fresh evidence unmistakable in one block', () => {
+    const t = new RelayStatusTracker()
+    t.touch({ id: 'task-fresh', kind: 'task', title: 'Fresh', now: READ })
+    t.touch({ id: 'task-old', kind: 'task', title: 'Stale proof', now: READ - 47 * 60_000 })
+    const out = renderHeartbeatBlock('c', { tracker: t, now: READ })
+    assert.match(out, /- task-fresh .*just now/)
+    assert.match(out, /- task-old .*47 minutes ago/)
+  })
+
+  it('preserves the SOURCE time and never substitutes the touch time', () => {
+    const t = mixed()
+    const src = t.get('task-src')
+    assert.ok(src)
+    assert.equal(src.timeBasis, 'source')
+    assert.equal(src.eventAt, new Date(READ - 20 * 60_000).toISOString())
+    assert.notEqual(src.eventAt, src.lastTouchedAt, 'the bridge touch is not the event time')
+    const out = renderHeartbeatBlock('c', { tracker: t, now: READ })
+    assert.match(out, /at \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d\d\dZ \(20 minutes ago\)/)
+    assert.match(out, /· touched /, 'the touch stays visible beside the source time')
+  })
+
+  it('labels a touch-only time as a touch, not the action own time', () => {
+    const t = mixed()
+    const touched = t.get('task-touch')
+    assert.ok(touched)
+    assert.equal(touched.timeBasis, 'touch')
+    assert.equal(touched.eventAt, undefined, 'a touch is never backfilled as an event time')
+    const out = renderHeartbeatBlock('c', { tracker: t, now: READ })
+    assert.match(out, /touched \d{4}-\d\d-\d\dT[^)]*touch time/)
+  })
+
+  it('stays inside the char budget with timestamps on every row', () => {
+    const t = new RelayStatusTracker()
+    for (let i = 0; i < 8; i++) {
+      t.touch({ id: `task-${i}`, kind: 'task', title: `row ${i}`, now: READ - i * 60000 })
+    }
+    const out = renderHeartbeatBlock('c', { tracker: t, now: READ })
+    assert.ok(out.length <= HEARTBEAT_MAX_CHARS, `block is ${out.length} chars`)
+    assert.match(out, /ago|just now/)
+  })
+
+  it('heartbeatReading ships the data needed to recompute the delta', () => {
+    const r = heartbeatReading('c', { tracker: mixed(), now: READ })
+    assert.equal(r.mode, 'baseline')
+    assert.equal(r.readAtMs, READ)
+    assert.equal(r.readAt, new Date(READ).toISOString())
+    assert.equal(r.count, 2)
+    const src = r.items.find((i) => i.id === 'task-src')
+    assert.ok(src)
+    assert.equal(src.basis, 'source')
+    assert.equal(src.event.atMs, READ - 20 * 60_000)
+    assert.equal(src.event.ageMs, 20 * 60_000)
+    assert.equal(src.event.age, '20 minutes ago')
+    // The touch is carried separately, never in place of the event.
+    assert.equal(src.touched.atMs, T0 + 60_000)
+    const touch = r.items.find((i) => i.id === 'task-touch')
+    assert.ok(touch)
+    assert.equal(touch.basis, 'touch')
+    assert.equal(touch.event.ageMs, 28 * 60_000)
+  })
+
+  it('heartbeatReading mirrors the cursor split without acknowledging anything', () => {
+    const t = mixed()
+    advanceHeartbeatCursor('c', T0 + 10_000)
+    const r = heartbeatReading('c', { tracker: t, now: READ })
+    assert.equal(r.mode, 'delta')
+    assert.equal(r.count, 2)
+    assert.equal(heartbeatCursor('c'), T0 + 10_000, 'reading data never advances the cursor')
+    renderHeartbeatBlock('c', { tracker: t, now: READ })
+    const empty = heartbeatReading('c', { tracker: t, now: READ })
+    assert.equal(empty.mode, 'delta')
+    assert.equal(empty.count, 0, 'acknowledged read empties the delta')
   })
 })

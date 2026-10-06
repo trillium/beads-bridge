@@ -1,7 +1,21 @@
 import { stalenessTriple } from './capabilities'
+import { parseStampMs, stampFieldsOf, type StampFields } from './age'
 
 export type RelayItemState = 'active' | 'waiting' | 'failed' | 'done' | 'stale'
 export type RelayItemKind = 'task' | 'dispatch' | 'verify' | 'note' | 'completion' | 'failure'
+
+/**
+ * Which timestamp an item's reported time is (task-60f3z).
+ *
+ * - `source`: the event's OWN time — the store's `updated_at`, or a
+ *   caller-supplied occurrence time. Reported as the item's time; the bridge
+ *   touch is kept alongside it, never in its place.
+ * - `touch`: only the bridge knows when it touched the id. Rendered with an
+ *   explicit `touched` marker so it can never be read as the action's own
+ *   time (the 2026-10-06 failure: a 10-minute-old proof rendered as a
+ *   current "working" claim because nothing said how old it was).
+ */
+export type RelayTimeBasis = 'source' | 'touch'
 
 export interface RelayItem {
   id: string
@@ -9,6 +23,13 @@ export interface RelayItem {
   title: string
   state: Exclude<RelayItemState, 'stale'>
   lastTouchedAt: string
+  /**
+   * The event's own time when the SOURCE provided one. Never set from the
+   * touch time: an absent source time is reported as absent (`basis: 'touch'`),
+   * not backfilled with the bridge's own clock.
+   */
+  eventAt?: string
+  timeBasis: RelayTimeBasis
   pinned: boolean
   needsVerify: boolean
 }
@@ -55,9 +76,38 @@ export function activityStateLabel(state: RelayItemState): string {
   return state === 'active' ? 'touched' : state
 }
 
+/**
+ * Re-stamp an existing item: the touch time is always refreshed, the event
+ * time is set ONLY from a source timestamp that parses (a missing or
+ * unusable source time clears the previous one rather than leaving a stale
+ * event time paired with a fresh touch).
+ */
+function applyTiming(item: RelayItem, now: number, at?: string | number | Date | null): void {
+  item.lastTouchedAt = new Date(now).toISOString()
+  const sourceMs = parseStampMs(at)
+  if (sourceMs == null) {
+    delete item.eventAt
+    item.timeBasis = 'touch'
+    return
+  }
+  item.eventAt = new Date(sourceMs).toISOString()
+  item.timeBasis = 'source'
+}
+
 export class RelayStatusTracker {
   private items = new Map<string, RelayItem>()
 
+  /**
+   * Record a bridge action on an id.
+   *
+   * `now` is the bridge's touch time (always set). `at` is the OPTIONAL
+   * source time of the event itself — the store's `updated_at`, a bead
+   * receipt's time, or a caller-declared occurrence time. When `at` parses,
+   * it becomes the item's reported event time and `timeBasis` is `source`;
+   * otherwise the item is `touch` and every renderer says so. A source time
+   * is never replaced by the touch time, and the touch time is never passed
+   * off as the action's own.
+   */
   touch(input: {
     id: string
     kind: RelayItemKind
@@ -66,15 +116,20 @@ export class RelayStatusTracker {
     pinned?: boolean
     needsVerify?: boolean
     now?: number
+    at?: string | number | Date | null
   }): RelayItem {
     const id = input.id.trim()
     const prev = this.items.get(id)
+    const touchedMs = input.now ?? Date.now()
+    const sourceMs = parseStampMs(input.at)
     const item: RelayItem = {
       id,
       kind: input.kind,
       title: (input.title ?? prev?.title ?? id).replace(/\s+/g, ' ').trim().slice(0, 120) || id,
       state: input.state ?? (prev?.state === 'failed' ? 'failed' : 'active'),
-      lastTouchedAt: new Date(input.now ?? Date.now()).toISOString(),
+      lastTouchedAt: new Date(touchedMs).toISOString(),
+      ...(sourceMs == null ? {} : { eventAt: new Date(sourceMs).toISOString() }),
+      timeBasis: sourceMs == null ? 'touch' : 'source',
       pinned: input.pinned ?? prev?.pinned ?? false,
       needsVerify: input.needsVerify ?? false,
     }
@@ -84,21 +139,21 @@ export class RelayStatusTracker {
     return item
   }
 
-  markVerified(id: string, now: number = Date.now()): RelayItem | null {
+  markVerified(id: string, now: number = Date.now(), at?: string | number | Date | null): RelayItem | null {
     const item = this.items.get(id.trim())
     if (!item) return null
     item.needsVerify = false
-    item.lastTouchedAt = new Date(now).toISOString()
+    applyTiming(item, now, at)
     if (item.state === 'failed') item.state = 'active'
     return item
   }
 
-  markDone(id: string, now: number = Date.now()): RelayItem | null {
+  markDone(id: string, now: number = Date.now(), at?: string | number | Date | null): RelayItem | null {
     const item = this.items.get(id.trim())
     if (!item) return null
     item.state = 'done'
     item.needsVerify = false
-    item.lastTouchedAt = new Date(now).toISOString()
+    applyTiming(item, now, at)
     return item
   }
 
@@ -161,12 +216,74 @@ export class RelayStatusTracker {
 
 export const relayStatus = new RelayStatusTracker()
 
+/**
+ * Everything a consumer needs to judge an item's freshness WITHOUT parsing a
+ * rendered string (task-60f3z): which kind of time this is, the raw ISO and
+ * epoch-ms of the event, and the age already computed against the read time.
+ *
+ * `event` is the time to reason about (source time when the source gave one,
+ * else the bridge touch — labeled by `basis` so the consumer knows which).
+ * `touched` is always the bridge's own touch, kept separate so a source
+ * timestamp is never overwritten by it.
+ */
+export interface RelayItemTiming {
+  id: string
+  kind: RelayItemKind
+  state: RelayItemState
+  /** Which timestamp `event` is. */
+  basis: RelayTimeBasis
+  /** Event time (source time, or the touch when no source time exists). */
+  event: StampFields
+  /** The bridge's own touch — always present, never standing in for the event. */
+  touched: StampFields
+}
+
+/** Resolve an item's reported event time per the source-preserving rule. */
+export function relayItemEventMs(item: RelayItem): number | null {
+  return parseStampMs(item.timeBasis === 'source' ? item.eventAt : item.lastTouchedAt)
+}
+
+/** Structured timing for one item, ages computed against the read time. */
+export function relayItemTiming(item: RelayItem, state: RelayItemState, now: number = Date.now()): RelayItemTiming {
+  return {
+    id: item.id,
+    kind: item.kind,
+    state,
+    basis: item.timeBasis,
+    event: stampFieldsOf(relayItemEventMs(item), now),
+    touched: stampFieldsOf(item.lastTouchedAt, now),
+  }
+}
+
+/** Structured timing for a whole projection (the MCP payload shape). */
+export function relayTimings(
+  tracker: RelayStatusTracker = relayStatus,
+  now: number = Date.now(),
+): RelayItemTiming[] {
+  return tracker.list(now).map(({ item, state }) => relayItemTiming(item, state, now))
+}
+
+/**
+ * Rendered stamp for one item: absolute time + age + an explicit basis
+ * marker. Source items show their event time AND the touch; touch-only items
+ * say so in words, so nobody can read a touch as the action's own time.
+ */
+export function renderItemStamp(item: RelayItem, now: number = Date.now()): string {
+  const event = stampFieldsOf(relayItemEventMs(item), now)
+  if (item.timeBasis === 'source' && event.at) {
+    const touched = stampFieldsOf(item.lastTouchedAt, now)
+    return `at ${event.at} (${event.age}) · touched ${touched.at} (${touched.age})`
+  }
+  return `touched ${item.lastTouchedAt} (${event.age}, touch time — not the action's own time)`
+}
+
 export function formatRelayBody(
   tracker: RelayStatusTracker = relayStatus,
   now: number = Date.now(),
 ): string {
   const rows = tracker.list(now)
   const lines = ['## relay-status (ephemeral bridge-activity projection — never bead lifecycle; Beads stores are authoritative)']
+  lines.push(`read at ${new Date(now).toISOString()} — every age below is measured against this read; "at" is the event's own source time, "touched" is the bridge's touch`)
   if (!rows.length) {
     lines.push('clear — nothing touched recently')
   } else {
@@ -175,7 +292,7 @@ export function formatRelayBody(
         item.pinned ? 'pinned' : null,
         item.needsVerify ? 'needs-verify' : null,
       ].filter(Boolean).join(',')
-      lines.push(`- ${item.id} [${item.kind}/${activityStateLabel(state)}] ${item.title}${flags ? ` (${flags})` : ''} touched=${item.lastTouchedAt}`)
+      lines.push(`- ${item.id} [${item.kind}/${activityStateLabel(state)}] ${item.title}${flags ? ` (${flags})` : ''} — ${renderItemStamp(item, now)}`)
     }
     for (const f of tracker.followups(now)) {
       lines.push(`followup: ${f.tool} ${f.id} — ${f.reason}`)
@@ -203,4 +320,18 @@ export function withRelayStatus(
   now: number = Date.now(),
 ): string {
   return `${body}\n\n${formatRelayStatus(tracker, now)}`
+}
+
+/**
+ * The relay-status read as data: the read time plus per-item source/touch
+ * timestamps and ages. Shipped alongside the rendered body so a consumer can
+ * recompute any delta against its own clock instead of re-parsing prose
+ * (task-60f3z requirement 3).
+ */
+export function relayStatusReading(
+  tracker: RelayStatusTracker = relayStatus,
+  now: number = Date.now(),
+): { readAt: string; readAtMs: number; count: number; items: RelayItemTiming[] } {
+  const items = relayTimings(tracker, now)
+  return { readAt: new Date(now).toISOString(), readAtMs: now, count: items.length, items }
 }

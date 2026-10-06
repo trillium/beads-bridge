@@ -40,6 +40,8 @@ export function parseRows(stdout: string): Row[] {
       id: String(x.id ?? x.bead_id ?? '?'),
       title: String(x.title ?? '').slice(0, 120),
       labels: Array.isArray(x.labels) ? (x.labels as unknown[]).map(String) : [],
+      // Source timestamp: the store's own update time, never a bridge clock.
+      ...(typeof x.updated_at === 'string' && x.updated_at ? { updatedAt: x.updated_at } : {}),
     }))
     .filter((x) => x.id !== '?')
 }
@@ -94,6 +96,22 @@ export async function showBeadAsync(store: string, id: string): Promise<string |
   try {
     const t = await execStdout(store, ['show', id], 12000)
     return t || null
+  } catch {
+    return null
+  }
+}
+
+// The bead's own update time, from `bd show <id> --json`. A SOURCE
+// timestamp for "this bead last changed at" — so a surface can report the
+// store's own time instead of the bridge's touch time (task-60f3z). Returns
+// null when the store reports no timestamp; never a substitute clock.
+export async function beadUpdatedAt(store: string, id: string): Promise<string | null> {
+  try {
+    const out = await execStdout(store, ['show', id, '--json'], 12000)
+    const parsed = JSON.parse(out || 'null') as unknown
+    const row = Array.isArray(parsed) ? parsed[0] : parsed
+    const t = (row as { updated_at?: unknown } | null)?.updated_at
+    return typeof t === 'string' && t ? t : null
   } catch {
     return null
   }

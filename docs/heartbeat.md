@@ -63,6 +63,41 @@ next heartbeat while `retrieval_activity` (live store reads) showed it.
 changes. Cursors and the projection are in-memory: a bridge restart
 resets every caller to baseline.
 
+## Event timestamps and ages (task-60f3z)
+
+Every reported action carries the time of the event **and** its age against
+the read that reported it (`observed 10 minutes ago`). On 2026-10-06 a
+worker's status said "working" while its last meaningful action was minutes
+old, because heartbeat rows carried no time and the one time that did appear
+was the bridge's own touch time. Three rules hold across every surface
+(`src/lib/age.ts` is the single vocabulary):
+
+1. **SOURCE time wins.** When the source carries its own timestamp (a store's
+   `updated_at`, a caller-supplied occurrence time) it is reported as the
+   event's time and the bridge touch is shown beside it, never in its place.
+   `RelayStatusTracker.touch({ at })` takes that source time; it is never
+   back-filled from the touch.
+2. **A touch-only time is labeled.** With no source time the row reads
+   `touched <iso> (<age>, touch time — not the action's own time)`, never a
+   bare `at`. A missing or unparseable timestamp renders `age unknown` — the
+   bridge never invents one.
+3. **Ages are measured against the READ.** Every renderer takes an injected
+   `now`, so a block read ten minutes later reports the newer age, and all
+   ages within one response are mutually comparable.
+
+Rendered rows: `at <iso> (<age>) · touched <iso> (<age>)` for a source item,
+`touched <iso> (<age>, touch time …)` otherwise. Heartbeat blocks and
+relay-status bodies lead with `read at <iso>` so the anchor is explicit.
+
+### Machine-readable timing
+
+`heartbeat` and `relay_status` return a second content block —
+`timing (JSON …)` — carrying `readAt`/`readAtMs` plus, per item, `basis`,
+`event.{at,atMs,ageMs,age}` and `touched.{at,atMs,ageMs,age}`. A consumer
+computes its own delta from those fields instead of parsing the rendered
+string (`src/lib/heartbeat.ts heartbeatReading`,
+`src/lib/relay-status.ts relayStatusReading`).
+
 ## Loop prevention
 
 Follow-ons return footer text, never tool calls (terminal by
@@ -77,7 +112,8 @@ store reads/writes, no agent requests (proven in
 Wording lives in `config/heartbeat.md` (override path via
 `HEARTBEAT_TEMPLATE_FILE`), reloaded per composition — no code change,
 no restart needed for wording. Placeholders: `{{mode}}`
-(`baseline`|`delta`), `{{count}}`, `{{items}}`; blocks
+(`baseline`|`delta`), `{{count}}`, `{{items}}`, `{{read}}` (the read time every
+age is measured against); blocks
 `{{#changed}}…{{/changed}}` / `{{#empty}}…{{/empty}}` select on
 whether anything changed. A template missing `{{count}}`, or any read
 failure, falls back to the built-in default — config can never fail a
