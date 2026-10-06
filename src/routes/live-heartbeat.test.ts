@@ -12,7 +12,7 @@ import assert from 'node:assert/strict'
 import express from 'express'
 import { liveRouter } from './activity'
 import { resetActivity } from '../lib/activity'
-import { resetViewState, type SidecarViewFrame } from '../lib/view-state'
+import { resetViewState } from '../lib/view-state'
 import {
   HEARTBEAT_STALE_AFTER_MS,
   currentHeartbeatFrame,
@@ -240,7 +240,10 @@ describe('/live persistent heartbeat', () => {
         // A page that only applies view frames is unaffected by the new event.
         const views = viewer.namedEvents.filter((n) => n === 'view')
         assert.ok(views.length >= 1)
-        const hb = viewer.heartbeats[0] as SidecarViewFrame & { kind?: string }
+        // The viewer collects heartbeat frames as HeartbeatFrame (their own
+        // kind/event/rev), NOT as view frames: no cast to SidecarViewFrame is
+        // needed or truthful (a heartbeat frame has no drawer/selectedSeq).
+        const hb = viewer.heartbeats[0]
         assert.equal(hb.kind, 'heartbeat', 'heartbeat frames are typed, activity frames stay untyped')
       } finally {
         await viewer.close()
