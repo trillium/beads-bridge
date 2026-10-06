@@ -8,6 +8,7 @@ It serves three faces from one Express process:
 - **MCP server at `/mcp`** — 36 tools (show, create, edit, comment, label, search, retrieval, projects/relay ops, …) over the same operations as the GET routes.
 - **OAuth 2.1 authorization server** — Dynamic Client Registration, human approval, auth-code + PKCE exchange, refresh rotation — co-hosted so MCP connectors (e.g. ChatGPT) can authenticate.
 - **`/jungle/mcp` front door** — an OAuth-gated streaming proxy to the loopback MCPJungle gateway (`http://127.0.0.1:8338/mcp`), which fans out to its registered downstream servers.
+- **`/chatgpt/mcp` scoped front door** — same shape, but aimed at the loopback `chatgpt` tool group (`http://127.0.0.1:8338/v0/groups/chatgpt/mcp`, beads-bridge server only) with its own OAuth audience. The URL to share for scoped access: `https://<funnel-host>/chatgpt/mcp`.
 
 ## Architecture
 
@@ -92,12 +93,12 @@ Ports: **3737** (this server) + **8338** (upstream MCPJungle gateway on loopback
 
 ## Tool namespaces
 
-Tools registered in `src/routes/mcp.ts` (41 total), grouped:
+Tools registered in `src/routes/mcp.ts` (44 total), grouped:
 
 - Beads: `bead_show`, `beads_bundle`, `bead_create`, `bead_batch_create`, `bead_edit`, `bead_comment`, `bead_note`, `bead_decision`, `bead_label`, `bead_connections`, `bead_feedback`
 - Query/retrieval: `query_store`, `retrieval_search`, `retrieval_activity`, `retrieval_claimed`, `retrieval_snapshot`, `random`, `relay_inspect`
 - Projects/relay: `relay_resolve_project`, `relay_list_projects`, `relay_capture`, `project_edit`, `relay_upsert_task`, `relay_dispatch_request`, `relay_verify`, `relay_flow`, `relay_catchup`, `relay_attention_next`, `relay_status`
-- Meta: `whoami`, `bridge_info`, `capability_status`, `capabilities_since`, `identity_update`, `scratchpad`, `timeout_probe`, `heartbeat`
+- Meta: `whoami`, `bridge_info`, `capability_status`, `capabilities_since`, `identity_update`, `scratchpad`, `timeout_probe`, `heartbeat`, `agent_presence`
 
 Shipped capabilities are also tracked in `capabilities.json` (manifest v2) — a capability lands only with implementation + tests + manifest entry + changelog/version together.
 

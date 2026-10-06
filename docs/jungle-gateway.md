@@ -235,3 +235,18 @@ listener mounting the same router, never via the public host).
   gate), plus a live proof (`JUNGLE_LIVE=1`): 401 without token, then
   initialize + `tools/list` through the real gateway → **36**
   `beads-bridge__` tools, every tool prefixed.
+
+## S7 scoped ChatGPT doorway: `/chatgpt/mcp` (2026-10-05)
+
+Sharing the full jungle surface was too broad, so the bridge grew a second,
+scoped front door: `src/routes/chatgpt.ts` proxies `https://<funnel-host>/chatgpt/mcp`
+to the loopback `chatgpt` tool group (`http://127.0.0.1:8338/v0/groups/chatgpt/mcp`,
+`included_servers: ["beads-bridge"]` — verify with `mcpjungle get group chatgpt`).
+Same streaming-proxy shape as `/jungle/mcp`, own OAuth audience
+(`chatgptResource(BASE)` = `<BASE>/chatgpt/mcp`, discovery at the
+`/chatgpt/mcp`-suffixed well-known paths), exact-audience equality across all
+three gates, bearer stripped at the gate. Public connector URL for scoped
+sharing: `https://<funnel-host>/chatgpt/mcp`. Regression tests in
+`src/routes/chatgpt.test.ts` (gate matrix incl. wrong-audience refusal +
+`JUNGLE_LIVE=1` proof asserting every tool is `beads-bridge__`-prefixed with
+zero leakage from sibling servers).

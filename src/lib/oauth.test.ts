@@ -90,6 +90,10 @@ describe('normalizeResource', () => {
     assert.equal(normalizeResource(BASE, `${BASE}/mcp`), `${BASE}/mcp`)
     assert.equal(normalizeResource(BASE, `${BASE}/mcp/`), `${BASE}/mcp`)
   })
+  it('accepts the scoped chatgpt audience (and its trailing slash)', () => {
+    assert.equal(normalizeResource(BASE, `${BASE}/chatgpt/mcp`), `${BASE}/chatgpt/mcp`)
+    assert.equal(normalizeResource(BASE, `${BASE}/chatgpt/mcp/`), `${BASE}/chatgpt/mcp`)
+  })
   it('rejects anything else', () => {
     assert.equal(normalizeResource(BASE, `${BASE}/other`), null)
     assert.equal(normalizeResource(BASE, 'https://evil.example/mcp'), null)

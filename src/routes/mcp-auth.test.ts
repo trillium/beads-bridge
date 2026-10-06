@@ -4,8 +4,8 @@
 // A static OAuth access token (24h TTL) silently 401s days later — the
 // 2026-09-18 outage — so the bridge also accepts its own never-expiring
 // service key on true direct-loopback sockets only. These tests pin:
-//   - OAuth /mcp-audience tokens still work; jungle-audience tokens don't
-//     cross-accept; garbage/anonymous still get the RFC 9728 challenge.
+//   - OAuth /mcp-audience tokens still work; jungle/chatgpt-audience tokens
+//     don't cross-accept; garbage/anonymous still get the RFC 9728 challenge.
 //   - The service key works on direct loopback and is rejected the moment
 //     the request looks Funnel-forwarded (forwarding headers present).
 // Unit tests: FUNNEL_BASE=https://example.test bun test src/routes/mcp-auth.test.ts
@@ -20,7 +20,7 @@ import { join } from 'node:path'
 import express from 'express'
 import type { Request } from 'express'
 import { BASE, toolKey } from '../config'
-import { jungleResource, mcpResource, mintTokenPair } from '../lib/oauth'
+import { chatgptResource, jungleResource, mcpResource, mintTokenPair } from '../lib/oauth'
 import { isLoopbackServiceCall, mcpRouter } from './mcp'
 
 beforeEach(() => {
@@ -200,6 +200,14 @@ describe('/mcp over HTTP (dual-gate contract)', () => {
 
   it('jungle-audience token does not cross-accept on /mcp', { timeout: 30000 }, async () => {
     const pair = mintTokenPair('chatgpt-jungle', ['mcp'], jungleResource(BASE))
+    await withApp(async (base) => {
+      const denied = await rpc(base, { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }, pair.accessToken)
+      assert.equal(denied.status, 401)
+    })
+  })
+
+  it('chatgpt-audience token does not cross-accept on /mcp', { timeout: 30000 }, async () => {
+    const pair = mintTokenPair('chatgpt-scoped', ['mcp'], chatgptResource(BASE))
     await withApp(async (base) => {
       const denied = await rpc(base, { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }, pair.accessToken)
       assert.equal(denied.status, 401)

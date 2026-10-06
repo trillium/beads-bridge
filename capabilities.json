@@ -336,6 +336,13 @@
         "inbox-l6ki",
         "task-4lb3r"
       ]
+    },
+    {
+      "id": "agent_presence",
+      "title": "Agent presence check",
+      "op": "agent_presence",
+      "introduced": "1.7.0",
+      "beads": []
     }
   ]
 }

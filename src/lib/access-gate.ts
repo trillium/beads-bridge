@@ -10,9 +10,10 @@
 // Policy (addresses and User-Agent are routing hints only, never auth):
 // - `/.well-known/*`, `/oauth/*` — public by design (connector setup:
 //   discovery, dynamic registration, approval, token exchange).
-// - `/mcp`, `/jungle/mcp` — public by design at this layer; the bearer
-//   credential is enforced downstream (`withMcpAuth(required: true)` with
-//   exact-audience checks in `src/routes/mcp.ts` / `src/routes/jungle.ts`).
+// - `/mcp`, `/jungle/mcp`, `/chatgpt/mcp` — public by design at this layer;
+//   the bearer credential is enforced downstream (`withMcpAuth(required:
+//   true)` with exact-audience checks in `src/routes/mcp.ts` /
+//   `src/routes/jungle.ts` / `src/routes/chatgpt.ts`).
 // - Every other route requires a valid bearer credential (a live OAuth
 //   access token from `lookupAccess`, either audience, or the existing
 //   `toolKey` service credential) — from anywhere, Funnel included. This
@@ -72,8 +73,8 @@ function bearerToken(req: Request): string {
 
 // The existing credentials, checked in the same order as the route-level
 // gates: cheap service-key compare first, then the OAuth access store
-// (expiry enforced inside `lookupAccess`). Either audience counts here —
-// data routes are not audience-bound the way `/mcp` vs `/jungle/mcp` are.
+// (expiry enforced inside `lookupAccess`). Any audience counts here —
+// data routes are not audience-bound the way the three MCP audiences are.
 export function hasValidCredential(req: Request): boolean {
   const t = bearerToken(req)
   if (!t) return false
@@ -93,6 +94,7 @@ export function classifyIngress(req: Request): IngressVerdict {
   if (
     p === '/mcp' ||
     p === '/jungle/mcp' ||
+    p === '/chatgpt/mcp' ||
     p.startsWith('/.well-known/') ||
     p.startsWith('/oauth/')
   ) {

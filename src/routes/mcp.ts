@@ -47,6 +47,7 @@ import { formatRelayStatus, relayStatus, relayStatusReading } from '../lib/relay
 import { currentScope, registerFollowon, withFollowonScope, withResponseFooter } from '../lib/followons'
 import { currentRequestCaller, withProvenance } from '../lib/provenance'
 import { HEARTBEAT_CALLER_ANONYMOUS, HEARTBEAT_CALLER_LOOPBACK, HEARTBEAT_EXCLUDED_TOOLS, advanceHeartbeatCursor, heartbeatReading, peekHeartbeatBlock, renderHeartbeatBlock } from '../lib/heartbeat'
+import { agentPresence, formatPresence } from '../lib/agent-mail'
 import { recordLatestHeartbeat } from '../lib/heartbeat-latest'
 import { relayCatchup } from '../lib/catchup'
 import { attentionNext } from '../lib/attention'
@@ -1359,6 +1360,33 @@ const mcpHandler = createMcpHandler((server) => {
       advanceHeartbeatCursor(currentScope()?.caller ?? HEARTBEAT_CALLER_ANONYMOUS)
       const now = Date.now()
       return withTiming(formatRelayStatus(relayStatus, now), relayStatusReading(relayStatus, now), true)
+    },
+  )
+
+  // Agent-mail presence (persistent-contact readout): who is this agent,
+  // are they home, how deep is their unread inbox. Reads only — the pilot
+  // owns delivery (send_message) and identity (register_agent). Profiles
+  // are registration_token-gated by the pilot: without the token this
+  // reports credentialed + handshake guidance and asserts nothing about
+  // existence. Upstream is the loopback pilot (see ../lib/agent-mail.ts).
+  server.registerTool(
+    'agent_presence',
+    {
+      title: 'Agent presence check',
+      description: 'Presence readout for one agent-mail agent: active/stale/retired verdict from last_active, contact policy, unread inbox depth. Needs the agent\u2019s registration_token for a full readout (shared out-of-band or via the request_contact handshake) — without it, reports credentialed without claiming existence. Read-only; sending stays on agent-mail send_message.',
+      inputSchema: z.object({
+        project: z.string().min(1).max(120).describe('Agent-mail project key'),
+        agent: z.string().min(1).max(128).describe('Agent name (stable registered id, e.g. worker_42)'),
+        registration_token: z.string().max(128).optional().describe('Target agent\u2019s registration token — full readout; omit for the gated summary'),
+      }),
+    },
+    async ({ project, agent, registration_token }: { project: string; agent: string; registration_token?: string }) => {
+      try {
+        const p = await agentPresence({ project, agent, registrationToken: registration_token })
+        return ok(formatPresence(p))
+      } catch (e) {
+        return err(`agent_presence failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
     },
   )
 

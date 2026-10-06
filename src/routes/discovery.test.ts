@@ -20,4 +20,8 @@ describe('OAuth discovery mounts', () => {
     assert.ok(code.includes("'/.well-known/oauth-authorization-server'"))
     assert.ok(code.includes("'/.well-known/oauth-authorization-server/mcp'"))
   })
+  it('serves both metadata docs for the scoped /chatgpt/mcp audience', () => {
+    assert.ok(code.includes("'/.well-known/oauth-protected-resource/chatgpt/mcp'"))
+    assert.ok(code.includes("'/.well-known/oauth-authorization-server/chatgpt/mcp'"))
+  })
 })
