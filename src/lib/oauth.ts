@@ -92,14 +92,15 @@ export function validateCimdDoc(clientId: string, doc: unknown): { ok: boolean; 
 }
 
 // Canonical MCP resources this server protects. Null when the client asks
-// for anything else (RFC 8707 audience binding). Both entries are returned
+// for anything else (RFC 8707 audience binding). All entries are returned
 // verbatim so each gate can enforce exact-audience equality: a token minted
-// for /mcp never opens /jungle/mcp and vice versa.
+// for one audience never opens another (/mcp, /jungle/mcp, /chatgpt/mcp).
 export function normalizeResource(base: string, resource: string): string | null {
   const got = resource.replace(/\/$/, '')
   const bare = `${base.replace(/\/$/, '')}`
   if (got === `${bare}/mcp`) return `${bare}/mcp`
   if (got === `${bare}/jungle/mcp`) return `${bare}/jungle/mcp`
+  if (got === `${bare}/chatgpt/mcp`) return `${bare}/chatgpt/mcp`
   return null
 }
 
@@ -113,6 +114,14 @@ export function mcpResource(base: string): string {
 // jungle-routed tokens never cross-accept.
 export function jungleResource(base: string): string {
   return `${base.replace(/\/$/, '')}/jungle/mcp`
+}
+
+// Scoped ChatGPT front-door resource: the bridge proxies this path to the
+// loopback MCPJungle `chatgpt` tool group (see src/routes/chatgpt.ts),
+// which contains only the beads-bridge server. A distinct audience so
+// scoped tokens never cross-accept with /mcp or /jungle/mcp.
+export function chatgptResource(base: string): string {
+  return `${base.replace(/\/$/, '')}/chatgpt/mcp`
 }
 
 export function parseScope(scope: string | undefined): string[] | null {

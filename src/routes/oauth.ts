@@ -13,6 +13,7 @@ import {
   SUPPORTED_SCOPES,
   TX_TTL_MS,
   buildAuthorizationServerMetadata,
+  chatgptResource,
   checkApproval,
   cimdRedirectUris,
   consumeCode,
@@ -95,6 +96,11 @@ mountFetch(oauthRouter, '/.well-known/oauth-protected-resource/mcp', protectedHa
 // so bridge-direct and jungle-routed tokens never cross-accept.
 const jungleProtectedHandler = protectedResourceHandler({ authServerUrls: [ISSUER], resourceUrl: jungleResource(BASE) })
 mountFetch(oauthRouter, '/.well-known/oauth-protected-resource/jungle/mcp', jungleProtectedHandler)
+// Scoped ChatGPT front-door audience (resource https://host/chatgpt/mcp):
+// same issuer/keys, distinct resource identifier so scoped tokens never
+// cross-accept with bridge-direct or full-jungle tokens.
+const chatgptProtectedHandler = protectedResourceHandler({ authServerUrls: [ISSUER], resourceUrl: chatgptResource(BASE) })
+mountFetch(oauthRouter, '/.well-known/oauth-protected-resource/chatgpt/mcp', chatgptProtectedHandler)
 
 const authorizationHandler = (_req: Request, res: Response) => {
   res.json(buildAuthorizationServerMetadata(ISSUER))
@@ -107,6 +113,8 @@ oauthRouter.get('/.well-known/oauth-authorization-server/mcp', authorizationHand
 // Jungle front-door audience (resource https://host/jungle/mcp): clients
 // probing that resource request issuer metadata at the suffixed path.
 oauthRouter.get('/.well-known/oauth-authorization-server/jungle/mcp', authorizationHandler)
+// Scoped ChatGPT front-door audience (resource https://host/chatgpt/mcp).
+oauthRouter.get('/.well-known/oauth-authorization-server/chatgpt/mcp', authorizationHandler)
 
 // ── Dynamic client registration (RFC 7591, public clients) ──────────────────
 
@@ -189,7 +197,7 @@ oauthRouter.get('/oauth/authorize', async (req: Request, res: Response) => {
   }
   const resource = normalizeResource(BASE, str(q.resource))
   if (!resource) {
-    return void redirectError(res, redirectUri, 'invalid_target', state, `resource must be ${RESOURCE}`)
+    return void redirectError(res, redirectUri, 'invalid_target', state, `resource must be one of ${RESOURCE}, ${jungleResource(BASE)}, ${chatgptResource(BASE)}`)
   }
   const scope = parseScope(str(q.scope) || undefined)
   if (!scope) {

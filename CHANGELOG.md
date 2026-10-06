@@ -60,8 +60,26 @@
   capability and waits on the resume-resolved-provenance investigation.
   Manifest v5.
 
+## 1.7.0
+
+- Agent-mail presence readout (`agent_presence`): active/stale/retired
+  verdict for one agent-mail agent from last_active plus contact policy
+  and unread inbox depth, served from the loopback pilot
+  (`src/lib/agent-mail.ts`, `http://127.0.0.1:18765/mcp/`). Profiles are
+  registration_token-gated by the pilot — without the token the tool
+  reports credentialed + handshake guidance and asserts nothing about
+  existence. Read-only; sending stays on agent-mail send_message.
+  Manifest v6.
+
 ## Unreleased
 
+- Scoped ChatGPT front door (`/chatgpt/mcp`): OAuth-gated streaming proxy
+  to the loopback MCPJungle `chatgpt` tool group (beads-bridge server only,
+  `src/routes/chatgpt.ts` — same shape as the `/jungle/mcp` front door),
+  with its own OAuth audience (`<BASE>/chatgpt/mcp`, discovery at the
+  `/chatgpt/mcp`-suffixed well-known paths) so scoped tokens never
+  cross-accept with `/mcp` or `/jungle/mcp`. Public connector URL for
+  scoped sharing: `https://<funnel-host>/chatgpt/mcp`.
 - Candidate visualization surfaces for the live activity sidecar
   (project-s1rf.1.1, captain direction 2026-10-05): every viable shape for
   viewing the same MCP activity stream now sits beside the canonical page at

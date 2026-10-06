@@ -134,7 +134,7 @@ describe('capabilitiesSince', () => {
   it('returns only newer entries and rejects non-semver', () => {
     const m = loadManifest()
     const rows = capabilitiesSince(m, '1.0.0').map((c) => c.id).sort()
-    assert.deepEqual(rows, ['bead_batch_create', 'bead_comment', 'bead_connections', 'bead_create', 'bead_decision', 'bead_edit', 'bead_feedback', 'bead_label', 'bead_note', 'bead_show', 'beads_bundle', 'bridge_info', 'capabilities_since', 'capability', 'capability_status', 'heartbeat', 'personality_append', 'personality_read', 'personality_replace', 'personality_section_edit', 'project_edit', 'query_store', 'random', 'relay_capture', 'relay_verify', 'retrieval_activity', 'retrieval_claimed', 'retrieval_search', 'retrieval_snapshot', 'tool_surface_check', 'whoami'])
+    assert.deepEqual(rows, ['agent_presence', 'bead_batch_create', 'bead_comment', 'bead_connections', 'bead_create', 'bead_decision', 'bead_edit', 'bead_feedback', 'bead_label', 'bead_note', 'bead_show', 'beads_bundle', 'bridge_info', 'capabilities_since', 'capability', 'capability_status', 'heartbeat', 'personality_append', 'personality_read', 'personality_replace', 'personality_section_edit', 'project_edit', 'query_store', 'random', 'relay_capture', 'relay_verify', 'retrieval_activity', 'retrieval_claimed', 'retrieval_search', 'retrieval_snapshot', 'tool_surface_check', 'whoami'])
     assert.deepEqual(capabilitiesSince(m, '9.9.9'), [])
     assert.throws(() => capabilitiesSince(m, '1.0'), /not semver/)
   })
