@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Store-name aliases resolve in BOTH directions (task-7pqcz): the
+  singular/plural rule was one-way — it derived a plural from a registered
+  singular (`inbox` → `inboxes`) but never a singular from a registered
+  plural, so a store registered as `inboxes` was unreachable by `inbox`.
+  Both readings now come from the same word, so either spelling of the same
+  store resolves whichever form the registry holds. Where the two readings
+  disagree (`cases` is the plural of the word `case` and of the non-word
+  `cas`) both are offered and the registry decides: exact still wins, and
+  two registered claimants fail loudly as ambiguous — never guessed, so a
+  wrong-but-plausible match stays impossible. Deliberate non-goals are
+  unchanged and documented in docs/store-aliases.md (no fuzzy matching;
+  separators significant; `-ss` mass nouns exact-only; a trailing-`s`
+  singular such as `status` keeps its mechanical reading rather than
+  inventing `statuses`). The live registry's alias table is unchanged —
+  the newly reachable cases are the ones that were broken. Tests name the
+  rule and cover singular-in/plural-registered, plural-in/singular-
+  registered, pair symmetry, and unknown names still failing cleanly.
+
 - Deployment path for the bridge service (project-s1rf.1.1.2): the launchd job
   now serves a dedicated clean checkout
   (`~/.local/share/beads-bridge/app`, fast-forwarded to `origin/main`) instead

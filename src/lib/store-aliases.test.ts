@@ -36,8 +36,43 @@ describe('aliasesForStore', () => {
   it('handles -es for s/x/z/ch/sh stems', () => {
     assert.deepEqual(aliasesForStore('inbox'), ['inboxes'])
   })
+  // task-7pqcz: the mapping used to be one-way — the singular of a REGISTERED
+  // -es plural did not resolve. Both directions are now derived from the same
+  // word, so a store registered as `inboxes` accepts `inbox`.
+  it('resolves a registered -es plural back to its singular (task-7pqcz)', () => {
+    assert.ok(aliasesForStore('inboxes').includes('inbox'), 'inboxes -> inbox')
+    assert.ok(aliasesForStore('batches').includes('batch'), 'batches -> batch')
+    assert.ok(aliasesForStore('dishes').includes('dish'), 'dishes -> dish')
+  })
+  it('carries both readings when -es and trailing -s disagree', () => {
+    // `cases` is the +s plural of the word `case` AND the +es plural of the
+    // non-word `cas`; `boxes` likewise. The registry decides which reading
+    // exists (exact wins; two claimants fail loudly as ambiguous) — the rule
+    // never guesses which spelling is the real word.
+    assert.deepEqual(aliasesForStore('cases').sort(), ['cas', 'case'])
+    assert.deepEqual(aliasesForStore('boxes').sort(), ['box', 'boxe'])
+  })
+  it('is symmetric: every documented pair resolves both ways (task-7pqcz)', () => {
+    const PAIRS: ReadonlyArray<readonly [string, string]> = [
+      ['ideas', 'idea'], ['projects', 'project'], ['stories', 'story'],
+      ['companies', 'company'], ['task', 'tasks'], ['brain', 'brains'],
+      ['inbox', 'inboxes'], ['batch', 'batches'], ['box', 'boxes'],
+      ['dish', 'dishes'], ['case', 'cases'], ['resumes', 'resume'],
+    ]
+    for (const [a, b] of PAIRS) {
+      assert.ok(aliasesForStore(a).includes(b), `${a} must alias ${b}`)
+      assert.ok(aliasesForStore(b).includes(a), `${b} must alias ${a}`)
+    }
+  })
   it('gives mass nouns ending in -ss no alias', () => {
     assert.deepEqual(aliasesForStore('staleness'), [])
+  })
+  it('leaves a trailing-s SINGULAR to its mechanical -s reading only', () => {
+    // `status` is a singular that ends in -s; the rule cannot tell it from
+    // `ideas` (both vowel+s), so it keeps the trailing-s reading and never
+    // invents `statuses` (inventing that would also invent `ideases`).
+    assert.deepEqual(aliasesForStore('status'), ['statu'])
+    assert.ok(!aliasesForStore('status').includes('statuses'))
   })
   it('never crosses separators', () => {
     assert.ok(!aliasesForStore('resume_bullets').includes('resume-bullets'))
@@ -66,6 +101,26 @@ describe('resolveStoreName', () => {
       assert.equal((r as { store: string }).store, want, req)
     }
   })
+  // task-7pqcz: singular-in/plural-registered and plural-in/singular-registered
+  // for the SAME store — both spellings name one store, so both must resolve.
+  it('accepts either direction for a store registered as a plural (task-7pqcz)', () => {
+    for (const [req, want] of [
+      ['idea', 'ideas'], ['inbox', 'inboxes'], ['batch', 'batches'],
+      ['box', 'boxes'], ['story', 'stories'],
+    ] as const) {
+      const r = resolveStoreName(req, [want])
+      assert.deepEqual(r, { kind: 'alias', store: want, requested: req }, `${req} -> ${want}`)
+    }
+  })
+  it('accepts either direction for a store registered as a singular (task-7pqcz)', () => {
+    for (const [req, want] of [
+      ['ideas', 'idea'], ['inboxes', 'inbox'], ['boxes', 'box'],
+      ['batches', 'batch'], ['tasks', 'task'], ['brains', 'brain'],
+    ] as const) {
+      const r = resolveStoreName(req, [want])
+      assert.deepEqual(r, { kind: 'alias', store: want, requested: req }, `${req} -> ${want}`)
+    }
+  })
   it('prefers exact matches and trims/case-folds', () => {
     assert.deepEqual(resolveStoreName('ideas', STORES_LIKE), { kind: 'exact', store: 'ideas' })
     assert.deepEqual(resolveStoreName('  IDEA ', STORES_LIKE), {
@@ -85,6 +140,10 @@ describe('resolveStoreName', () => {
     // separators are significant — no cross-separator guess
     assert.equal(resolveStoreName('nightshift_tasks', ['nightshift-tasks']).kind, 'unknown')
     assert.equal(resolveStoreName('', STORES_LIKE).kind, 'unknown')
+    // a near miss stays a clean failure in both directions (no fuzzy match)
+    assert.equal(resolveStoreName('ideaas', ['ideas']).kind, 'unknown')
+    assert.equal(resolveStoreName('inboxez', ['inbox']).kind, 'unknown')
+    assert.equal(resolveStoreName('inboxes', ['idea']).kind, 'unknown')
   })
   it('fails loudly on ambiguity, naming candidates', () => {
     // 'boxes' is the +es plural of both 'box' and 'boxe', exact of neither
@@ -142,5 +201,17 @@ describe('integrations', () => {
     assert.equal(resolveStoreName('tasks').kind, 'alias')
     const r = resolveBeadStore('idea-x1')
     assert.equal(r.kind, 'ok')
+  })
+  // task-7pqcz guard: the bidirectional rule must not make a live registry
+  // name ambiguous, and every live alias must point back at its own store.
+  it('live registry: every registered store and every one of its spellings resolves (task-7pqcz)', () => {
+    for (const s of STORES) {
+      assert.deepEqual(resolveStoreName(s), { kind: 'exact', store: s }, s)
+      for (const alias of aliasesForStore(s)) {
+        const r = resolveStoreName(alias)
+        assert.ok(r.kind === 'alias' || r.kind === 'exact', `${alias} must resolve, got ${r.kind}`)
+        assert.equal((r as { store: string }).store, s, `${alias} must resolve to ${s}`)
+      }
+    }
   })
 })
