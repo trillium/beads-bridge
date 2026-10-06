@@ -58,6 +58,13 @@ Run (from the repo root):
 bun src/server.ts
 ```
 
+That is the dev server. The long-running service is the launchd job
+`com.beads-bridge.server`, which serves a dedicated clean checkout at
+`~/.local/share/beads-bridge/app` — not this working clone — so uncommitted
+work here is never served. Ship it with `ops/deploy.sh`; the URLs, the deploy
+checkout, and the CDP screenshot helper are documented in
+[docs/deploy.md](docs/deploy.md).
+
 First boot mints an OAuth setup key at `~/.config/pai/beads-bridge-oauth-setup` (0600) and prints its path — paste it into the browser approval page once (a cookie remembers it). Override with `OAUTH_SETUP_KEY` (or `OAUTH_SETUP_PATH`) if you prefer.
 
 Expected boot output:

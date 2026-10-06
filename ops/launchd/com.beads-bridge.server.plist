@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/Users/trilliumsmith/.pi/agent/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>com.beads-bridge.server</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/trilliumsmith/.bun/bin/bun</string>
+		<string>src/server.ts</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/Users/trilliumsmith/.local/share/beads-bridge/server.err.log</string>
+	<key>StandardOutPath</key>
+	<string>/Users/trilliumsmith/.local/share/beads-bridge/server.out.log</string>
+	<key>WorkingDirectory</key>
+	<string>/Users/trilliumsmith/.local/share/beads-bridge/app</string>
+</dict>
+</plist>
