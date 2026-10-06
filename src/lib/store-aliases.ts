@@ -3,10 +3,12 @@
 //
 // THE RULE (mechanical, never fuzzy): a requested name resolves to a
 // canonical store only when it is an exact match (case-insensitive) or one
-// of that store's deterministic singular/plural spellings:
+// of that store's deterministic singular/plural spellings — in EITHER
+// direction (task-7pqcz), so a store registered as a plural accepts its
+// singular exactly as one registered as a singular accepts its plural:
 //   - trailing-s: ideas<->idea, projects<->project, task<->tasks
 //   - ies/y: stories<->story, companies<->company
-//   - es-plural for s/x/z/ch/sh stems: inbox<->inboxes
+//   - es-plural for s/x/z/ch/sh stems: inbox<->inboxes, batch<->batches
 // Mass nouns ending in "ss" (staleness) have no alias. Separators are
 // significant: nightshift_tasks never resolves to nightshift-tasks.
 // Anything outside this rule is refused, never guessed — silently sending
@@ -38,6 +40,8 @@ export type BeadStoreResolution =
 // Exact (case-insensitive) always wins; aliases only compete when nothing
 // is exact, so two canonical spellings can never be ambiguous with each
 // other — ambiguity needs one alias shared by 2+ stores and exact by none.
+// Both directions of the singular/plural rule are searched, so a requested
+// spelling resolves whether the registry carries the singular or the plural.
 export function resolveStoreName(requested: string, stores: string[] = STORES): StoreResolution {
   const raw = (requested ?? '').trim()
   const name = raw.toLowerCase()
@@ -92,5 +96,5 @@ export function ambiguousBeadIdError(id: string, prefix: string, candidates: str
 
 // One-line rule summary for docs footers and error context.
 export function aliasRuleSummary(): string {
-  return 'Store aliases: exact canonical names plus deterministic singular/plural spellings only (trailing-s, -ies/-y, -es for s/x/z/ch/sh stems). No fuzzy matching — unknown or ambiguous names fail loudly.'
+  return 'Store aliases: exact canonical names plus deterministic singular/plural spellings in either direction (trailing-s, -ies/-y, -es for s/x/z/ch/sh stems). No fuzzy matching — unknown or ambiguous names fail loudly.'
 }
