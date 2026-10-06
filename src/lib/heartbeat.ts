@@ -34,7 +34,14 @@
 // BOUNDS: at most HEARTBEAT_MAX_ITEMS rows, HEARTBEAT_MAX_CHARS chars.
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { activityStateLabel, relayStatus, type RelayStatusTracker } from './relay-status'
+import {
+  activityStateLabel,
+  relayItemTiming,
+  renderItemStamp,
+  relayStatus,
+  type RelayItemState,
+  type RelayStatusTracker,
+} from './relay-status'
 
 export const HEARTBEAT_MAX_ITEMS = 5
 export const HEARTBEAT_MAX_CHARS = 600
@@ -69,9 +76,9 @@ function defaultTemplatePath(): string {
 }
 
 const FALLBACK_TEMPLATE = [
-  '## heartbeat — {{mode}} ({{count}} changed)',
+  '## heartbeat — {{mode}} ({{count}} changed; read at {{read}})',
   '{{#changed}}{{items}}',
-  '{{/changed}}{{#empty}}Feeds current.{{/empty}}',
+  '{{/changed}}{{#empty}}Feeds current. (read at {{read}}){{/empty}}',
 ].join('\n')
 
 /** Filesystem-backed template (env override, else config/heartbeat.md).
@@ -94,6 +101,8 @@ export interface HeartbeatRenderInput {
   mode: 'baseline' | 'delta'
   count: number
   items: string
+  /** Read time the block (and every age in it) is measured against. */
+  read: string
 }
 
 /** Pure mini-template: {{#changed}}/{{#empty}} blocks + placeholders. */
@@ -110,6 +119,7 @@ export function renderHeartbeatTemplate(tpl: string, input: HeartbeatRenderInput
   return out
     .split('{{mode}}').join(input.mode)
     .split('{{count}}').join(String(input.count))
+    .split('{{read}}').join(input.read)
     .split('{{items}}').join(input.items)
 }
 
@@ -136,9 +146,20 @@ export function peekHeartbeatBlock(
     const shown = delta.slice(0, shownCount)
     // Same bridge-activity vocabulary as the relay-status footer: this
     // projection's state is never bead lifecycle (see activityStateLabel).
-    const lines = shown.map((r) => `- ${r.item.id} [${r.item.kind}/${activityStateLabel(r.state)}] ${r.item.title}`)
+    // Every row carries its event's own timestamp plus the age against THIS
+    // read, with the basis marked (`at` = source time, `touched` = the
+    // bridge's touch only) — a proof event ten minutes old can never render
+    // as current progress (task-60f3z).
+    const lines = shown.map(
+      (r) => `- ${r.item.id} [${r.item.kind}/${activityStateLabel(r.state)}] ${r.item.title} — ${renderItemStamp(r.item, t0)}`,
+    )
     if (delta.length > shown.length) lines.push(`- … +${delta.length - shown.length} more`)
-    return renderHeartbeatTemplate(tpl, { mode, count: delta.length, items: lines.join('\n') }).replace(/\s+$/, '')
+    return renderHeartbeatTemplate(tpl, {
+      mode,
+      count: delta.length,
+      read: new Date(t0).toISOString(),
+      items: lines.join('\n'),
+    }).replace(/\s+$/, '')
   }
   // Shrink by whole rows first so the overflow marker is never sliced off;
   // the hard slice below is a last-resort guard that cannot trigger while
@@ -166,4 +187,56 @@ export function renderHeartbeatBlock(
   const text = peekHeartbeatBlock(caller, { tracker: opts.tracker, now: t0 })
   advanceHeartbeatCursor(caller, t0)
   return text
+}
+
+/** One delta row as data: the source/touch timestamps plus ages. */
+export interface HeartbeatItemReading {
+  id: string
+  kind: string
+  state: RelayItemState
+  title: string
+  basis: 'source' | 'touch'
+  /** Event time (source when available, else the bridge touch). */
+  event: { at?: string; atMs?: number; ageMs?: number; age: string }
+  /** The bridge's touch, always present, never a stand-in for the event. */
+  touched: { at?: string; atMs?: number; ageMs?: number; age: string }
+}
+
+/**
+ * The heartbeat read as DATA (task-60f3z requirement 3): the read time plus
+ * per-item source/touch timestamps and ages computed against it, so a
+ * consumer can report both absolute time and age — and recompute the delta
+ * against its own clock — without parsing the rendered block.
+ *
+ * Mirrors peekHeartbeatBlock's cursor rules exactly (same baseline/delta
+ * split, same items) and never advances the cursor, so composing the payload
+ * cannot acknowledge anything.
+ */
+export function heartbeatReading(
+  caller: string,
+  opts: { tracker?: RelayStatusTracker; now?: number } = {},
+): {
+  caller: string
+  mode: 'baseline' | 'delta'
+  readAt: string
+  readAtMs: number
+  count: number
+  items: HeartbeatItemReading[]
+} {
+  const tracker = opts.tracker ?? relayStatus
+  const t0 = opts.now ?? Date.now()
+  const cursor = heartbeatCursor(caller)
+  const rows = tracker.list(t0)
+  const delta = cursor == null ? rows : rows.filter((r) => Date.parse(r.item.lastTouchedAt) > cursor)
+  return {
+    caller,
+    mode: cursor == null ? 'baseline' : 'delta',
+    readAt: new Date(t0).toISOString(),
+    readAtMs: t0,
+    count: delta.length,
+    items: delta.slice(0, HEARTBEAT_MAX_ITEMS).map(({ item, state }) => {
+      const t = relayItemTiming(item, state, t0)
+      return { id: t.id, kind: t.kind, state: t.state, title: item.title, basis: t.basis, event: t.event, touched: t.touched }
+    }),
+  }
 }

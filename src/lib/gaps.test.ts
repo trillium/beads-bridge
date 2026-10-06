@@ -16,6 +16,11 @@ describe('formatCatchup', () => {
     assert.match(out, /task-aaa/)
     assert.match(out, /followup: bead_show task-aaa/)
   })
+  it('an entry with no stamp still renders its row', () => {
+    const out = formatCatchup([{ id: 'task-bbb', kind: 'task', title: 'No stamp', live: 'open' }], [])
+    assert.match(out, /- task-bbb \[task\] No stamp/)
+    assert.doesNotMatch(out, /evidence age/, 'no stamp means no claimed age')
+  })
 })
 
 describe('relayCatchup', () => {
@@ -28,6 +33,14 @@ describe('relayCatchup', () => {
     const out = await relayCatchup(8, t)
     assert.match(out, /zz9-mark/)
     assert.match(out, /local marker/)
+  })
+  it('states the age of each evidence row against the read (task-60f3z)', async () => {
+    const read = Date.parse('2026-10-06T05:30:00.000Z')
+    const t = new RelayStatusTracker()
+    t.touch({ id: 'zz9-old', kind: 'note', title: 'pane proof', now: read - 12 * 60_000 })
+    const out = await relayCatchup(8, t, read)
+    assert.match(out, /evidence age: touched \d{4}-\d\d-\d\dT\S+ \(12 minutes ago, touch time/)
+    assert.match(out, /an old touch is not proof of current work/)
   })
 })
 

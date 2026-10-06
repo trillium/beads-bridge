@@ -70,7 +70,7 @@ describe('async closure surfaces on explicit heartbeat', () => {
     renderHeartbeatBlock('c', { tracker: t, now: T0 + 1000 }) // baseline
     // ... external close happens here (no tracker call exists to make) ...
     const hb = renderHeartbeatBlock('c', { tracker: t, now: T0 + 3000 })
-    assert.match(hb, /delta \(0 changed\)/)
+    assert.match(hb, /delta \(0 changed/)
     assert.match(hb, /Feeds current\./)
   })
 })
@@ -117,7 +117,7 @@ describe('explicit reads acknowledge', () => {
     bridgeClose(t, 'inbox-eee', T0 + 2000)
     assert.match(renderHeartbeatBlock('c', { tracker: t, now: T0 + 3000 }), /inbox-eee/)
     const again = renderHeartbeatBlock('c', { tracker: t, now: T0 + 4000 })
-    assert.match(again, /delta \(0 changed\)/, 'acknowledged — nothing new')
+    assert.match(again, /delta \(0 changed/, 'acknowledged — nothing new')
     assert.doesNotMatch(again, /inbox-eee/)
   })
   it('manual advance (the relay_status path) acknowledges the same way', () => {

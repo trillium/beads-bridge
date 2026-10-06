@@ -43,10 +43,10 @@ import { withActivity } from '../lib/activity'
 import { captureEntry, editProject, formatFlow, formatProjectEdit, formatProjectList, formatResolve, formatVerify, listProjectsScoped, requestDispatch, resolveProject, runFlow, upsertTask, verifyWork } from '../lib/relay'
 import { closeBead, commentBead, formatReceipt, labelBead, noteBead } from '../lib/mutate'
 import { unverifiedMessage } from '../lib/receipts'
-import { formatRelayStatus, relayStatus } from '../lib/relay-status'
+import { formatRelayStatus, relayStatus, relayStatusReading } from '../lib/relay-status'
 import { currentScope, registerFollowon, withFollowonScope, withResponseFooter } from '../lib/followons'
 import { currentRequestCaller, withProvenance } from '../lib/provenance'
-import { HEARTBEAT_CALLER_ANONYMOUS, HEARTBEAT_CALLER_LOOPBACK, HEARTBEAT_EXCLUDED_TOOLS, advanceHeartbeatCursor, peekHeartbeatBlock, renderHeartbeatBlock } from '../lib/heartbeat'
+import { HEARTBEAT_CALLER_ANONYMOUS, HEARTBEAT_CALLER_LOOPBACK, HEARTBEAT_EXCLUDED_TOOLS, advanceHeartbeatCursor, heartbeatReading, peekHeartbeatBlock, renderHeartbeatBlock } from '../lib/heartbeat'
 import { recordLatestHeartbeat } from '../lib/heartbeat-latest'
 import { relayCatchup } from '../lib/catchup'
 import { attentionNext } from '../lib/attention'
@@ -80,6 +80,21 @@ export const mcpRouter = Router()
 const text = (t: string) => ({ type: 'text' as const, text: t })
 const ok = (t: string, bare = false) => ({ content: [text(bare ? t : withResponseFooter(t, 'ok'))] })
 const err = (t: string, bare = false) => ({ content: [text(bare ? t : withResponseFooter(t, 'error'))], isError: true as const })
+
+// Machine-readable timing payload (task-60f3z). A rendered age is a
+// convenience; the CONSUMER must be able to compute its own delta, so the
+// read time and each item's source/touch timestamp + basis ship as data
+// alongside the prose. Kept as a separate text block (every MCP client
+// surfaces it, no output-schema negotiation required).
+function withTiming(t: string, payload: unknown, bare: boolean): { content: { type: 'text'; text: string }[] } {
+  const body = bare ? t : withResponseFooter(t, 'ok')
+  return {
+    content: [
+      text(body),
+      text(`timing (JSON — readAt is the read time; age = readAtMs - <event|touched>.atMs; basis "source" means that is the event's own timestamp, "touch" means it is only the bridge's touch):\n${JSON.stringify(payload)}`),
+    ],
+  }
+}
 
 // Heartbeat as the default follow-on (task-ksmy1, consumption fixed by
 // task-36na1): every footered response carries the caller's pending delta,
@@ -1109,7 +1124,7 @@ const mcpHandler = createMcpHandler((server) => {
     async ({ query, store }: { query: string; store?: string }) => {
       try {
         const r = await verifyWork(query, store?.trim() || undefined)
-        if (r.found) for (const h of r.hits) relayStatus.markVerified(h.id) ?? relayStatus.touch({ id: h.id, kind: 'verify', title: h.title, state: 'done' })
+        if (r.found) for (const h of r.hits) relayStatus.markVerified(h.id, Date.now(), h.updatedAt) ?? relayStatus.touch({ id: h.id, kind: 'verify', title: h.title, state: 'done', at: h.updatedAt })
         else relayStatus.touch({ id: query.trim().slice(0, 80), kind: 'verify', title: query.trim().slice(0, 120), needsVerify: true })
         return ok(formatVerify(r.found, r.hits, r.detail))
       } catch (e) {
@@ -1327,7 +1342,7 @@ const mcpHandler = createMcpHandler((server) => {
     'relay_status',
     {
       title: 'Relay status',
-      description: 'Ephemeral relay-status projection: recently touched tasks, dispatches, verifications, failures, completions with last_touched_at and state. Beads stores stay authoritative. Followup lines name the next read to make in the same turn when something is stale, failed, or needs verification.',
+      description: 'Ephemeral relay-status projection: recently touched tasks, dispatches, verifications, failures, completions with their event timestamps, ages relative to this read, and state. Each row names which time it is: `at` is the event\u2019s own source timestamp, `touched` is only the bridge\u2019s touch. The response also carries a JSON timing block (readAt + per-item ISO/epoch timestamps + basis) so ages can be recomputed. Beads stores stay authoritative. Followup lines name the next read to make in the same turn when something is stale, failed, or needs verification.',
       inputSchema: z.object({
         mark_verified: z.string().optional().describe('Bead id just re-read — clears its follow-up'),
         pin: z.string().optional().describe('Bead id to pin (exempt from age-out)'),
@@ -1342,7 +1357,8 @@ const mcpHandler = createMcpHandler((server) => {
       // come from, so it advances the caller's cursor too (see
       // docs/heartbeat.md). Bare response: no footer, no re-trigger.
       advanceHeartbeatCursor(currentScope()?.caller ?? HEARTBEAT_CALLER_ANONYMOUS)
-      return ok(formatRelayStatus(), true)
+      const now = Date.now()
+      return withTiming(formatRelayStatus(relayStatus, now), relayStatusReading(relayStatus, now), true)
     },
   )
 
@@ -1353,20 +1369,22 @@ const mcpHandler = createMcpHandler((server) => {
     'heartbeat',
     {
       title: 'Heartbeat',
-      description: 'Changes since your previous MCP query (the same delta the automatic response footer carries): recently touched tasks, dispatches, verifications, failures with timestamps. The first call returns the current projection as a baseline; later calls return only what changed, or Feeds current. Read-only — never creates work, requests agents, or mutates beads.',
+      description: 'Changes since your previous MCP query (the same delta the automatic response footer carries): recently touched tasks, dispatches, verifications, failures with the event timestamp AND the age against this read. Each row names which time it is: `at` is the event\u2019s own source timestamp, `touched` is only the bridge\u2019s touch (never the action\u2019s own time). The response also carries a JSON timing block (readAt + per-item ISO/epoch timestamps + basis) so a stale proof event can be told apart from a fresh one without re-parsing prose. The first call returns the current projection as a baseline; later calls return only what changed, or Feeds current. Read-only — never creates work, requests agents, or mutates beads.',
       inputSchema: z.object({}),
     },
     async (_args: Record<string, never>) => {
       const caller = currentScope()?.caller ?? HEARTBEAT_CALLER_ANONYMOUS
-      const text = renderHeartbeatBlock(caller)
+      const now = Date.now()
+      const payload = heartbeatReading(caller, { now })
+      const text = renderHeartbeatBlock(caller, { now })
       // Feed the persistent /live heartbeat surface (observational only:
       // recording never throws and never alters the response).
       try {
-        recordLatestHeartbeat({ caller, origin: 'heartbeat', text })
+        recordLatestHeartbeat({ caller, origin: 'heartbeat', text, now })
       } catch {
         /* observation never fails a response */
       }
-      return ok(text, true)
+      return withTiming(text, payload, true)
     },
   )
 })

@@ -5,6 +5,7 @@
 // with bounded fan-out via mapLimit. Reads only — no mutations here.
 // Pure builders/parsers/formatters stay subprocess-free for unit tests.
 import { execStdout, beadText, mapLimit } from './exec'
+import { formatAge, humanAge, parseStampMs, renderStamp, stampFieldsOf } from './age'
 import { STORES, BASE } from '../config'
 import { storeFromId, extractLinks } from '../util'
 import { resolveStoreName } from './store-aliases'
@@ -149,9 +150,11 @@ export function formatSearch(
   errors: StoreError[],
   stores: string[],
   unknownStores: string[] = [],
+  now: number = Date.now(),
 ): string {
   const lines = [
     `# federated search — "${query.trim() || '(all)'}" (${rows.length} across ${stores.length} stores)`,
+    `read at ${new Date(now).toISOString()} — every age below is relative to this read`,
     ``,
   ]
   if (!rows.length) {
@@ -159,7 +162,7 @@ export function formatSearch(
   }
   for (const r of rows) {
     lines.push(
-      `- ${r.id} [${r.store}] — ${r.title}${r.status ? ` [${r.status}]` : ''}${r.labels.length ? ` (${r.labels.slice(0, 4).join(', ')})` : ''}`,
+      `- ${r.id} [${r.store}] — ${r.title}${r.status ? ` [${r.status}]` : ''}${r.labels.length ? ` (${r.labels.slice(0, 4).join(', ')})` : ''}${r.updatedAt ? ` — ${renderStamp(r.updatedAt, now)}` : ' — updated at unknown'}`,
     )
   }
   if (unknownStores.length) lines.push(``, `Skipped unknown stores: ${unknownStores.join(', ')}`)
@@ -249,12 +252,17 @@ export function formatActivity(
   stores: string[],
   unknownStores: string[] = [],
   history?: Map<string, string>,
+  now: number = Date.now(),
 ): string {
-  const lines = [`# recent activity — newest first (${rows.length} across ${stores.length} stores)`, ``]
+  const lines = [
+    `# recent activity — newest first (${rows.length} across ${stores.length} stores)`,
+    `read at ${new Date(now).toISOString()} — each age is this store's own updated_at measured against this read (source time, not a bridge touch)`,
+    ``,
+  ]
   if (!rows.length) lines.push(`No activity in scope — widen stores, limit, or filters.`, ``)
   for (const r of rows) {
     lines.push(
-      `- ${r.id} [${r.store}] — ${r.title}${r.status ? ` [${r.status}]` : ''}${r.updatedAt ? ` (updated ${r.updatedAt})` : ''}${r.closeReason ? ` (receipt: ${r.closeReason})` : ''}`,
+      `- ${r.id} [${r.store}] — ${r.title}${r.status ? ` [${r.status}]` : ''}${r.updatedAt ? ` — ${renderStamp(r.updatedAt, now)}` : ' — updated at unknown'}${r.closeReason ? ` (receipt: ${r.closeReason})` : ''}`,
     )
     const h = history?.get(r.id)
     if (h) lines.push(`  change: ${h}`)
@@ -317,14 +325,10 @@ export function claimAnchorMs(r: RetrievalRow, now = Date.now()): number | null 
   return null
 }
 
-export function humanAge(ms: number): string {
-  const m = Math.max(0, Math.floor(ms / 60000))
-  const d = Math.floor(m / 1440)
-  const h = Math.floor((m % 1440) / 60)
-  if (d > 0) return `${d}d${h}h`
-  if (h > 0) return `${h}h${m % 60}m`
-  return `${m}m`
-}
+// Age vocabulary lives in age.ts (task-60f3z) so heartbeat, relay-status,
+// and retrieval render deltas from one place; re-exported here because
+// retrieval's public surface has always owned this formatter.
+export { humanAge } from './age'
 
 export function toClaimedRow(r: RetrievalRow, now = Date.now(), staleAfterMs = CLAIM_STALE_AFTER_MS): ClaimedRow {
   const anchor = claimAnchorMs(r, now)

@@ -9,6 +9,13 @@ export interface Row {
   id: string
   title: string
   labels: string[]
+  /**
+   * The STORE's own update time (`updated_at` from `bd list --json`) — a
+   * SOURCE timestamp for whatever happened to this bead. Carried so
+   * surfaces can report the event's real time instead of a bridge touch
+   * time (task-60f3z); absent when the store does not report one.
+   */
+  updatedAt?: string
 }
 
 export function strParam(v: unknown): string | undefined {
