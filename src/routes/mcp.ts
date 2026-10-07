@@ -79,8 +79,17 @@ export const mountOrder = -20
 export const mcpRouter = Router()
 
 const text = (t: string) => ({ type: 'text' as const, text: t })
-const ok = (t: string, bare = false) => ({ content: [text(bare ? t : withResponseFooter(t, 'ok'))] })
-const err = (t: string, bare = false) => ({ content: [text(bare ? t : withResponseFooter(t, 'error'))], isError: true as const })
+
+// The MCP response boundary intentionally composes only MCP footers. Web/chat
+// navigation is rendered by wrap.ts for GET routes and must never be added to
+// a tool result: it includes queue links and write-oriented paste URLs that
+// are meaningless (and distracting) to an MCP client.
+function composeMcpText(body: string, outcome: 'ok' | 'error', bare: boolean): string {
+  return bare ? body : withResponseFooter(body, outcome)
+}
+
+const ok = (t: string, bare = false) => ({ content: [text(composeMcpText(t, 'ok', bare))] })
+const err = (t: string, bare = false) => ({ content: [text(composeMcpText(t, 'error', bare))], isError: true as const })
 
 // Machine-readable timing payload (task-60f3z). A rendered age is a
 // convenience; the CONSUMER must be able to compute its own delta, so the
