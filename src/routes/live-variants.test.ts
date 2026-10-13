@@ -162,6 +162,15 @@ describe('/live candidate visualization surfaces', () => {
     })
   })
 
+  it('timeline axis supports touch pinch-zoom', async () => {
+    await withApp(async (base) => {
+      const html = await (await fetch(`${base}/live/timeline`)).text()
+      assert.match(html, /touch-action: pan-y/)
+      assert.match(html, /addEventListener\('pointermove'/)
+      assert.doesNotMatch(html, /user-scalable=no|maximum-scale/)
+    })
+  })
+
   it('delivers a recorded activity event on the stream the candidates read', async () => {
     await withApp(async (base) => {
       const res = await fetch(`${base}/live/events?limit=0`, { headers: { accept: 'text/event-stream' } })

@@ -350,7 +350,7 @@ setInterval(render, 1000);
 
 const TIMELINE_CSS = `
 .tl-wrap { display: block; }
-.tl-axis { position: relative; height: clamp(90px, 22vh, 190px); border: 1px solid var(--edge); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.tl-axis { position: relative; height: clamp(90px, 22vh, 190px); border: 1px solid var(--edge); border-radius: 10px; background: var(--surface); overflow: hidden; touch-action: pan-y; }
 .tl-now { position: absolute; top: 0; bottom: 0; right: 0; width: 2px; background: var(--accent); }
 .tl-mark { position: absolute; bottom: 0; border-radius: 2px 2px 0 0; background: var(--ok); }
 .tl-mark.error { background: var(--err); }
@@ -371,18 +371,31 @@ const TIMELINE_CSS = `
 
 const TIMELINE_SCRIPT = `
 var axis = document.getElementById('axis');
+var zoom = 1, pts = {}, lastDist = 0;
+function dist() { var k = Object.keys(pts); if (k.length < 2) return 0; var a = pts[k[0]], b = pts[k[1]]; return Math.hypot(a.x - b.x, a.y - b.y); }
+axis.addEventListener('pointerdown', function (e) { pts[e.pointerId] = { x: e.clientX, y: e.clientY }; lastDist = dist(); });
+axis.addEventListener('pointermove', function (e) {
+  if (!pts[e.pointerId]) return;
+  pts[e.pointerId] = { x: e.clientX, y: e.clientY };
+  var d = dist();
+  if (d && lastDist) { zoom = Math.max(0.25, Math.min(8, zoom * d / lastDist)); render(); }
+  lastDist = d;
+});
+function up(e) { delete pts[e.pointerId]; lastDist = dist(); }
+axis.addEventListener('pointerup', up); axis.addEventListener('pointercancel', up);
+axis.addEventListener('wheel', function (e) { if (!e.ctrlKey) return; e.preventDefault(); zoom = Math.max(0.25, Math.min(8, zoom * Math.exp(-e.deltaY / 200))); render(); }, { passive: false });
 function pct(t, start, span) { return Math.max(0, Math.min(100, ((t - start) / span) * 100)); }
 function render() {
   var s = LiveUI.state, evs = s.events;
   var now = Date.now();
-  var span = Math.max(60000, 120000);
+  var span = 120000 / zoom;
   var first = null;
   for (var i = 0; i < evs.length; i++) {
     var t = new Date(evs[i].at).getTime();
     if (t < now - span) continue;
     if (first === null || t < first) first = t;
   }
-  if (first !== null && now - first < span) span = now - first;
+  if (zoom <= 1 && first !== null && now - first < span) span = now - first;
   var start = now - span;
   var marks = '';
   var tools = {}, callers = {}, errs = 0, durs = [];
