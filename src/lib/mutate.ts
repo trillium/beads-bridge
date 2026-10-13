@@ -29,6 +29,10 @@ export function formatReceipt(r: MutationReceipt, extra?: string): string {
 
 function failureMessage(store: string, args: string[], e: unknown): string {
   const err = e as { stderr?: unknown; stdout?: unknown; message?: string }
+  const t = e as { killed?: boolean; signal?: string }
+  if (t.killed === true || t.signal === 'SIGTERM') {
+    return `${store} ${args[0] ?? 'mutation'} timed out; the write may still have committed — read the bead back before retrying`
+  }
   const tail = (v: unknown): string => {
     const s = typeof v === 'string' ? v : v instanceof Buffer ? v.toString('utf8') : ''
     return s.trim()
@@ -40,7 +44,7 @@ function failureMessage(store: string, args: string[], e: unknown): string {
 
 // Sync variant for sync route handlers (same shell-free, throw-on-failure
 // contract as runMutation).
-export function runMutationSync(store: string, args: string[], timeoutMs = 15000): string {
+export function runMutationSync(store: string, args: string[], timeoutMs = 75000): string {
   try {
     return execFileSync(store, args, {
       encoding: 'utf8',
@@ -53,7 +57,7 @@ export function runMutationSync(store: string, args: string[], timeoutMs = 15000
 }
 
 // One mutation argv. Resolves trimmed stdout; throws Error on failure.
-export async function runMutation(store: string, args: string[], timeoutMs = 15000): Promise<string> {
+export async function runMutation(store: string, args: string[], timeoutMs = 75000): Promise<string> {
   try {
     return await execStdout(store, args, timeoutMs)
   } catch (e) {

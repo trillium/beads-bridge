@@ -2,7 +2,7 @@
 // Pure builders/validators only — no subprocesses, no stores touched.
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildCreateArgs, parseCreatedId, validateCreateLabels } from './create'
+import { buildCreateArgs, parseCreatedId, validateCreateLabels, createBead, createKey, CreateTimeoutError } from './create'
 
 describe('buildCreateArgs', () => {
   it('builds minimal argv', () => {
@@ -91,5 +91,72 @@ describe('validateCreateLabels', () => {
     const { ok, bad } = validateCreateLabels(['project:parlay', 'has space', 'a'.repeat(70), 'resume:resumes-zak'])
     assert.deepEqual(ok, ['project:parlay', 'resume:resumes-zak'])
     assert.deepEqual(bad, ['has space', 'a'.repeat(70)])
+  })
+})
+
+describe('createBead timeout + idempotency', () => {
+  const timeoutErr = Object.assign(new Error('Command failed: inbox create x'), { killed: true, signal: 'SIGTERM', code: null, stderr: '' })
+  const mk = (handler: (args: string[]) => Promise<string>) => {
+    const calls: string[][] = []
+    return { calls, deps: { now: () => Date.now(), exec: async (_s: string, a: string[]) => { calls.push(a); return handler(a) } } }
+  }
+
+  it('createKey is stable per content and differs by store/title/body', () => {
+    const a = createKey({ store: 'inbox', title: 'T', description: 'D' })
+    assert.equal(a, createKey({ store: 'INBOX', title: 'T', description: 'D' }))
+    assert.notEqual(a, createKey({ store: 'inbox', title: 'T', description: 'E' }))
+    assert.notEqual(a, createKey({ store: 'task', title: 'T', description: 'D' }))
+  })
+
+  it('stamps the ckey label on create', async () => {
+    const { calls, deps } = mk(async (a) => (a[0] === 'list' ? '[]' : a[0] === 'show' ? 'shown' : 'Created inbox-abc1'))
+    const r = await createBead({ store: 'inbox', title: 'T' }, deps)
+    assert.equal(r.id, 'inbox-abc1')
+    const create = calls.find((a) => a[0] === 'create')!
+    assert.ok(create[create.indexOf('-l') + 1].startsWith('ckey:'))
+  })
+
+  it('timed out but landed: returns the bead instead of an error', async () => {
+    let listed = 0
+    const { deps } = mk(async (a) => {
+      if (a[0] === 'list') return ++listed === 1 ? '[]' : JSON.stringify([{ id: 'inbox-dwgg', created_at: new Date().toISOString() }])
+      if (a[0] === 'create') throw timeoutErr
+      return 'shown'
+    })
+    const r = await createBead({ store: 'inbox', title: 'T' }, deps)
+    assert.equal(r.id, 'inbox-dwgg')
+    assert.equal(r.reused, true)
+  })
+
+  it('timed out and not found: explicit timeout error, not a plain failure', async () => {
+    const { deps } = mk(async (a) => {
+      if (a[0] === 'list') return '[]'
+      throw timeoutErr
+    })
+    await assert.rejects(createBead({ store: 'inbox', title: 'T' }, deps), (e: Error) => {
+      assert.ok(e instanceof CreateTimeoutError)
+      assert.match(e.message, /timed out after 75s/)
+      assert.match(e.message, /may still commit/)
+      assert.ok(!e.message.includes('Command failed'))
+      return true
+    })
+  })
+
+  it('retry reuses an existing keyed bead and never calls create', async () => {
+    const { calls, deps } = mk(async (a) => (a[0] === 'list' ? JSON.stringify([{ id: 'inbox-t0a3', created_at: new Date().toISOString() }]) : 'shown'))
+    const r = await createBead({ store: 'inbox', title: 'T' }, deps)
+    assert.equal(r.id, 'inbox-t0a3')
+    assert.ok(!calls.some((a) => a[0] === 'create'))
+  })
+
+  it('a real (non-timeout) failure still throws its own message', async () => {
+    const { deps } = mk(async (a) => { if (a[0] === 'list') return '[]'; throw Object.assign(new Error('boom'), { stdout: '' }) })
+    await assert.rejects(createBead({ store: 'inbox', title: 'T' }, deps), /boom/)
+  })
+
+  it('opkey callers skip the default key', async () => {
+    const { calls, deps } = mk(async (a) => (a[0] === 'show' ? 's' : 'Created inbox-zzz1'))
+    await createBead({ store: 'inbox', title: 'T', labels: ['opkey:abc'] }, deps)
+    assert.ok(!calls.some((a) => a[0] === 'list'))
   })
 })
