@@ -2,6 +2,7 @@
 // shell-free argv (no quoting/injection surface) and a verify-after-write.
 // Labels come from the caller (ChatGPT) and pass the same cleanLabel gate
 // as queries; bad labels fail fast with the full list named.
+import { createHash } from 'crypto'
 import { execStdout } from './exec'
 import { aliasesForStore } from './store-spellings'
 import { cleanLabel } from '../routes/query/params'
@@ -76,9 +77,74 @@ export function validateCreateLabels(labels: string[] | undefined): { ok: string
   return { ok, bad }
 }
 
-export async function createBead(input: CreateInput): Promise<{ id: string; detail: string; verified: boolean }> {
+// Write budget. Writes queue behind a shared Dolt lock and took 18-37 s under
+// load (scout report, robots-u1u8); the old 15 s cap killed the wrapper AFTER
+// bd had committed, so callers saw a failure for a bead that existed.
+export const CREATE_TIMEOUT_MS = 75000
+
+// Default idempotency key for creates that carry no client operation id:
+// store + title + description + labels + parent. A retry of the same request
+// maps to the bead the timed-out attempt already made instead of a duplicate.
+export const CREATE_KEY_PREFIX = 'ckey:'
+const CREATE_KEY_WINDOW_MS = 60 * 60 * 1000
+
+export function createKey(input: CreateInput): string {
+  const digest = createHash('sha256')
+    .update([input.store.trim().toLowerCase(), input.title, input.description ?? '', (input.labels ?? []).join(','), input.parent ?? ''].join('\u0000'))
+    .digest('hex')
+  return `${CREATE_KEY_PREFIX}${digest.slice(0, 16)}`
+}
+
+export class CreateTimeoutError extends Error {
+  constructor(public store: string, public timeoutMs: number, public key: string) {
+    super(
+      `${store} create timed out after ${Math.round(timeoutMs / 1000)}s and no bead carrying ${key} was found yet. ` +
+        `The write may still commit (the store call is slow, not necessarily failed): check ${store} for label ${key} before retrying. ` +
+        `Retrying the identical create is safe — it reuses the bead if it landed.`,
+    )
+    this.name = 'CreateTimeoutError'
+  }
+}
+
+export interface CreateDeps {
+  exec: (store: string, args: string[], timeoutMs: number) => Promise<string>
+  now: () => number
+}
+const realDeps: CreateDeps = { exec: execStdout, now: () => Date.now() }
+
+function isTimeout(e: unknown): boolean {
+  const err = e as { killed?: boolean; signal?: string; code?: unknown }
+  return err?.killed === true || err?.signal === 'SIGTERM'
+}
+
+// Recent open bead carrying the key, or null. Lookup failures read as "none".
+async function findByCreateKey(deps: CreateDeps, store: string, key: string): Promise<string | null> {
+  const out = await deps.exec(store, ['list', '--json', '--limit', '20', '--label', key], 20000).catch(() => '[]')
+  try {
+    const rows: unknown = JSON.parse(out || '[]')
+    const fresh = (Array.isArray(rows) ? rows : [])
+      .filter((r): r is Record<string, unknown> => typeof r === 'object' && r !== null && typeof r.id === 'string')
+      .filter((r) => {
+        const t = Date.parse(String(r.created_at ?? ''))
+        return !t || deps.now() - t < CREATE_KEY_WINDOW_MS
+      })
+      .sort((a, b) => (Date.parse(String(a.created_at ?? '')) || 0) - (Date.parse(String(b.created_at ?? '')) || 0))
+    return fresh.length ? String(fresh[0].id) : null
+  } catch {
+    return null
+  }
+}
+
+export async function createBead(
+  input: CreateInput,
+  deps: CreateDeps = realDeps,
+): Promise<{ id: string; detail: string; verified: boolean; reused?: boolean }> {
   const title = input.title.trim().slice(0, 200)
   if (!title) throw new Error('title is required')
+  // Callers with their own key (opkey:, idempotent-create.ts) keep it; every
+  // other create gets the default content key.
+  const keyed = !(input.labels ?? []).some((l) => l.startsWith('opkey:'))
+  const key = keyed ? createKey({ ...input, title }) : ''
   const args = buildCreateArgs({
     ...input,
     title,
@@ -86,17 +152,31 @@ export async function createBead(input: CreateInput): Promise<{ id: string; deta
     // (MAX_BODY_CHARS) is the single loud enforcement point — truncating
     // here would turn a loud rejection into silent data loss.
     description: input.description,
+    labels: key ? [...(input.labels ?? []), key] : input.labels,
   })
+  const readBack = async (id: string, reused: boolean) => {
+    // Closed loop: confirm the bead reads back.
+    const shown = await deps.exec(input.store, ['show', id], 10000).catch(() => null)
+    return { id, detail: (shown ?? 'unreadable after create').slice(0, 1200), verified: shown !== null, ...(reused ? { reused } : {}) }
+  }
+  if (key) {
+    const existing = await findByCreateKey(deps, input.store, key)
+    if (existing) return readBack(existing, true)
+  }
   let stdout: string
   try {
-    stdout = await execStdout(input.store, args, 15000)
+    stdout = await deps.exec(input.store, args, CREATE_TIMEOUT_MS)
   } catch (e) {
+    if (isTimeout(e)) {
+      // The kill hits the wrapper, not the orphaned bd: the bead may exist.
+      const landed = key ? await findByCreateKey(deps, input.store, key) : null
+      if (landed) return readBack(landed, true)
+      throw new CreateTimeoutError(input.store, CREATE_TIMEOUT_MS, key || '(unkeyed)')
+    }
     const err = e as { stdout?: unknown; message?: string }
     throw new Error((typeof err.stdout === 'string' && err.stdout.trim()) || err.message || 'create failed')
   }
   const id = parseCreatedId(input.store, stdout)
   if (!id) throw new Error(`created but no bead id found in output: ${stdout.slice(0, 200)}`)
-  // Closed loop: confirm the bead reads back.
-  const shown = await execStdout(input.store, ['show', id], 10000).catch(() => null)
-  return { id, detail: (shown ?? 'unreadable after create').slice(0, 1200), verified: shown !== null }
+  return readBack(id, false)
 }

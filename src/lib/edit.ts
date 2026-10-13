@@ -21,7 +21,7 @@ export async function editBead(input: EditInput): Promise<{ id: string; detail: 
   const args = buildEditArgs(input.id, input)
   if (!args) throw new Error('give title and/or description to change')
   try {
-    await execStdout(input.store, args, 15000)
+    await execStdout(input.store, args, 75000)
   } catch (e) {
     const err = e as { stdout?: unknown; message?: string }
     throw new Error((typeof err.stdout === 'string' && err.stdout.trim()) || err.message || 'update failed')
