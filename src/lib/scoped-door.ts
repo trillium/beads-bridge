@@ -36,6 +36,7 @@ import { withMcpAuth } from 'mcp-handler'
 import { BASE } from '../config'
 import { toFetchRequest } from './express-fetch'
 import { lookupAccess, type TokenRec } from './oauth'
+import { withCredentialDiagnosis } from './auth-diagnosis'
 import { withCompatRequest } from './mcp-compat'
 import { withTelemetry } from './mcp-telemetry'
 
@@ -117,13 +118,13 @@ export function createScopedDoor(spec: ScopedDoorSpec): ScopedDoor {
     return { token: rec.token, clientId: rec.clientId, scopes: rec.scope }
   }
 
-  const authedProxy = withMcpAuth(proxyHandler, (_req, bearerToken) => verify(bearerToken), {
+  const authedProxy = withCredentialDiagnosis(withMcpAuth(proxyHandler, (_req, bearerToken) => verify(bearerToken), {
     required: true,
     resourceMetadataPath: spec.discoveryPath,
     // Origin only: withMcpAuth appends resourceMetadataPath to build the
     // challenge URL (passing the full resource would double the path).
     resourceUrl: BASE,
-  })
+  }))
 
   // Same chain shape as /mcp (compat backfill + telemetry), different gate +
   // different backend. Sparse 2026 envelopes (ChatGPT) are backfilled before

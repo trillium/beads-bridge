@@ -13,11 +13,10 @@
 // docs/auth-boundary.md for captured evidence. So the bridge door is the only
 // place a distinguishable auth failure can be asserted.
 //
-// Honest status: the "KNOWN GAP" tests below hold the FULL desired contract
-// with no loosened assertions, wrapped in `knownGap`, which passes while the
-// gap exists and FAILS the moment the boundary starts meeting the contract
-// (swap `knownGap` for `it` then). Fixing the boundary is out of scope here;
-// see docs/auth-boundary.md.
+// Status: the boundary meets the full contract. Each failure case carries a
+// distinct, truthful error_description (status 401, the Bearer challenge with
+// resource_metadata and error=invalid_token stay stable). See
+// docs/auth-boundary.md.
 //
 // Hermetic: FUNNEL_BASE=https://example.test bun test src/routes/auth-boundary.test.ts
 // OAuth store + telemetry live in temp dirs; the loopback gateway upstream is
@@ -26,13 +25,13 @@
 //   AUTH_BOUNDARY_LIVE=1 FUNNEL_BASE=... bun test src/routes/auth-boundary.test.ts
 import { after, before, beforeEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import express from 'express'
 import { BASE, toolKey } from '../config'
-import { chatgptResource, jungleResource, loadStore, mcpResource, mintTokenPair } from '../lib/oauth'
+import { chatgptResource, jungleResource, loadStore, mcpResource, mintTokenPair, saveStore } from '../lib/oauth'
 import { chatgptRouter } from './chatgpt'
 import { jungleRouter } from './jungle'
 import { mcpRouter } from './mcp'
@@ -46,6 +45,7 @@ const INIT = {
 
 // Well-formed (bb_at_ + 24 chars, the minted shape) but never issued/expired.
 const EXPIRED_TOKEN = 'bb_at_expiredexpiredexpiredxx'
+const UNKNOWN_TOKEN = 'bb_at_neverissuedneverissuedx'
 const MALFORMED_TOKEN = 'not-a-token'
 
 interface Door {
@@ -84,9 +84,9 @@ async function call(base: string, path: string, token?: string): Promise<Outcome
   return { status: res.status, wwwAuthenticate: res.headers.get('www-authenticate'), body, raw }
 }
 
-// Seed a token record that is well-formed but already past its expiry. Note
-// loadStore() prunes dead records on read, so the gate sees an unknown token —
-// this is the same state a client holds after its credential lapses.
+// Seed a token record that is well-formed but already past its expiry.
+// loadStore() prunes it on read and leaves a hashed tombstone, which is how
+// the gate tells "expired" from "never issued".
 function seedExpiredToken(resource: string): void {
   const store = JSON.parse(JSON.stringify(loadStore()))
   store.access[EXPIRED_TOKEN] = { clientId: 'auth-boundary-test', scope: ['mcp'], resource, expiresAt: Date.now() - 60_000 }
@@ -106,24 +106,7 @@ function expectChallenge(o: Outcome): void {
   assert.equal(typeof o.body?.error_description, 'string')
 }
 
-// Runs a test that asserts the DESIRED contract while the boundary does not
-// meet it. Passes only while the assertions fail; if the gap closes it fails
-// and tells you to convert it to a plain `it`. (bun's `test.failing` does the
-// same but `bun:test` has no types in this repo's tsc setup.)
-function knownGap(name: string, opts: { timeout: number }, fn: () => Promise<void>): void {
-  it(name, opts, async () => {
-    let closed = false
-    try {
-      await fn()
-      closed = true
-    } catch {
-      /* gap still open: the contract assertion failed, as documented */
-    }
-    assert.ok(!closed, 'gap closed — the boundary now meets this contract; replace knownGap with it')
-  })
-}
-
-// Exists today: every credential failure is an HTTP 401 Bearer challenge with
+// Stable for every case: every credential failure is an HTTP 401 Bearer challenge with
 // a machine-readable error code, never a 200/5xx or a session-level error.
 function expectAuthFailureShape(o: Outcome): void {
   expectChallenge(o)
@@ -209,44 +192,59 @@ for (const door of DOORS) {
       assert.deepEqual(upstreamHits, []) // refused before any proxy hop
     })
 
-    it('malformed token → 401 invalid_token (shape + refusal exist today)', { timeout: 30000 }, async () => {
-      const o = await call(base, door.path, MALFORMED_TOKEN)
-      expectAuthFailureShape(o)
-      assert.deepEqual(upstreamHits, [])
-    })
-
-    it('expired token → 401 invalid_token (shape + refusal exist today)', { timeout: 30000 }, async () => {
-      seedExpiredToken(door.resource(BASE))
-      const o = await call(base, door.path, EXPIRED_TOKEN)
-      expectAuthFailureShape(o)
-      assert.deepEqual(upstreamHits, [])
-    })
-
-    // KNOWN GAP 1 — see docs/auth-boundary.md. Today: the same
-    // `error_description: "No authorization provided"` as the no-token case,
-    // which is false (a token WAS provided) and says nothing about re-auth.
-    knownGap('KNOWN GAP: malformed token says the credential is invalid and to re-authenticate', { timeout: 30000 }, async () => {
+    it('malformed token → 401 invalid_token saying the credential is invalid and to re-authenticate', { timeout: 30000 }, async () => {
       const o = await call(base, door.path, MALFORMED_TOKEN)
       expectCredentialProblem(o, /malformed|invalid/i)
+      assert.deepEqual(upstreamHits, [])
     })
 
-    // KNOWN GAP 2 — same defect; additionally an expired record is pruned on
-    // read (src/lib/oauth.ts prune), so the gate cannot tell expired from
-    // never-issued without keeping a tombstone.
-    knownGap('KNOWN GAP: expired token says the credential expired and to re-authenticate', { timeout: 30000 }, async () => {
+    it('expired token → 401 invalid_token saying it expired and to re-authenticate', { timeout: 30000 }, async () => {
       seedExpiredToken(door.resource(BASE))
       const o = await call(base, door.path, EXPIRED_TOKEN)
       expectCredentialProblem(o, /expired/i)
+      assert.deepEqual(upstreamHits, [])
     })
 
-    // KNOWN GAP 3 — the three failures must be pairwise distinguishable by a
-    // client. Today all three bodies are byte-identical.
-    knownGap('KNOWN GAP: none / malformed / expired are pairwise distinguishable', { timeout: 30000 }, async () => {
+    it('expired token stays "expired" after the store has been saved (tombstone persisted)', { timeout: 30000 }, async () => {
       seedExpiredToken(door.resource(BASE))
-      const none = descriptionOf(await call(base, door.path))
-      const malformed = descriptionOf(await call(base, door.path, MALFORMED_TOKEN))
-      const expired = descriptionOf(await call(base, door.path, EXPIRED_TOKEN))
-      assert.equal(new Set([none, malformed, expired]).size, 3)
+      saveStore(loadStore()) // a write prunes the record to a tombstone on disk
+      assert.ok(!(EXPIRED_TOKEN in JSON.parse(readFileSync(process.env.OAUTH_STORE_PATH!, 'utf8')).access))
+      expectCredentialProblem(await call(base, door.path, EXPIRED_TOKEN), /expired/i)
+    })
+
+    it('well-formed but never-issued token → 401 invalid_token, not "expired", with re-authenticate', { timeout: 30000 }, async () => {
+      const o = await call(base, door.path, UNKNOWN_TOKEN)
+      expectCredentialProblem(o, /not recognized|invalid/i)
+      assert.doesNotMatch(descriptionOf(o), /expired/i)
+    })
+
+    it('valid token minted for another door → 401 naming the wrong endpoint, not "no authorization"', { timeout: 30000 }, async () => {
+      const other = DOORS.find((d) => d !== door)!
+      const pair = mintTokenPair('auth-boundary-test', ['mcp'], other.resource(BASE))
+      const o = await call(base, door.path, pair.accessToken)
+      expectCredentialProblem(o, /different endpoint/i)
+      assert.deepEqual(upstreamHits, [])
+    })
+
+    it('none / malformed / unknown / expired are pairwise distinguishable', { timeout: 30000 }, async () => {
+      seedExpiredToken(door.resource(BASE))
+      const descriptions = [
+        descriptionOf(await call(base, door.path)),
+        descriptionOf(await call(base, door.path, MALFORMED_TOKEN)),
+        descriptionOf(await call(base, door.path, UNKNOWN_TOKEN)),
+        descriptionOf(await call(base, door.path, EXPIRED_TOKEN)),
+      ]
+      assert.equal(new Set(descriptions).size, 4)
+    })
+
+    it('challenge header description matches the JSON body and never echoes the token', { timeout: 30000 }, async () => {
+      seedExpiredToken(door.resource(BASE))
+      for (const token of [MALFORMED_TOKEN, UNKNOWN_TOKEN, EXPIRED_TOKEN]) {
+        const o = await call(base, door.path, token)
+        assert.ok((o.wwwAuthenticate ?? '').includes(`error_description="${descriptionOf(o)}"`))
+        assert.ok((o.wwwAuthenticate ?? '').includes('error="invalid_token"'))
+        assert.ok(!o.raw.includes(token) && !(o.wwwAuthenticate ?? '').includes(token))
+      }
     })
   })
 }
@@ -254,7 +252,7 @@ for (const door of DOORS) {
 describe('credential boundary: doors agree', () => {
   it('a given failure case yields the same status and body on every door', { timeout: 60000 }, async () => {
     seedExpiredToken(mcpResource(BASE))
-    for (const token of [undefined, MALFORMED_TOKEN, EXPIRED_TOKEN]) {
+    for (const token of [undefined, MALFORMED_TOKEN, UNKNOWN_TOKEN, EXPIRED_TOKEN]) {
       const outs = await Promise.all(DOORS.map((d) => call(base, d.path, token)))
       for (const o of outs) {
         assert.equal(o.status, outs[0].status)
@@ -273,7 +271,8 @@ describe('credential boundary: doors agree', () => {
 const LIVE = process.env.AUTH_BOUNDARY_LIVE === '1'
 const LIVE_BASE = process.env.AUTH_BOUNDARY_LIVE_BASE ?? 'http://127.0.0.1:3737'
 
-describe('credential boundary: live bridge (read-only)', { skip: !LIVE }, () => {
+// bun ignores node:test's `{ skip }` option, so pick the function instead.
+;(LIVE ? describe : describe.skip)('credential boundary: live bridge (read-only)', () => {
   for (const path of ['/mcp', '/chatgpt/mcp']) {
     it(`${path}: no token → 401 Bearer challenge`, { timeout: 30000 }, async () => {
       expectMissingCredential(await call(LIVE_BASE, path))
@@ -282,7 +281,9 @@ describe('credential boundary: live bridge (read-only)', { skip: !LIVE }, () => 
       expectAuthFailureShape(await call(LIVE_BASE, path, MALFORMED_TOKEN))
       expectAuthFailureShape(await call(LIVE_BASE, path, EXPIRED_TOKEN))
     })
-    knownGap(`${path}: KNOWN GAP: bad credential says invalid + re-authenticate`, { timeout: 30000 }, async () => {
+    // Only meaningful against a bridge running this build; an older process
+    // still answers "No authorization provided" until it is redeployed.
+    it(`${path}: bad credential says invalid + re-authenticate`, { timeout: 30000 }, async () => {
       expectCredentialProblem(await call(LIVE_BASE, path, MALFORMED_TOKEN), /malformed|invalid/i)
     })
   }

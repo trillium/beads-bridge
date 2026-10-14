@@ -7,9 +7,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   CODE_TTL_MS,
+  EXPIRED_TOMBSTONE_TTL_MS,
   NEVER_EXPIRES,
   NO_EXPIRY_EXPIRES_IN_S,
   TX_TTL_MS,
+  accessTokenState,
   buildAuthorizationServerMetadata,
   consumeCode,
   loadStore,
@@ -278,5 +280,37 @@ describe('flow-step lifetimes are untouched', () => {
     const loaded = loadStore()
     assert.ok(loaded.approvals.fresh)
     assert.equal(loaded.approvals.stale, undefined)
+  })
+})
+
+describe('accessTokenState (expired vs unknown)', () => {
+  const dead = { clientId: 'c', scope: ['mcp'], resource: 'r', expiresAt: Date.now() - 60_000 }
+
+  it('reports live, expired (tombstone) and unknown', () => {
+    const live = mintTokenPair('c', ['mcp'], 'r').accessToken
+    writeFileSync(storePath(), JSON.stringify({ ...loadStore(), access: { ...loadStore().access, bb_at_dead: dead } }))
+    assert.equal(accessTokenState(live), 'live')
+    assert.equal(accessTokenState('bb_at_dead'), 'expired')
+    assert.equal(accessTokenState('bb_at_nope'), 'unknown')
+    assert.equal(lookupAccess('bb_at_dead'), null) // a tombstone grants nothing
+  })
+
+  it('persists a hashed tombstone on save and never writes the token back', () => {
+    writeFileSync(storePath(), JSON.stringify({ ...loadStore(), access: { bb_at_dead: dead } }))
+    saveStore(loadStore())
+    const raw = readFileSync(storePath(), 'utf8')
+    assert.ok(!raw.includes('bb_at_dead'))
+    assert.equal(accessTokenState('bb_at_dead'), 'expired')
+  })
+
+  it('drops tombstones after the retention window', () => {
+    writeFileSync(storePath(), JSON.stringify({ ...loadStore(), access: { bb_at_dead: dead } }))
+    saveStore(loadStore())
+    const restore = travelAhead(EXPIRED_TOMBSTONE_TTL_MS + 60_000)
+    try {
+      assert.equal(accessTokenState('bb_at_dead'), 'unknown')
+    } finally {
+      restore()
+    }
   })
 })

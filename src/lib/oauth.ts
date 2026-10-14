@@ -242,6 +242,11 @@ interface StoreData {
   access: Record<string, TokenRec>
   refresh: Record<string, RefreshRec>
   approvals: Record<string, number>
+  // Tombstones for access tokens pruned because they expired: sha256(token) →
+  // when the record died. Lets the gate say "expired" rather than "unknown".
+  // Hashed so the store never gains a second copy of a credential; a tombstone
+  // grants nothing (lookupAccess never reads it).
+  expired: Record<string, number>
 }
 
 const STORE_PATH = join(process.env.HOME ?? tmpdir(), '.config', 'pai', 'beads-bridge-oauth.json')
@@ -251,8 +256,12 @@ export function storePath(): string {
 }
 
 function blank(): StoreData {
-  return { clients: {}, codes: {}, access: {}, refresh: {}, approvals: {} }
+  return { clients: {}, codes: {}, access: {}, refresh: {}, approvals: {}, expired: {} }
 }
+
+export const EXPIRED_TOMBSTONE_TTL_MS = 30 * 24 * 3600 * 1000
+
+const tokenHash = (token: string): string => createHash('sha256').update(token).digest('hex')
 
 function prune(d: StoreData): StoreData {
   const now = Date.now()
@@ -262,13 +271,16 @@ function prune(d: StoreData): StoreData {
   // (real timestamps from before the never-expire change) are promoted to
   // NEVER_EXPIRES so a token that is live today stays live until revoked.
   for (const [k, v] of Object.entries(d.access)) {
-    if (!tokenLive(v.expiresAt)) delete d.access[k]
-    else if (v.expiresAt !== NEVER_EXPIRES) v.expiresAt = NEVER_EXPIRES
+    if (!tokenLive(v.expiresAt)) {
+      d.expired[tokenHash(k)] = v.expiresAt
+      delete d.access[k]
+    } else if (v.expiresAt !== NEVER_EXPIRES) v.expiresAt = NEVER_EXPIRES
   }
   for (const [k, v] of Object.entries(d.refresh)) {
     if (!tokenLive(v.expiresAt)) delete d.refresh[k]
     else if (v.expiresAt !== NEVER_EXPIRES) v.expiresAt = NEVER_EXPIRES
   }
+  for (const [k, v] of Object.entries(d.expired)) if (v + EXPIRED_TOMBSTONE_TTL_MS <= now) delete d.expired[k]
   for (const [k, v] of Object.entries(d.approvals)) if (v + 90 * 24 * 3600 * 1000 <= now) delete d.approvals[k]
   return d
 }
@@ -330,6 +342,15 @@ export function lookupAccess(token: string): (TokenRec & { token: string }) | nu
   const rec = d.access[token]
   if (!rec || !tokenLive(rec.expiresAt)) return null
   return { ...rec, token }
+}
+
+// Why lookupAccess would refuse a token, for the client-facing error text only
+// (never an authorization decision). 'expired' needs the tombstone prune() leaves.
+export type AccessTokenState = 'live' | 'expired' | 'unknown'
+export function accessTokenState(token: string): AccessTokenState {
+  const d = loadStore()
+  if (d.access[token]) return 'live'
+  return tokenHash(token) in d.expired ? 'expired' : 'unknown'
 }
 
 // Rotate: consumes the refresh token, revokes its access token, mints a pair.
