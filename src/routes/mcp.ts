@@ -421,7 +421,7 @@ const mcpHandler = createMcpHandler((server) => {
       if (bad.length) return err(`bad label: ${bad.join(', ')} (match ${LABEL_RE}, max 64 chars)`)
       try {
         const provenance = { source: 'mcp' as const, caller: currentRequestCaller() }
-        const { id, detail, verified, disposition, revision, operationKey, applied, childId } = await createOperationBead({
+        const { id, detail, verified, disposition, revision, operationKey, applied, childId, recovered } = await createOperationBead({
           store,
           title,
           description,
@@ -438,7 +438,7 @@ const mcpHandler = createMcpHandler((server) => {
           return err(unverifiedMessage(receipt))
         }
         const idem = operationKey ? `\n${formatReconciliation({ disposition, id, operationKey, revision, applied, childId })}` : ''
-        return ok(formatReceipt(receipt, `Labels: ${withProvenance(valid, provenance).join(', ') || '(none)'}${createAliasNote}${idem}`))
+        return ok(formatReceipt(receipt, `Labels: ${withProvenance(valid, provenance).join(', ') || '(none)'}${createAliasNote}${recovered ? `\nNote: ${recovered} — this receipt is the bead as it reads back now.` : ''}${idem}`))
       } catch (e) {
         relayStatus.touch({ id: `new:${store}`, kind: 'failure', title: `create failed in ${store}: ${title}`, state: 'failed' })
         return err(`create failed: ${e instanceof Error ? e.message : String(e)}`)

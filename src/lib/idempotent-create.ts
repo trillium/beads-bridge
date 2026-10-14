@@ -83,6 +83,8 @@ export interface OperationCreateResult {
   detail: string
   /** Beads closed as duplicates of the canonical one (cross-process race). */
   collapsed?: string[]
+  /** Set when the store CLI reported a failure but the bead had landed. */
+  recovered?: string
 }
 
 interface StoreRow {
@@ -264,6 +266,7 @@ export async function createOperationBead(input: OperationCreateInput): Promise<
       verified: created.verified,
       detail: created.detail,
       collapsed: [],
+      ...(created.recovered ? { recovered: created.recovered } : {}),
     }
   }
 
@@ -308,6 +311,7 @@ async function runOperation(input: OperationCreateInput, opKey: string, opId: st
       applied: recorded ? ['created', 'revision 1 recorded'] : ['created', `revision 1 NOT recorded: ${created.id}`],
       verified: created.verified,
       detail: created.detail,
+      ...(created.recovered ? { recovered: created.recovered } : {}),
     }
   }
 
