@@ -106,45 +106,98 @@ export class CreateTimeoutError extends Error {
   }
 }
 
+// The store CLI died on its own context, not on a bad request: bd cancels its
+// root context on SIGTERM and when the Dolt connection drops, and prints e.g.
+// `failed to open database: schema skew check: context canceled`. Which step
+// it was in is unknowable from outside — the write may or may not have
+// committed — so these are recovered by key exactly like a timeout.
+const TRANSIENT_STORE_RE =
+  /context (?:canceled|cancelled|deadline exceeded)|failed to open database|schema skew check|bad connection|invalid connection|connection (?:refused|reset)|broken pipe|unexpected EOF/i
+
+export class CreateOutcomeUnknownError extends Error {
+  constructor(public store: string, public key: string, public cause_: string, public lookup: 'not-found' | 'unchecked') {
+    super(
+      `${store} create failed in the store CLI (${cause_}). ` +
+        (lookup === 'not-found'
+          ? `No bead carrying ${key} exists, so the write did not land. `
+          : `The bridge could not check whether it landed, so it may have: look in ${store} for label ${key} before retrying. `) +
+        `Retrying the identical create is safe — it reuses the bead if it landed.`,
+    )
+    this.name = 'CreateOutcomeUnknownError'
+  }
+}
+
 export interface CreateDeps {
   exec: (store: string, args: string[], timeoutMs: number) => Promise<string>
   now: () => number
+  sleep?: (ms: number) => Promise<void>
 }
-const realDeps: CreateDeps = { exec: execStdout, now: () => Date.now() }
+const realDeps: CreateDeps = { exec: execStdout, now: () => Date.now(), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) }
 
 function isTimeout(e: unknown): boolean {
   const err = e as { killed?: boolean; signal?: string; code?: unknown }
   return err?.killed === true || err?.signal === 'SIGTERM'
 }
 
-// Recent open bead carrying the key, or null. Lookup failures read as "none".
-async function findByCreateKey(deps: CreateDeps, store: string, key: string): Promise<string | null> {
-  const out = await deps.exec(store, ['list', '--json', '--limit', '20', '--label', key], 20000).catch(() => '[]')
-  try {
-    const rows: unknown = JSON.parse(out || '[]')
-    const fresh = (Array.isArray(rows) ? rows : [])
-      .filter((r): r is Record<string, unknown> => typeof r === 'object' && r !== null && typeof r.id === 'string')
-      .filter((r) => {
-        const t = Date.parse(String(r.created_at ?? ''))
-        return !t || deps.now() - t < CREATE_KEY_WINDOW_MS
-      })
-      .sort((a, b) => (Date.parse(String(a.created_at ?? '')) || 0) - (Date.parse(String(b.created_at ?? '')) || 0))
-    return fresh.length ? String(fresh[0].id) : null
-  } catch {
-    return null
+// The CLI's own words for a failure — stderr first — without execFile's
+// "Command failed: <argv>" header, which would echo the whole create body.
+export function storeErrorText(store: string, verb: string, e: unknown): string {
+  const err = e as { stderr?: unknown; stdout?: unknown; message?: string }
+  const tail = (v: unknown): string => (typeof v === 'string' ? v : v instanceof Buffer ? v.toString('utf8') : '').trim()
+  const own = tail(err?.stderr) || tail(err?.stdout)
+  const msg = (err?.message ?? '').split('\n')
+  const fromMsg = msg.slice(msg[0]?.startsWith('Command failed:') ? 1 : 0).join(' ').trim() || (msg[0]?.startsWith('Command failed:') ? `${store} ${verb} exited with an error` : msg[0] ?? '')
+  return (own || fromMsg || `${store} ${verb} failed`).replace(/\s+/g, ' ').slice(0, 300)
+}
+
+const LOOKUP_ATTEMPTS = 3
+const LOOKUP_BACKOFF_MS = 1000
+
+// Recent open bead carrying the key. `checked` is false when the store never
+// answered (a lookup failure is NOT evidence the bead is absent).
+async function lookupByCreateKey(
+  deps: CreateDeps,
+  store: string,
+  key: string,
+  attempts = 1,
+): Promise<{ id: string | null; checked: boolean }> {
+  for (let i = 0; i < attempts; i++) {
+    if (i > 0) await (deps.sleep ?? realDeps.sleep!)(LOOKUP_BACKOFF_MS * i)
+    let out: string
+    try {
+      out = await deps.exec(store, ['list', '--json', '--limit', '20', '--label', key], 20000)
+    } catch {
+      continue
+    }
+    try {
+      const rows: unknown = JSON.parse(out || '[]')
+      const fresh = (Array.isArray(rows) ? rows : [])
+        .filter((r): r is Record<string, unknown> => typeof r === 'object' && r !== null && typeof r.id === 'string')
+        .filter((r) => {
+          const t = Date.parse(String(r.created_at ?? ''))
+          return !t || deps.now() - t < CREATE_KEY_WINDOW_MS
+        })
+        .sort((a, b) => (Date.parse(String(a.created_at ?? '')) || 0) - (Date.parse(String(b.created_at ?? '')) || 0))
+      return { id: fresh.length ? String(fresh[0].id) : null, checked: true }
+    } catch {
+      continue
+    }
   }
+  return { id: null, checked: false }
 }
 
 export async function createBead(
   input: CreateInput,
   deps: CreateDeps = realDeps,
-): Promise<{ id: string; detail: string; verified: boolean; reused?: boolean }> {
+): Promise<{ id: string; detail: string; verified: boolean; reused?: boolean; recovered?: string }> {
   const title = input.title.trim().slice(0, 200)
   if (!title) throw new Error('title is required')
   // Callers with their own key (opkey:, idempotent-create.ts) keep it; every
   // other create gets the default content key.
-  const keyed = !(input.labels ?? []).some((l) => l.startsWith('opkey:'))
-  const key = keyed ? createKey({ ...input, title }) : ''
+  const opkey = (input.labels ?? []).find((l) => l.startsWith('opkey:'))
+  const key = opkey ? '' : createKey({ ...input, title })
+  // The label a failed create is recovered by: ours, or the caller's opkey.
+  const recoveryKey = key || opkey || ''
   const args = buildCreateArgs({
     ...input,
     title,
@@ -154,27 +207,41 @@ export async function createBead(
     description: input.description,
     labels: key ? [...(input.labels ?? []), key] : input.labels,
   })
-  const readBack = async (id: string, reused: boolean) => {
-    // Closed loop: confirm the bead reads back.
-    const shown = await deps.exec(input.store, ['show', id], 10000).catch(() => null)
-    return { id, detail: (shown ?? 'unreadable after create').slice(0, 1200), verified: shown !== null, ...(reused ? { reused } : {}) }
+  const readBack = async (id: string, reused: boolean, recovered?: string) => {
+    // Closed loop: confirm the bead reads back. One retry — a bead that was
+    // just written through a flapping store connection reads fine a beat later.
+    let shown: string | null = null
+    for (let i = 0; i < 2 && shown === null; i++) {
+      shown = await deps.exec(input.store, ['show', id], 10000).catch(() => null)
+    }
+    return {
+      id,
+      detail: (shown ?? 'unreadable after create').slice(0, 1200),
+      verified: shown !== null,
+      ...(reused ? { reused } : {}),
+      ...(recovered ? { recovered } : {}),
+    }
   }
   if (key) {
-    const existing = await findByCreateKey(deps, input.store, key)
-    if (existing) return readBack(existing, true)
+    const existing = await lookupByCreateKey(deps, input.store, key)
+    if (existing.id) return readBack(existing.id, true)
   }
   let stdout: string
   try {
     stdout = await deps.exec(input.store, args, CREATE_TIMEOUT_MS)
   } catch (e) {
-    if (isTimeout(e)) {
-      // The kill hits the wrapper, not the orphaned bd: the bead may exist.
-      const landed = key ? await findByCreateKey(deps, input.store, key) : null
-      if (landed) return readBack(landed, true)
-      throw new CreateTimeoutError(input.store, CREATE_TIMEOUT_MS, key || '(unkeyed)')
+    const timedOut = isTimeout(e)
+    const text = storeErrorText(input.store, 'create', e)
+    if (!timedOut && !(recoveryKey && TRANSIENT_STORE_RE.test(text))) throw new Error(text)
+    // The kill hits the wrapper (which execs bd), and a store-side cancel can
+    // land after the commit: the bead may exist. Look it up by key, retrying
+    // — the store that just failed is the one being asked.
+    const landed = recoveryKey ? await lookupByCreateKey(deps, input.store, recoveryKey, LOOKUP_ATTEMPTS) : { id: null, checked: false }
+    if (landed.id) {
+      return readBack(landed.id, true, timedOut ? 'create timed out but the bead landed' : `create reported "${text}" but the bead landed`)
     }
-    const err = e as { stdout?: unknown; message?: string }
-    throw new Error((typeof err.stdout === 'string' && err.stdout.trim()) || err.message || 'create failed')
+    if (timedOut) throw new CreateTimeoutError(input.store, CREATE_TIMEOUT_MS, recoveryKey || '(unkeyed)')
+    throw new CreateOutcomeUnknownError(input.store, recoveryKey, text, landed.checked ? 'not-found' : 'unchecked')
   }
   const id = parseCreatedId(input.store, stdout)
   if (!id) throw new Error(`created but no bead id found in output: ${stdout.slice(0, 200)}`)
