@@ -36,6 +36,7 @@ import { scratchAppend, scratchClear, scratchRead } from '../lib/scratchpad'
 import { pickStores, gatherCandidates, sampleIndices, formatPicks } from '../lib/random'
 import { sendFetchResponse, toFetchRequest } from '../lib/express-fetch'
 import { lookupAccess, mcpResource } from '../lib/oauth'
+import { withCredentialDiagnosis } from '../lib/auth-diagnosis'
 import { LOOPBACK, hasForwardMarkers, socketPeer } from '../lib/access-gate'
 import { withCompatRequest } from '../lib/mcp-compat'
 import { withTelemetry } from '../lib/mcp-telemetry'
@@ -1449,7 +1450,7 @@ export function isLoopbackServiceCall(req: Request): boolean {
 // Bearer gate: ChatGPT completes OAuth against /oauth/*, then presents the
 // token here. withMcpAuth answers 401/403 with RFC 9728 challenges itself.
 // Unauthenticated callers get discovery instead of tools.
-const authedMcpHandler = withMcpAuth(
+const authedMcpHandler = withCredentialDiagnosis(withMcpAuth(
   mcpHandler,
   (req, bearerToken) => {
     if (!bearerToken) return undefined
@@ -1464,7 +1465,7 @@ const authedMcpHandler = withMcpAuth(
     // challenge URL (passing the full resource would double the /mcp path).
     resourceUrl: BASE,
   },
-)
+))
 
 // mcp-handler speaks Fetch Request/Response; adapt at the boundary.
 // Sparse 2026 envelopes (ChatGPT) are backfilled first so the SDK's

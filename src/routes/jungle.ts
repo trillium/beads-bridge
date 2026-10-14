@@ -21,6 +21,7 @@ import { withMcpAuth } from 'mcp-handler'
 import { BASE } from '../config'
 import { toFetchRequest } from '../lib/express-fetch'
 import { jungleResource, lookupAccess } from '../lib/oauth'
+import { withCredentialDiagnosis } from '../lib/auth-diagnosis'
 import { withCompatRequest } from '../lib/mcp-compat'
 import { withTelemetry } from '../lib/mcp-telemetry'
 
@@ -74,13 +75,13 @@ export function verifyJungleToken(bearerToken?: string):
   return { token: rec.token, clientId: rec.clientId, scopes: rec.scope }
 }
 
-const authedProxy = withMcpAuth(proxyHandler, (_req, bearerToken) => verifyJungleToken(bearerToken), {
+const authedProxy = withCredentialDiagnosis(withMcpAuth(proxyHandler, (_req, bearerToken) => verifyJungleToken(bearerToken), {
   required: true,
   resourceMetadataPath: '/.well-known/oauth-protected-resource/jungle/mcp',
   // Origin only: withMcpAuth appends resourceMetadataPath to build the
   // challenge URL (passing the full resource would double the path).
   resourceUrl: BASE,
-})
+}))
 
 // Same chain shape as /mcp (compat backfill + telemetry), different gate +
 // different backend. Sparse 2026 envelopes (ChatGPT) are backfilled before

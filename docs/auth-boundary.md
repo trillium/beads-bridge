@@ -1,7 +1,8 @@
 # Credential-failure boundary (MCP doors)
 
 Test: `src/routes/auth-boundary.test.ts` (`FUNNEL_BASE=https://example.test bun test src/routes/auth-boundary.test.ts`;
-opt-in live read-only probe with `AUTH_BOUNDARY_LIVE=1`).
+opt-in live read-only probe with `AUTH_BOUNDARY_LIVE=1`). History: PR #36 pinned the gap (every
+rejection said "No authorization provided"); this change closes it.
 
 Trigger: a ChatGPT MCP client failed with `INVALID_ARGUMENT McpServerError: Session terminated`,
 which does not tell the user their credential is the problem. Nothing in this repo emits that
@@ -17,29 +18,50 @@ well-formed unknown token all returned `200` + a fresh `Mcp-Session-Id`; a `tool
 made-up `Mcp-Session-Id` also returned `200` — the gateway is stateless, so a stale session is not
 a failure there either). The test therefore asserts at the bridge door.
 
-## Contract vs reality (live bridge, `127.0.0.1:3737`, same bytes on `/mcp` and `/chatgpt/mcp`)
+## Contract (live-verified shape; wording shipped in this change)
 
-| Case | Status | `error` | `error_description` today | Meets contract? |
-|---|---|---|---|---|
-| valid token | `200` | — | initialize result, no challenge | yes |
-| no token | `401` + `WWW-Authenticate: Bearer … resource_metadata=…` | `invalid_token` | `No authorization provided` | yes |
-| malformed token (`not-a-token`) | `401` + same challenge | `invalid_token` | `No authorization provided` | **no** |
-| well-formed expired/unknown (`bb_at_…`) | `401` + same challenge | `invalid_token` | `No authorization provided` | **no** |
+Stable for every credential failure, on `/mcp`, `/chatgpt/mcp`, `/jungle/mcp` (and the `/grok`,
+`/gemini` doors that share `scoped-door.ts`): HTTP `401`, `WWW-Authenticate: Bearer error="invalid_token",
+error_description="…", resource_metadata="…"`, JSON body `{error: "invalid_token", error_description}`.
+Only `error_description` varies; the header and body carry the same text.
 
-What exists: a stable status (401), a Bearer challenge with discovery metadata, and a
-machine-readable code (`invalid_token`) — distinct from any 200/5xx/session error.
+| Case | `error_description` (from `src/lib/auth-diagnosis.ts`) | Re-authenticate hint |
+|---|---|---|
+| valid token | — (`200`, no challenge) | — |
+| no `Authorization` header | `No authorization provided: send an Authorization: Bearer access token.` | n/a (nothing was sent) |
+| present but not a `Bearer bb_at_…` token (`not-a-token`) | `Authorization is present but is not a valid bridge access token (malformed). Re-authenticate …` | yes |
+| well-formed, never issued / revoked / long-pruned | `Access token is invalid: not recognized by this bridge (never issued, revoked, or removed). Re-authenticate …` | yes |
+| well-formed, expired (tombstoned) | `Access token has expired. Re-authenticate …` | yes |
+| valid token minted for another door's audience | `Access token is valid but was issued for a different endpoint than this one. Re-authenticate …` | yes |
 
-What does not exist (the finding):
+A client should treat `error="invalid_token"` + a description that says to re-authenticate as
+"drop the stored token and re-run the OAuth flow".
 
-1. A rejected-but-present credential is reported as `No authorization provided`, which is false
-   and gives no re-authenticate instruction. Contract: the description says the credential is
-   invalid/malformed/expired and tells the client to re-authenticate.
-2. The three failure cases are byte-identical, so a client cannot tell "you sent nothing" from
-   "your token is bad" from "your token expired".
-3. Expiry cannot be told apart from never-issued: `prune()` in `src/lib/oauth.ts` deletes dead
-   records on read, so the gate sees an unknown token. (Granted tokens no longer expire, so a
-   client's "expired" credential is in practice revoked/pruned/unknown.)
+## How it works
 
-The test pins the full contract. Items 1–3 are `knownGap` ("KNOWN GAP"): they pass while the
-gap exists and fail as soon as the boundary meets the contract, prompting a swap of `knownGap` for `it`.
-No assertion was weakened to get a green run.
+- `withMcpAuth` (mcp-handler) hardcodes `No authorization provided` for every rejection.
+  `withCredentialDiagnosis` (`src/lib/auth-diagnosis.ts`) wraps each gated door, lets the library
+  decide, and — only when the library rejected with that exact text — rewrites `error_description`
+  in the header and body. The verdict, status, `error` code and `resource_metadata` are untouched,
+  so diagnosis can only change wording, never grant or deny access.
+- Expired vs unknown: `prune()` in `src/lib/oauth.ts` still deletes a dead access record on read,
+  but now leaves a tombstone in `store.expired` keyed by `sha256(token)` (no second copy of the
+  credential on disk), kept 30 days (`EXPIRED_TOMBSTONE_TTL_MS`). `accessTokenState()` reads it;
+  `lookupAccess()` never does, so a tombstone authorizes nothing. After 30 days an expired token
+  reads as "invalid / not recognized", which carries the same re-authenticate instruction.
+  (Granted tokens no longer expire, so in practice expiry only hits legacy/seeded records; a
+  client that lost its token to revocation or a wiped store sees the "not recognized" text.)
+- Token values are never logged or echoed in the response; the test asserts this.
+
+## Tests
+
+`src/routes/auth-boundary.test.ts` asserts the table above on every door, header/body agreement,
+no token echo, persistence of the tombstone across a store save, and that the doors agree
+byte-for-byte per case. `src/lib/oauth.test.ts` covers `accessTokenState` and tombstone expiry.
+The opt-in live probe (`AUTH_BOUNDARY_LIVE=1`) only passes against a bridge process running this
+build; an older process still answers `No authorization provided` until it is redeployed.
+
+## Out of scope / still unproven
+
+MCPJungle and the session proxy still accept any bearer on loopback; the client-side
+`Session terminated` translation is untouched.
