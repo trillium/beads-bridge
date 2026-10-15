@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Config area moved from `~/.config/pai/` to `~/.config/beads-bridge/` (OAuth
+  state and setup key, tool key, personality, identity, `stores.yaml`). A file
+  present only at the old path is copied forward on first use with a one-line
+  log notice; `stores.yaml` is read from the old path if the new one is absent.
+
 - Scoped front doors for Grok and Gemini (`/grok/mcp`, `/gemini/mcp`), each an
   OAuth-gated streaming proxy to its own loopback MCPJungle tool group
   (`grok` / `gemini`, both `included_servers: ["beads-bridge"]`) with its own

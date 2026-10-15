@@ -24,21 +24,21 @@ ChatGPT / agents ──HTTPS (funnel)──▶ beads-bridge :3737 ──loopback
                                         │
                                         ▼
                               federated bead stores
-                      (~/.config/pai/stores.yaml registry;
+                      (~/.config/beads-bridge/stores.yaml registry;
                        per-store CLIs via shell-free argv)
 ```
 
 - **Gateway** (`src/server.ts`, `src/routes/load-routes.ts`): Express on `0.0.0.0:3737`. Routes are file-based — every `src/routes/*.ts` exporting a `*Router` auto-mounts (`mountOrder` controls precedence; MCP/OAuth mount first so parametric `/:id` routes can't swallow them).
 - **Front door** (`src/routes/jungle.ts`): verifies a bridge OAuth token minted for the **jungle audience** (`<BASE>/jungle/mcp`), strips the client bearer, and streams the request to the loopback gateway. The upstream is a const, never configurable off-loopback. A token minted for `/mcp` never opens `/jungle/mcp` and vice versa (exact-audience equality). Unauthenticated callers get the RFC 9728 challenge, never proxy traffic.
 - **Scoped group doors** (`src/lib/scoped-door.ts`, `src/routes/chatgpt.ts`, `src/routes/grok.ts`, `src/routes/gemini.ts`): the same front-door mechanism aimed at one tool group each, with one exact-equality audience per door. The shared factory asserts its upstream hostname is `127.0.0.1` at load, so no door can be aimed off-loopback by editing a URL; the audience rule stays a single readable line in each door's own file.
-- **OAuth** (`src/routes/oauth.ts`, `src/lib/oauth.ts`): authorization-server + protected-resource metadata served at both bare and `/mcp`-suffixed well-known paths (plus one per front-door audience: `/jungle/mcp`, `/chatgpt/mcp`, `/grok/mcp`, `/gemini/mcp`). Every audience the server mints for comes from one list (`audienceResources`) that both resource normalization and the `invalid_target` rejection read, so a door cannot be mounted but forgotten there. Token/client state persists under `~/.config/pai/` so restarts don't revoke clients. Human approval is gated by a setup key (see Configuration).
-- **Stores** (`src/config.ts`, `src/util.ts`, `src/lib/exec.ts`): the store registry is `~/.config/pai/stores.yaml` (name → path + `about`). All bead mutations go through `src/lib/mutate.ts` (shell-free argv, throw-on-failure, verify-after-write receipts — see `src/lib/receipts.ts`); reads go through `src/lib/exec.ts`.
+- **OAuth** (`src/routes/oauth.ts`, `src/lib/oauth.ts`): authorization-server + protected-resource metadata served at both bare and `/mcp`-suffixed well-known paths (plus one per front-door audience: `/jungle/mcp`, `/chatgpt/mcp`, `/grok/mcp`, `/gemini/mcp`). Every audience the server mints for comes from one list (`audienceResources`) that both resource normalization and the `invalid_target` rejection read, so a door cannot be mounted but forgotten there. Token/client state persists under `~/.config/beads-bridge/` so restarts don't revoke clients. Human approval is gated by a setup key (see Configuration).
+- **Stores** (`src/config.ts`, `src/util.ts`, `src/lib/exec.ts`): the store registry is `~/.config/beads-bridge/stores.yaml` (name → path + `about`). All bead mutations go through `src/lib/mutate.ts` (shell-free argv, throw-on-failure, verify-after-write receipts — see `src/lib/receipts.ts`); reads go through `src/lib/exec.ts`.
 - **Access gate** (`src/server.ts`): tailnet IPs and localhost always pass; off-tailnet passes only for approved agent fetchers. Everything else gets 403.
 - **Tool namespaces**: the gateway prefixes every tool `<server>__<tool>`. Bridge tools arrive as `beads-bridge__<name>` (36); a second downstream, `firstmate_mcp`, arrives as `firstmate_mcp__<name>` (19) — gateway total 55. Wiring details: `docs/jungle-gateway.md`.
 
 ## Quickstart
 
-Prerequisites: [Bun](https://bun.sh), the `bd` bead CLI on `PATH`, a store registry at `~/.config/pai/stores.yaml`.
+Prerequisites: [Bun](https://bun.sh), the `bd` bead CLI on `PATH`, a store registry at `~/.config/beads-bridge/stores.yaml`.
 
 ```sh
 git clone https://github.com/trillium/beads-bridge.git
@@ -67,7 +67,7 @@ work here is never served. Ship it with `ops/deploy.sh`; the URLs, the deploy
 checkout, and the CDP screenshot helper are documented in
 [docs/deploy.md](docs/deploy.md).
 
-First boot mints an OAuth setup key at `~/.config/pai/beads-bridge-oauth-setup` (0600) and prints its path — paste it into the browser approval page once (a cookie remembers it). Override with `OAUTH_SETUP_KEY` (or `OAUTH_SETUP_PATH`) if you prefer.
+First boot mints an OAuth setup key at `~/.config/beads-bridge/beads-bridge-oauth-setup` (0600) and prints its path — paste it into the browser approval page once (a cookie remembers it). Override with `OAUTH_SETUP_KEY` (or `OAUTH_SETUP_PATH`) if you prefer.
 
 Expected boot output:
 
@@ -76,7 +76,7 @@ beads-bridge on all interfaces :3737
   local:   http://localhost:3737
   tailnet: http://<TAILNET_IP>:3737
   funnel:  https://<your-funnel-host> (public; use this in ChatGPT blurbs)
-  oauth setup key: /Users/you/.config/pai/beads-bridge-oauth-setup (paste into the approval page once)
+  oauth setup key: /Users/you/.config/beads-bridge/beads-bridge-oauth-setup (paste into the approval page once)
 ```
 
 Ports: **3737** (this server) + **8338** (upstream MCPJungle gateway on loopback, which fronts this server's `/mcp` plus other downstreams).
@@ -86,10 +86,10 @@ Ports: **3737** (this server) + **8338** (upstream MCPJungle gateway on loopback
 | Source | What |
 |---|---|
 | `.env` (gitignored; see `.env.example`) | `FUNNEL_BASE` (required — public base URL), `TAILNET_IP`, optional `POSTHOG_KEY`/`POSTHOG_HOST`, `OAUTH_SETUP_KEY`, data-path overrides (`FEEDBACK_DIR`, `SCRATCHPAD_PATH`, `IDENTITY_PATH`, `OAUTH_STORE_PATH`), `MCP_DEBUG=1` |
-| `~/.config/pai/stores.yaml` | Store registry (name → path + about). Managed by `brain stores`; the server reads it at boot |
-| `~/.config/pai/beads-bridge-oauth-setup` | Minted OAuth approval key (0600) |
-| `~/.config/pai/beads-bridge-oauth.json` | OAuth token/client state (0600). Delete to revoke all ChatGPT tokens |
-| `~/.config/pai/beads-bridge-toolkey` | Tool-bridge bearer token (or `BEADS_BRIDGE_TOOLKEY` env) |
+| `~/.config/beads-bridge/stores.yaml` | Store registry (name → path + about). Falls back to the legacy `~/.config/pai/stores.yaml`; the server reads it at boot |
+| `~/.config/beads-bridge/beads-bridge-oauth-setup` | Minted OAuth approval key (0600) |
+| `~/.config/beads-bridge/beads-bridge-oauth.json` | OAuth token/client state (0600). Delete to revoke all ChatGPT tokens |
+| `~/.config/beads-bridge/beads-bridge-toolkey` | Tool-bridge bearer token (or `BEADS_BRIDGE_TOOLKEY` env) |
 | Telemetry | JSONL under `$XDG_DATA_HOME/beads-bridge/telemetry` (else `~/.local/share/beads-bridge/telemetry`); caps via `MCP_TELEMETRY_RETENTION_DAYS` (30) / `MCP_TELEMETRY_MAX_BYTES` (100 MiB) |
 
 ## Tool namespaces

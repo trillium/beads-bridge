@@ -5,7 +5,7 @@
 // VALUES are never echoed).
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { tmpdir } from 'os'
+import { configFile } from './config-dir'
 import { scratchpadPath } from './scratchpad'
 
 // Who Am I resume context: bounded tail of the operator's scratchpad so a
@@ -90,7 +90,7 @@ const PROFILE_FIELDS = [
 
 export function identityPath(): string {
   return process.env.IDENTITY_PATH ??
-    join(process.env.HOME ?? tmpdir(), '.config', 'pai', 'beads-bridge-identity.json')
+    configFile('beads-bridge-identity.json')
 }
 
 export function loadProfile(): OperatorProfile {

@@ -1,7 +1,7 @@
 // OAuth 2.1 authorization server for ChatGPT's MCP connector flow:
 // discovery metadata, dynamic client registration, human approval,
 // auth-code + PKCE exchange, and refresh rotation. Co-hosted with the
-// resource server; token/client state persists under ~/.config/pai so
+// resource server; token/client state persists under ~/.config/beads-bridge so
 // restarts don't revoke ChatGPT. Human approval is gated by
 // OAUTH_SETUP_KEY (pasted once, then a cookie).
 import { Router } from 'express'
@@ -171,7 +171,7 @@ function approvePage(tx: string, clientLabel: string, redirectHost: string, scop
     `<h1>${BEAD_MARK}Approve beads-bridge access?</h1>` +
     (error ? `<p style="color:#a00"><b>${esc(error)}</b> — try again, this page still works.</p>` : '') +
     `<p><b>${esc(clientLabel)}</b> wants full bead access (scope: ${esc(scope.join(' ') || 'mcp')}). Tokens it receives can read, comment, and decide on beads.</p>` +
-    `<p>After approval you are sent back to <b>${esc(redirectHost)}</b>. ChatGPT keeps a token until you revoke it (delete <code>~/.config/pai/beads-bridge-oauth.json</code> on the bridge host).</p>` +
+    `<p>After approval you are sent back to <b>${esc(redirectHost)}</b>. ChatGPT keeps a token until you revoke it (delete <code>~/.config/beads-bridge/beads-bridge-oauth.json</code> on the bridge host).</p>` +
     `<form method="post" action="/oauth/authorize">` +
     `<input type="hidden" name="tx" value="${esc(tx)}">` +
     (needsKey

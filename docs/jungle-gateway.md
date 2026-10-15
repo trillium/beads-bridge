@@ -10,7 +10,7 @@ never appears in ChatGPT-side config.
 - `transport`: `streamable_http` (config-file spelling; CLI `--url` implies it)
 - `url`: `http://127.0.0.1:3737/mcp`
 - `bearer_token`: the bridge's own service key (`toolKey` — minted once,
-  0600 file at `~/.config/pai/beads-bridge-toolkey`, never expires).
+  0600 file at `~/.config/beads-bridge/beads-bridge-toolkey`, never expires).
   The bridge accepts it on `/mcp` only from true direct-loopback
   sockets (socket peer is loopback AND no proxy forwarding headers —
   see `isLoopbackServiceCall` in `src/routes/mcp.ts`), so it is

@@ -10,7 +10,7 @@
 # immediately (see docs/jungle-gateway-refresh.md).
 #
 # WHAT IT DOES: reads the live service key
-# (~/.config/pai/beads-bridge-toolkey, never printed, never committed),
+# (~/.config/beads-bridge/beads-bridge-toolkey, never printed, never committed),
 # writes a 0600 registration config to a temp file, force-registers it
 # (deregister + re-register, the only update path the jungle CLI offers),
 # shreds the temp file, then verifies the server entry and tool count.
@@ -21,7 +21,9 @@ umask 077
 
 REGISTRY="${JUNGLE_REGISTRY:-http://127.0.0.1:8338}"
 BRIDGE_URL="${BRIDGE_URL:-http://127.0.0.1:3737/mcp}"
-TOOLKEY_PATH="${TOOLKEY_PATH:-$HOME/.config/pai/beads-bridge-toolkey}"
+TOOLKEY_PATH="${TOOLKEY_PATH:-$HOME/.config/beads-bridge/beads-bridge-toolkey}"
+# Legacy location (pre-migration) until the bridge has copied the key forward.
+[[ -f "$TOOLKEY_PATH" ]] || TOOLKEY_PATH="$HOME/.config/pai/beads-bridge-toolkey"
 
 if ! command -v mcpjungle >/dev/null 2>&1; then
   echo "error: mcpjungle not on PATH" >&2
