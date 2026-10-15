@@ -3,10 +3,10 @@
 // assistants. Replaces the 500-char profile-schema model for operating
 // instructions: there is no per-field cap, only a generous whole-document
 // guard. Path honors PERSONALITY_PATH (tests); default is
-// ~/.config/pai/beads-bridge-personality.md. The file holds raw markdown.
+// ~/.config/beads-bridge/beads-bridge-personality.md. The file holds raw markdown.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { tmpdir } from 'os'
+import { configFile } from './config-dir'
 import { loadProfile, updateProfile, type OperatorProfile } from './whoami'
 
 // Whole-document guard against runaway writes — ~100 printed pages, not 500
@@ -16,7 +16,7 @@ const MIGRATED_HEADING = 'Migrated from operator profile'
 
 export function personalityPath(): string {
   return process.env.PERSONALITY_PATH ??
-    join(process.env.HOME ?? tmpdir(), '.config', 'pai', 'beads-bridge-personality.md')
+    configFile('beads-bridge-personality.md')
 }
 
 export function defaultPersonality(): string {

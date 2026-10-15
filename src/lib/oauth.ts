@@ -3,14 +3,14 @@
 // file-persisted store for clients, codes, tokens, and approvals.
 //
 // The human approval behind every grant is gated by OAUTH_SETUP_KEY
-// (env wins, else a 0600 file under ~/.config/pai minted on first use).
+// (env wins, else a 0600 file under ~/.config/beads-bridge minted on first use).
 // Token/client state lives in OAUTH_STORE_PATH (default
-// ~/.config/pai/beads-bridge-oauth.json, 0600) so restarts don't revoke
+// ~/.config/beads-bridge/beads-bridge-oauth.json, 0600) so restarts don't revoke
 // ChatGPT — only in-flight approval transactions are memory-only.
 import { createHash, randomBytes, timingSafeEqual } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { tmpdir } from 'os'
+import { configFile } from './config-dir'
 
 export const SUPPORTED_SCOPES = ['mcp']
 export const CODE_TTL_MS = 10 * 60 * 1000
@@ -187,10 +187,9 @@ export function buildAuthorizationServerMetadata(issuer: string): Record<string,
 
 // ── Setup key (human approval gate) ──────────────────────────────────────────
 
-const SETUP_PATH = join(process.env.HOME ?? tmpdir(), '.config', 'pai', 'beads-bridge-oauth-setup')
 
 export function setupKeyPath(): string {
-  return process.env.OAUTH_SETUP_PATH ?? SETUP_PATH
+  return process.env.OAUTH_SETUP_PATH ?? configFile('beads-bridge-oauth-setup')
 }
 
 export function getSetupKey(): string {
@@ -249,10 +248,8 @@ interface StoreData {
   expired: Record<string, number>
 }
 
-const STORE_PATH = join(process.env.HOME ?? tmpdir(), '.config', 'pai', 'beads-bridge-oauth.json')
-
 export function storePath(): string {
-  return process.env.OAUTH_STORE_PATH ?? STORE_PATH
+  return process.env.OAUTH_STORE_PATH ?? configFile('beads-bridge-oauth.json')
 }
 
 function blank(): StoreData {

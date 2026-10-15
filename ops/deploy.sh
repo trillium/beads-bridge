@@ -105,7 +105,8 @@ done
 # deployed revision lacked the MCP/auth work — so the route gate alone cannot
 # tell a working bridge from a dead MCP path. Probe the real path the clients
 # use: a tools/list on /mcp with the service key over loopback.
-KEY_FILE="$HOME/.config/pai/beads-bridge-toolkey"
+KEY_FILE="$HOME/.config/beads-bridge/beads-bridge-toolkey"
+[ -r "$KEY_FILE" ] || KEY_FILE="$HOME/.config/pai/beads-bridge-toolkey" # legacy, pre-migration
 if [ -r "$KEY_FILE" ]; then
   body=$(curl -s -m 10 -X POST "http://127.0.0.1:$PORT/mcp" \
     -H "Authorization: Bearer $(cat "$KEY_FILE")" \

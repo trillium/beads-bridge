@@ -1,6 +1,7 @@
 // Shared config: ports, URLs, auth key, store registry. Single source of truth
 // for every route module.
-import { readFileSync, writeFileSync, existsSync } from 'fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
+import { configFile, configFileReadOnly } from './lib/config-dir'
 import { join, dirname } from 'path'
 import { randomBytes } from 'crypto'
 import * as yaml from 'js-yaml'
@@ -34,11 +35,12 @@ export const RESUME_DOCX_DIR = process.env.RESUME_DOCX_DIR ?? `${process.env.HOM
 export const FETCH_MODES = ['unconfirmed', 'complete', 'job-description', 'done', 'findings', 'stories'] as const
 
 // Tool-bridge auth: a bearer token stored outside the repo. First run mints one.
-const TOOLKEY_PATH = `${process.env.HOME}/.config/pai/beads-bridge-toolkey`
+const TOOLKEY_PATH = configFile('beads-bridge-toolkey')
 export const toolKey = (() => {
   if (process.env.BEADS_BRIDGE_TOOLKEY) return process.env.BEADS_BRIDGE_TOOLKEY
   try { return readFileSync(TOOLKEY_PATH, 'utf8').trim() } catch { /* mint below */ }
   const k = `bk_${randomBytes(24).toString('base64url')}`
+  mkdirSync(dirname(TOOLKEY_PATH), { recursive: true, mode: 0o700 })
   writeFileSync(TOOLKEY_PATH, k, { mode: 0o600 })
   return k
 })()
@@ -53,7 +55,7 @@ interface StoresConfig {
 }
 
 const storesConfig = yaml.load(
-  readFileSync(`${process.env.HOME}/.config/pai/stores.yaml`, 'utf8')
+  readFileSync(configFileReadOnly('stores.yaml'), 'utf8')
 ) as StoresConfig
 
 export const STORES = Object.keys(storesConfig.stores)
