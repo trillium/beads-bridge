@@ -4,7 +4,10 @@
 // queries, mention scan). Reads only; bounded fan-out.
 import { execStdout, beadText } from './exec'
 import { type Row } from '../routes/query/params'
-import { parseRows, runList } from '../routes/query/store'
+import { parseRows, runListAsync } from '../routes/query/store'
+import { withSqlFallback } from './sql'
+import { loadGraphNodes, loadLabelPeers } from './graph-sql'
+import type { BdRow, SqlDepEdge } from './sql-beads'
 import { storeFromId, extractLinks } from '../util'
 import { ambiguousBeadIdError, resolveBeadStore } from './store-aliases'
 import { BASE } from '../config'
@@ -113,14 +116,17 @@ function mentionedIds(store: string, id: string, text: string): string[] {
   return out
 }
 
-export async function beadConnections(id: string): Promise<ConnectionSet | { error: string }> {
-  const clean = id.trim()
-  const resolved = resolveBeadStore(clean)
-  if (resolved.kind === 'ambiguous') {
-    return { error: ambiguousBeadIdError(id, resolved.prefix, resolved.candidates) }
-  }
-  const store = storeFromId(clean)
-  if (!store) return { error: `unknown bead id: ${id}` }
+interface Raw {
+  meta: { title: string; status?: string; labels: string[] }
+  down: Connection[]
+  up: Connection[]
+  children: Connection[]
+  text: string
+  peers: (label: string, store: string) => Promise<{ id: string; title: string }[]>
+}
+
+// bd-subprocess reads (the behavioural source of truth).
+async function rawViaBd(store: string, clean: string): Promise<Raw> {
   const [meta, down, up, children, text] = await Promise.all([
     showMeta(store, clean),
     depEdges(store, clean, 'down'),
@@ -130,6 +136,60 @@ export async function beadConnections(id: string): Promise<ConnectionSet | { err
       beadText(store, ['comments', clean]).then((c) => (c ? `${body}\n\n${c}` : body)),
     ),
   ])
+  return {
+    meta,
+    down,
+    up,
+    children,
+    text,
+    peers: async (label, s) => {
+      const { rows } = await runListAsync(s, [label], [], { exclude: [], status: undefined, limit: 8, allStates: true })
+      return rows
+    },
+  }
+}
+
+const connectionOf = (e: SqlDepEdge, via: string): Connection => ({
+  id: e.id,
+  title: e.title.slice(0, 120),
+  status: e.status,
+  via: e.type || via,
+})
+
+// The same reads in a handful of SQL statements; rendered text still from bd.
+async function rawViaSql(store: string, clean: string): Promise<Raw> {
+  const node = (await loadGraphNodes([{ id: clean, store }], 'bead_connections')).get(clean)!
+  const m = node.meta
+  const labels = linkLabels(m?.labels ?? [], 3)
+  const peers = labels.length ? await loadLabelPeers(labels, [...new Set([store, 'task', 'stories'])].slice(0, 3)) : new Map()
+  return {
+    meta: m
+      ? { title: m.title.slice(0, 160), status: m.status, labels: (m.labels ?? []).map(String) }
+      : { title: '', labels: [] },
+    down: node.down.filter((e) => e.id && e.id !== clean).map((e) => connectionOf(e, 'depends-on')),
+    up: node.up.filter((e) => e.id && e.id !== clean).map((e) => connectionOf(e, 'depended-on-by')),
+    children: node.children
+      .filter((c) => c.id !== clean)
+      .map((c) => ({ id: c.id, title: c.title.slice(0, 120), via: 'child' })),
+    text: node.text,
+    peers: async (label, s) =>
+      ((peers.get(label)?.get(s) ?? []) as BdRow[]).map((r) => ({ id: r.id, title: r.title.slice(0, 120) })),
+  }
+}
+
+export async function beadConnections(id: string): Promise<ConnectionSet | { error: string }> {
+  const clean = id.trim()
+  const resolved = resolveBeadStore(clean)
+  if (resolved.kind === 'ambiguous') {
+    return { error: ambiguousBeadIdError(id, resolved.prefix, resolved.candidates) }
+  }
+  const store = storeFromId(clean)
+  if (!store) return { error: `unknown bead id: ${id}` }
+  const { meta, down, up, children, text, peers } = await withSqlFallback(
+    'bead_connections',
+    () => rawViaSql(store, clean),
+    () => rawViaBd(store, clean),
+  )
   // Same-label beads across the link-heavy stores (bounded).
   const labels = linkLabels(meta.labels, 3)
   const searchStores = [...new Set([store, 'task', 'stories'])].slice(0, 3)
@@ -137,8 +197,7 @@ export async function beadConnections(id: string): Promise<ConnectionSet | { err
   for (const label of labels) {
     const beads: Connection[] = []
     for (const s of searchStores) {
-      const { rows } = runList(s, [label], [], { exclude: [], status: undefined, limit: 8, allStates: true })
-      for (const r of rows) {
+      for (const r of await peers(label, s)) {
         if (r.id !== clean && !beads.some((b) => b.id === r.id)) {
           beads.push({ id: r.id, title: r.title, via: `label:${label}` })
         }

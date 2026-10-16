@@ -2,7 +2,7 @@
 // something to do or revisit. Read-only; reshuffle by calling again.
 // Pool: task, stories, resume_bullets, inbox, workflows (intersected with
 // the registry), open items only, recent-first capped per store.
-import { runList } from '../routes/query/store'
+import { runListQuery } from '../routes/query/store'
 import { STORES } from '../config'
 import { ambiguousStoreError, resolveStoreName, unknownStoreError } from './store-aliases'
 
@@ -38,10 +38,13 @@ export function pickStores(store: string | undefined, stores: string[] = STORES)
   return eligible.length ? eligible : { error: 'no work stores registered' }
 }
 
-export function gatherCandidates(stores: string[]): { candidates: Candidate[]; pool: number } {
+export async function gatherCandidates(stores: string[]): Promise<{ candidates: Candidate[]; pool: number }> {
   const candidates: Candidate[] = []
-  for (const s of stores) {
-    const { rows } = runList(s, [], [], { exclude: [], status: undefined, limit: PER_STORE_LIMIT, allStates: false })
+  const lists = await Promise.all(
+    stores.map((s) => runListQuery(s, [], [], { exclude: [], status: undefined, limit: PER_STORE_LIMIT, allStates: false })),
+  )
+  for (const [i, s] of stores.entries()) {
+    const { rows } = lists[i]
     for (const r of rows) {
       if (!candidates.some((c) => c.id === r.id)) {
         candidates.push({ id: r.id, title: r.title, store: s, labels: r.labels })

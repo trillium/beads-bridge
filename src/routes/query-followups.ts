@@ -20,7 +20,7 @@ const followupBase = new Map<string, { at: number; titles: Record<string, string
 interface StaleSet { labels: string[]; unconf: Row[]; unver: Row[]; open: Row[] }
 
 async function currentStale(id: string): Promise<StaleSet> {
-  const labels = discoverScopeLabels(id)
+  const labels = await discoverScopeLabels(id)
   const listOpts = { exclude: [], status: undefined as string | undefined, limit: 50, allStates: false }
   const [b, s, t] = await Promise.all([
     runListAsync('resume_bullets', [], labels, listOpts),

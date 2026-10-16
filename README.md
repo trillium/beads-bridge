@@ -132,5 +132,6 @@ Notes:
 - `docs/projects.md` — project-bead conventions and project MCP ops
 - `docs/telemetry.md` — MCP telemetry storage, retention, query recipes
 - `docs/idempotent-create.md` — client `operation_id`, one logical action = one bead, revision reconciliation + ordering
+- `docs/sql-reads.md` — batched read-only SQL reads (config, fallback flag, parity/benchmark evidence)
 - `docs/timeout-trials.md` — timeout experiment notes
 - `AGENTS.md` / `CLAUDE.md` — contributor notes (mutation/receipt guardrails, OAuth discovery paths, live-test patterns)

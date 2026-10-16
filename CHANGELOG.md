@@ -25,6 +25,20 @@
 
 ## Unreleased
 
+- **Batched bead reads over SQL** (`docs/sql-reads.md`). `beads_bundle`,
+  `retrieval_search`/`_activity`/`_claimed`, `retrieval_snapshot`,
+  `bead_connections`, `query_store`, `GET /q/:store`, `random`, relay lookups
+  and resume scope discovery now read the shared Dolt `brain_unified` through
+  one read-only SQL door (`src/lib/sql.ts`: SELECT-only guard, env config
+  `BEADS_BRIDGE_SQL_*`, defaults 127.0.0.1:3307) instead of one `bd` process per
+  bead or store. Output is byte-identical. Default all-stores sweeps go from
+  110 spawns / ~4 s to 0 spawns / 0.06-0.8 s; a 47-bead snapshot from ~300-460
+  spawns / 20-32 s to ~30 spawns / ~2 s; the blocking `spawnSync` bead reads
+  are gone, so `bead_connections` no longer stalls the event loop (1.2 s ->
+  8 ms worst gap). SQL failure falls back automatically to the old bd path with a
+  `[sql-fallback]` log line; `BEADS_BRIDGE_SQL=off` forces the old path.
+  Live parity/benchmark scripts: `ops/sql-parity/`.
+
 - Config area moved from `~/.config/pai/` to `~/.config/beads-bridge/` (OAuth
   state and setup key, tool key, personality, identity, `stores.yaml`). A file
   present only at the old path is copied forward on first use with a one-line

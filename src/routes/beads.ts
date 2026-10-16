@@ -8,7 +8,7 @@ import type { Request, Response } from 'express'
 import { BASE } from '../config'
 import { pstr, storeFromId } from '../util'
 import { wrap } from '../wrap'
-import { beadText, mapLimit } from '../lib/exec'
+import { fetchBeadTexts, renderBeadBlock } from '../lib/bead-text'
 
 export const mountOrder = -10
 export const beadsRouter = Router()
@@ -26,14 +26,8 @@ export function bundleIds(raw: string[]): string[] {
 }
 
 async function fetchBundle(valid: string[]): Promise<string> {
-  const parts = await mapLimit(valid, 12, async (id: string) => {
-    const store = storeFromId(id)!
-    const [body, comments] = await Promise.all([
-      beadText(store, ['show', id]),
-      beadText(store, ['comments', id]),
-    ])
-    return [`# ${id} (STORE: ${store})`, '', comments ? `${body}\n\n## Comments\n${comments}` : body].join('\n')
-  })
+  const texts = await fetchBeadTexts(valid.map((id) => ({ id, store: storeFromId(id)! })))
+  const parts = valid.map((id) => renderBeadBlock(id, storeFromId(id)!, texts.get(id)!))
   return wrap({
     title: `Beads: ${valid.join(' + ')}`,
     body: parts.join('\n\n---\n\n'),

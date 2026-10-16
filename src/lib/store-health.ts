@@ -8,6 +8,7 @@
 // asks each wrapper where it really points (`<store> where`), classifies the
 // answer, and lets mutations refuse a store that is not the authoritative
 // one — never writing into a stale or fallback copy.
+import { noteSpawn } from './spawn-stats'
 import { execFile, spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -154,6 +155,7 @@ export async function probeStore(store: string, opts?: ProbeOptions): Promise<St
   const hit = cache.get(store)
   if (!opts?.force && fresh(hit, now)) return hit
   const raw = await new Promise<RawWhere>((resolve) => {
+    noteSpawn(['where'])
     execFile(store, ['where'], { encoding: 'utf8', timeout: WHERE_TIMEOUT_MS, env: process.env, maxBuffer: 1024 * 1024 }, (e, stdout, stderr) => {
       const err = e as { code?: unknown; killed?: boolean; signal?: string } | null
       resolve({
@@ -173,6 +175,7 @@ export function probeStoreSync(store: string, opts?: ProbeOptions): StoreProbe {
   const now = Date.now()
   const hit = cache.get(store)
   if (!opts?.force && fresh(hit, now)) return hit
+  noteSpawn(['where'], true)
   const r = spawnSync(store, ['where'], { encoding: 'utf8', timeout: WHERE_TIMEOUT_MS, env: process.env, maxBuffer: 1024 * 1024 })
   const p = classifyWhere(
     store,

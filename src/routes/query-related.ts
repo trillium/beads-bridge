@@ -63,7 +63,7 @@ function scopeHandler(req: Request, res: Response) {
     // Tier 1 (this resume, deliberate) first, Tier 2 (any resume) fills —
     // see discoverScopeLabels. Tier 1 always wins the cap so scoped
     // evidence is never crowded out.
-    labels = discoverScopeLabels(id)
+    labels = await discoverScopeLabels(id)
     composed = true
     if (!labels.length) {
       return res.type('text/plain').status(400).send(wrap({
@@ -131,7 +131,7 @@ function scopeHandler(req: Request, res: Response) {
   // the culling criterion — related is composed WITH it, never without it.
   const leadIds: string[] = []
   if (storeFromId(id)) leadIds.push(id)
-  const jobId = resolvePostingRef(id)
+  const jobId = await resolvePostingRef(id)
   if (jobId && storeFromId(jobId) && !leadIds.includes(jobId)) leadIds.push(jobId)
   const leadTexts = await Promise.all(leadIds.map((lid) => showBeadAsync(storeFromId(lid)!, lid)))
   const leadSections: string[][] = leadIds.map((lid, i) => [

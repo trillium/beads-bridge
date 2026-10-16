@@ -1,4 +1,5 @@
 // Small shared helpers: coercions, cache tags, bead shell-outs, link extraction.
+import { noteSpawn } from './lib/spawn-stats'
 import { execSync } from 'child_process'
 import { BASE } from './config'
 
@@ -13,6 +14,7 @@ export const pstr = (v: unknown) => (Array.isArray(v) ? (v[0] ?? '') : String(v 
 
 export function bd(store: string, args: string): string {
   try {
+    noteSpawn(args, true)
     return execSync(`${store} ${args}`, { encoding: 'utf8', timeout: 10000 }).trim()
   } catch (e: unknown) {
     const err = e as { stdout?: string; message?: string }

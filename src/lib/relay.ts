@@ -1,5 +1,5 @@
 import { beadText, execStdout, mapLimit } from './exec'
-import { runList, runListAsync, showBeadAsync, beadUpdatedAt } from '../routes/query/store'
+import { runListQuery, runListAsync, showBeadAsync, beadUpdatedAt } from '../routes/query/store'
 import { cleanLabel, type Row } from '../routes/query/params'
 import { createBead } from './create'
 import { editBead } from './edit'
@@ -196,7 +196,7 @@ function snippet(s: string, n = 300): string {
 }
 
 export async function fetchProjectRows(limit = 200): Promise<RankRow[]> {
-  const { rows } = runList('projects', [], [], {
+  const { rows } = await runListQuery('projects', [], [], {
     exclude: [],
     status: undefined,
     limit: Math.max(1, Math.min(200, limit)),
@@ -444,14 +444,14 @@ export async function upsertTask(input: UpsertInput): Promise<{ mode: 'created' 
     wasBacklog = found.state === 'backlog'
   }
   const labelFilter = slug ? [`project:${slug}`] : []
-  const { rows } = runList('task', labelFilter, [], {
+  const { rows } = await runListQuery('task', labelFilter, [], {
     exclude: [],
     title: title.slice(0, 60),
     status: undefined,
     limit: 20,
     allStates: true,
   })
-  const scoped = rows.length ? rows : runList('task', [], [], { exclude: [], status: undefined, limit: 50, allStates: true }).rows
+  const scoped = rows.length ? rows : (await runListQuery('task', [], [], { exclude: [], status: undefined, limit: 50, allStates: true })).rows
   const dup = input.allowUpdate === false ? null : findDuplicate(title, scoped)
   let promoted = false
   const maybePromote = async () => {
@@ -519,7 +519,7 @@ export async function requestDispatch(input: DispatchInput): Promise<{ id: strin
       if (m) slug = m[1]
     }
   } else if (input.taskTitle?.trim()) {
-    const { rows } = runList('task', slug ? [`project:${slug}`] : [], [], {
+    const { rows } = await runListQuery('task', slug ? [`project:${slug}`] : [], [], {
       exclude: [],
       title: input.taskTitle.trim().slice(0, 60),
       status: undefined,
@@ -643,7 +643,7 @@ export async function runFlow(input: FlowInput): Promise<FlowResult> {
   }
   if (input.dryRun) {
     try {
-      const { rows } = runList('task', project && !project.backlog ? [`project:${project.slug}`] : [], [], {
+      const { rows } = await runListQuery('task', project && !project.backlog ? [`project:${project.slug}`] : [], [], {
         exclude: [],
         title: input.taskTitle.slice(0, 60),
         status: undefined,
@@ -736,7 +736,7 @@ export async function listProjectsScoped(scope: string, query?: string, limit = 
   const lim = Math.max(1, Math.min(50, limit))
   const q = query?.trim()
   if (q) {
-    const { rows } = runList('projects', [], [], { exclude: [], title: q.slice(0, 80), status: undefined, limit: 50, allStates: true })
+    const { rows } = await runListQuery('projects', [], [], { exclude: [], title: q.slice(0, 80), status: undefined, limit: 50, allStates: true })
     const filtered = scope === 'foreground'
       ? rows.filter((r) => projectState(r.labels) === 'foreground')
       : scope === 'backlog'
@@ -745,9 +745,9 @@ export async function listProjectsScoped(scope: string, query?: string, limit = 
     return filtered.slice(0, lim)
   }
   if (scope === 'foreground') {
-    return runList('projects', ['state:foreground'], [], { exclude: [], status: undefined, limit: lim, allStates: true }).rows
+    return (await runListQuery('projects', ['state:foreground'], [], { exclude: [], status: undefined, limit: lim, allStates: true })).rows
   }
-  return runList('projects', [], [], { exclude: [], status: undefined, limit: lim, allStates: true }).rows.filter((r) =>
+  return (await runListQuery('projects', [], [], { exclude: [], status: undefined, limit: lim, allStates: true })).rows.filter((r) =>
     scope === 'backlog' ? projectState(r.labels) === 'backlog' : true,
   )
 }

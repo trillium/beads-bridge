@@ -1,9 +1,9 @@
 // Bead-store reads for label queries: argv building, row parsing, and
 // sync/async list + single-bead show. Errors come back as data
 // ({rows, error?}) so pages degrade per-store instead of 500ing.
-import { spawnSync } from 'child_process'
 import { execStdout } from '../../lib/exec'
-import { assertStoreReadableSync } from '../../lib/store-health'
+import { withSqlFallback } from '../../lib/sql'
+import { sqlListSweep } from '../../lib/sql-beads'
 import { cleanLabel, type Row } from './params'
 
 export interface ListOpts {
@@ -47,40 +47,6 @@ export function parseRows(stdout: string): Row[] {
     .filter((x) => x.id !== '?')
 }
 
-export function runList(
-  store: string,
-  all: string[],
-  any: string[],
-  opts: ListOpts,
-): { rows: Row[]; error?: string } {
-  // Explicit live env: Bun's spawnSync without `env` reuses the
-  // process-start environment snapshot and ignores runtime process.env
-  // changes (verified task-8hmyn), diverging from Node where children
-  // inherit the live environment. Passing it explicitly restores Node
-  // semantics. Production behavior is unchanged — the server never
-  // mutates process.env per request, so live === snapshot there.
-  try {
-    assertStoreReadableSync(store)
-  } catch (e) {
-    return { rows: [], error: e instanceof Error ? e.message : String(e) }
-  }
-  const r = spawnSync(store, listArgs(all, any, opts), {
-    encoding: 'utf8',
-    timeout: 12000,
-    maxBuffer: 4 * 1024 * 1024,
-    env: { ...process.env },
-  })
-  if (r.error) return { rows: [], error: String(r.error).slice(0, 160) }
-  if (r.status !== 0 && !r.stdout) {
-    return { rows: [], error: (r.stderr ?? `exit ${r.status}`).trim().slice(0, 200) || `exit ${r.status}` }
-  }
-  try {
-    return { rows: parseRows(r.stdout || '') }
-  } catch {
-    return { rows: [], error: 'unparseable store output' }
-  }
-}
-
 export async function runListAsync(
   store: string,
   all: string[],
@@ -95,6 +61,39 @@ export async function runListAsync(
       try { return { rows: parseRows(err.stdout) } } catch { /* fall through to error */ }
     }
     return { rows: [], error: (err.message ?? 'store query failed').slice(0, 200) }
+  }
+}
+
+// The query-path list: one SQL statement when the shared DB is reachable
+// (no subprocess, never blocks the event loop), else the bd subprocess list.
+// Same {rows, error?} contract as runListAsync.
+export async function runListQuery(
+  store: string,
+  all: string[],
+  any: string[],
+  opts: ListOpts,
+): Promise<{ rows: Row[]; error?: string }> {
+  try {
+    return await withSqlFallback(
+      'query_store',
+      async () => {
+        const got = await sqlListSweep([store], {
+          limit: opts.limit,
+          labels: all,
+          labelsAny: any,
+          excludeLabels: opts.exclude,
+          titleContains: opts.title,
+          descContains: opts.desc,
+          notesContains: opts.notes,
+          status: opts.status,
+          allStates: opts.allStates,
+        })
+        return { rows: parseRows(JSON.stringify(got.get(store) ?? [])) }
+      },
+      () => runListAsync(store, all, any, opts),
+    )
+  } catch (e: unknown) {
+    return { rows: [], error: (e instanceof Error ? e.message : String(e)).slice(0, 200) }
   }
 }
 
@@ -124,11 +123,11 @@ export async function beadUpdatedAt(store: string, id: string): Promise<string |
 }
 
 // The resume manifest's posting_ref → job bead id (e.g. job-5u5).
-export function resolvePostingRef(resumeId: string): string | null {
+export async function resolvePostingRef(resumeId: string): Promise<string | null> {
   try {
-    const r = spawnSync('resumes', ['show', resumeId, '--json'], { encoding: 'utf8', timeout: 15000, maxBuffer: 4 * 1024 * 1024 })
-    if (r.error || r.status !== 0 || !r.stdout) return null
-    const d = JSON.parse(r.stdout as string)
+    const out = await execStdout('resumes', ['show', resumeId, '--json'], 15000)
+    if (!out) return null
+    const d = JSON.parse(out)
     const row = Array.isArray(d) ? d[0] : d
     const desc = JSON.parse(row?.description ?? '{}')
     return typeof desc?.posting_ref === 'string' && desc.posting_ref ? desc.posting_ref : null
