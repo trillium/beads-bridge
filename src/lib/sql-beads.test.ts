@@ -9,6 +9,7 @@ import {
   _internal,
   rankSearch,
   resolveExternalDepTarget,
+  resolvePartialId,
   scoreIssue,
   searchTokens,
   looksLikeIssueId,
@@ -205,6 +206,69 @@ describe('walkGraph with a batched (prefetch) fetcher', () => {
     const out = await walkGraph('r', f.fetch, 3, 2, f.prefetch)
     assert.equal(out.nodes.length, 2)
     assert.equal(out.truncated, true)
+  })
+})
+
+describe('resolvePartialId (bd ResolvePartialID port)', () => {
+  const task = ['task-']
+  const ids = ['task-jht8m', 'task-jhx11', 'task-abc12', 'task-abc123']
+
+  it('a unique hash substring resolves (the truncated, line-wrapped mention case)', () => {
+    assert.deepEqual(resolvePartialId('task-jht', ids, task), { kind: 'ok', id: 'task-jht8m' })
+  })
+
+  it('a bare hash is namespaced into the configured prefix', () => {
+    assert.deepEqual(resolvePartialId('jht8', ids, task), { kind: 'ok', id: 'task-jht8m' })
+  })
+
+  it('several substring matches are ambiguous and name every match', () => {
+    assert.deepEqual(resolvePartialId('task-jh', ids, task), { kind: 'ambiguous', matches: ['task-jht8m', 'task-jhx11'] })
+  })
+
+  it('no match is none', () => {
+    assert.deepEqual(resolvePartialId('task-zzz', ids, task), { kind: 'none' })
+    assert.deepEqual(resolvePartialId('task-jht8m9', ids, task), { kind: 'none' })
+  })
+
+  it('an exact hash wins over longer substring matches', () => {
+    assert.deepEqual(resolvePartialId('task-abc12', ids, task), { kind: 'ok', id: 'task-abc12' })
+    assert.deepEqual(resolvePartialId('task-abc1', ids, task), { kind: 'ambiguous', matches: ['task-abc12', 'task-abc123'] })
+  })
+
+  it('the match is a case-sensitive substring, not a prefix', () => {
+    assert.deepEqual(resolvePartialId('task-ht8', ids, task), { kind: 'ok', id: 'task-jht8m' })
+    assert.deepEqual(resolvePartialId('task-JHT', ids, task), { kind: 'none' })
+  })
+
+  it('only the configured prefix is stripped from the input: a truncated allowed-prefix id does not resolve, as in bd', () => {
+    const two = ['project-', 'proj-']
+    assert.deepEqual(resolvePartialId('proj-g1', ['proj-g1g', 'project-3vc'], two), { kind: 'none' })
+    assert.deepEqual(resolvePartialId('proj-g1g', ['proj-g1g', 'project-3vc'], two), { kind: 'ok', id: 'proj-g1g' })
+    assert.deepEqual(resolvePartialId('3v', ['proj-g1g', 'project-3vc'], two), { kind: 'ok', id: 'project-3vc' })
+  })
+
+  it('an input that is itself a candidate returns it (exact-id fast path)', () => {
+    assert.deepEqual(resolvePartialId('task-abc12', ['task-abc12'], task), { kind: 'ok', id: 'task-abc12' })
+  })
+})
+
+describe('walkGraph with a partial-id mention (bd double listing)', () => {
+  // A mention `task-jht` resolves to task-jht8m. bd keys the node by the mention but its meta.id
+  // is the real bead, whose label-peer neighbours include the real id: it is listed at depth 1
+  // (as the mention) and again at depth 2 (as the real id). The SQL path must reproduce that.
+  const row = (id: string): RetrievalRow => ({ store: 'task', id, title: id, labels: [] })
+  const graph: Record<string, NeighborSet> = {
+    root: { meta: row('root'), neighbors: [{ id: 'task-jht', via: 'mention' }] },
+    'task-jht': { meta: row('task-jht8m'), neighbors: [{ id: 'task-jht8m', via: 'label' }] },
+    'task-jht8m': { meta: row('task-jht8m'), neighbors: [] },
+  }
+  it('lists the resolved bead at depth 1 and again at depth 2', async () => {
+    const out = await walkGraph('root', async (id) => graph[id] ?? null, 2, 50)
+    assert.deepEqual(out.nodes.map((n) => [n.id, n.depth]), [['root', 0], ['task-jht8m', 1], ['task-jht8m', 2]])
+  })
+  it('an unresolved mention (none or ambiguous) is skipped, not listed', async () => {
+    const out = await walkGraph('root', async (id) => (id === 'root' ? graph.root : null), 2, 50)
+    assert.deepEqual(out.nodes.map((n) => n.id), ['root'])
   })
 })
 

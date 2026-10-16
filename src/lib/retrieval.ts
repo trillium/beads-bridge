@@ -6,7 +6,7 @@
 // Pure builders/parsers/formatters stay subprocess-free for unit tests.
 import { execStdout, beadText, mapLimit } from './exec'
 import { withSqlFallback } from './sql'
-import { sqlBeadsById, sqlListSweep, sqlSearchSweep, type BdRow, type SqlDepEdge } from './sql-beads'
+import { sqlBeadsById, sqlResolvePartialIds, sqlListSweep, sqlSearchSweep, type BdRow, type SqlDepEdge } from './sql-beads'
 import { loadGraphNodes, loadLabelPeers } from './graph-sql'
 import { formatAge, humanAge, parseStampMs, renderStamp, stampFieldsOf } from './age'
 import { STORES, BASE } from '../config'
@@ -855,7 +855,13 @@ export async function reconstructSnapshot(input: string, opts: SnapshotOpts = {}
     const meta = await withSqlFallback(
       'retrieval_snapshot',
       async () => {
-        const row = (await sqlBeadsById([clean])).get(clean)
+        // bd's `show` resolves a truncated root id by unique hash substring.
+        let want = clean
+        let row = (await sqlBeadsById([want])).get(want)
+        if (!row) {
+          want = (await sqlResolvePartialIds([{ store, id: clean }])).get(clean) ?? clean
+          if (want !== clean) row = (await sqlBeadsById([want])).get(want)
+        }
         return row ? (rowsFromSql([row], store)[0] ?? null) : null
       },
       () => showRow(store, clean),
