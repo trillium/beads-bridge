@@ -74,8 +74,26 @@ and one SQL statement gives every comment count so zero-comment beads skip
    (`store-health.ts`, `<store> where`) protects against a wrapper resolving to
    a stale/wrong *copy*. SQL reads the authoritative server directly, so there
    is no copy to be wrong; the probe still guards every bd read/write.
-2. **Tie order.** Where bd leaves ties unspecified (Go unstable sort), the port
-   breaks ties by input order then id. Observed identical on all parity runs.
+2. **Edge order is Dolt's plan order, not a sort.** bd lists a bead's dependencies
+   in the order Dolt returns `SELECT ... FROM dependencies WHERE issue_id = ?`
+   (no ORDER BY, so index/plan order: not by id, created_at or target; checked
+   against 240 live `bd dep list` calls). `IN (a, b, ...)`, UNION parts or a wider
+   projection plan differently and reorder a bead's own edges, so
+   `sqlDepEdges(..., 'down')` issues one narrow `SELECT id, <target> ... WHERE
+   issue_id = ?` per bead (16 at a time) and fetches the types by row id. Up
+   edges (`WHERE depends_on_... IN (...)`) already matched. Other ties (Go
+   unstable sort) still break by input order then id.
+   **Partial ids.** bd's `show`, `comments` and `dep list` resolve a truncated id
+   (`ResolvePartialID`): the hash part is matched as a literal, case-sensitive
+   substring of the store's ids (issues and wisps), an exact hash wins, one
+   match resolves, several (ambiguous) or none is an error. A mention in bead
+   text is often truncated by line wrapping, so the snapshot walk, the
+   snapshot root and `bead_connections` resolve them (`resolvePartialId` pure
+   port, `sqlResolvePartialIds` for the lookup) and skip ambiguous/unmatched
+   ones, as bd does when `show` fails. `list --parent` does not resolve, so
+   children are looked up by the literal id. The resolved bead keeps the
+   mention as its walk key, which reproduces bd listing it at depth 1 and again
+   at depth 2 (its label peers include the real id).
 3. **Dolt dialect.** A lone parenthesised `(SELECT … LIMIT n)` is a syntax error
    (`unionAll` drops the parentheses for one part), and `UNION ALL … WHERE id IN
    (…)` plans as a full scan (1.4 s vs 2 ms), so issues/wisps lookups are
@@ -90,7 +108,8 @@ and one SQL statement gives every comment count so zero-comment beads skip
 - Unit (fixtures, no DB): `src/lib/sql.test.ts` (read-only guard rejects every
   non-SELECT, config, flag, fallback), `src/lib/sql-beads.test.ts` (filter
   building binds all user text, ranking, `splitShow`, `unionAll`, BFS with
-  prefetch, `runListQuery` fallback with an unreachable DB).
+  prefetch, partial-id resolution (unique / ambiguous / none / exact-hash) and the
+  double listing of a resolved mention, `runListQuery` fallback with an unreachable DB).
 - Scratch-store helpers (`live-test-store.ts`) set `BEADS_BRIDGE_SQL=off`:
   SQL reads the shared DB, not the scratch store.
 - **Parity is a live read-only run, not fixtures**: `ops/sql-parity/run.sh`
@@ -105,6 +124,9 @@ RUNS=2 ops/sql-parity/run.sh bench.ts snapshot project-nuj9 status-1l1
 ops/sql-parity/run.sh bench.ts connections brain-se7t task-1rk93
 ops/sql-parity/run.sh list.ts                             # runListQuery vs bd, 69 filter shapes
 ops/sql-parity/run.sh stall.ts connections status-6ow     # worst event-loop gap (also run on main)
+ops/sql-parity/run.sh ab.ts task-0xdm4 task-2nwlw         # retrieval_snapshot SQL off vs on, both printed for diff
+SAMPLE=150 ops/sql-parity/run.sh deps.ts                  # bd dep list edge ORDER vs sqlDepEdges (exit 1 on mismatch)
+ops/sql-parity/run.sh partial.ts                          # bd partial-id resolution vs sqlResolvePartialIds (exit 1)
 ```
 
 ## Evidence (brain host, read-only; median of RUNS; spawns = bd subprocesses)

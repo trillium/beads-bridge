@@ -649,6 +649,89 @@ export async function sqlBeadsById(ids: string[]): Promise<Map<string, BdRow>> {
   return out
 }
 
+// ---------------------------------------------------------------- partial ids
+
+export type PartialIdResolution =
+  | { kind: 'ok'; id: string }
+  | { kind: 'ambiguous'; matches: string[] }
+  | { kind: 'none' }
+
+/**
+ * bd's `ResolvePartialID` (internal/utils/id_parser.go), minus the exact-id
+ * fast path (callers try the exact id first). `bd show|comments|dep list <id>`
+ * accept a truncated id: the hash part (id minus the store prefix) is matched
+ * as a SUBSTRING of every candidate's hash; an exact hash match wins, otherwise
+ * exactly one substring match resolves and zero (`none`) or several
+ * (`ambiguous`) is an error. `list --parent` does NOT resolve (callers pass the
+ * literal id there). Pure so the rules are testable without a database.
+ *
+ * `prefixes` are the store's owned id prefixes; the first is bd's configured
+ * `issue_prefix`, the rest play `allowed_prefixes`. `candidates` must be a
+ * superset of the store-namespace ids whose hash contains the input's hash;
+ * the substring test here is literal and case-sensitive, as in Go.
+ */
+export function resolvePartialId(input: string, candidates: string[], prefixes: string[]): PartialIdResolution {
+  const known = prefixes.map((p) => p.replace(/-$/, '')).filter(Boolean)
+  const configured = known[0] ?? 'bd'
+  const withHyphen = `${configured}-`
+  let normalized: string
+  if (input.startsWith(withHyphen)) normalized = input
+  else if (known.some((p) => input.startsWith(`${p}-`))) normalized = input
+  else if (looksLikePrefixedId(input)) normalized = input // a foreign prefix is looked up as-is
+  else normalized = withHyphen + input
+  const hashPart = normalized.startsWith(withHyphen) ? normalized.slice(withHyphen.length) : normalized
+  const byLength = [...known].sort((a, b) => b.length - a.length)
+  const hashOf = (id: string): string => {
+    const p = byLength.find((k) => id.startsWith(`${k}-`))
+    return p ? id.slice(p.length + 1) : id
+  }
+  const matches: string[] = []
+  let exact = ''
+  for (const id of candidates) {
+    if (id === input) return { kind: 'ok', id }
+    const h = hashOf(id)
+    if (h === hashPart) exact = id // no break: the last exact hash wins, as in Go
+    if (h.includes(hashPart)) matches.push(id)
+  }
+  if (exact) return { kind: 'ok', id: exact }
+  if (matches.length === 1) return { kind: 'ok', id: matches[0] }
+  return matches.length ? { kind: 'ambiguous', matches } : { kind: 'none' }
+}
+
+// bd: 1-8 lowercase alphanumerics, a hyphen, then an alphanumeric first char.
+function looksLikePrefixedId(input: string): boolean {
+  const i = input.indexOf('-')
+  if (i <= 0 || i > 8) return false
+  return /^[a-z0-9]+$/.test(input.slice(0, i)) && /^[a-z0-9]/.test(input.slice(i + 1))
+}
+
+/**
+ * Resolve truncated ids the way `bd show <partial>` does, for many at once.
+ * Only the ids that resolve are in the result (input -> full id); `none` and
+ * `ambiguous` are absent, which is how the bd path treats them too (its
+ * `show` errors, the bead is skipped). Candidates are read from the issues and
+ * wisps tables inside the store's namespace.
+ */
+export async function sqlResolvePartialIds(refs: { store: string; id: string }[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>()
+  for (const ref of [...new Map(refs.map((r) => [r.id, r])).values()]) {
+    const prefixes = await storePrefixes(ref.store)
+    const known = prefixes.map((p) => p.replace(/-$/, ''))
+    const configured = known[0] ?? 'bd'
+    // The hash part, to narrow the scan; an empty hash is ambiguous by construction.
+    const bare = ref.id.startsWith(`${configured}-`) ? ref.id.slice(configured.length + 1) : ref.id
+    if (!bare) continue
+    const ns = `(${known.map(() => 'id LIKE ?').join(' OR ')})`
+    const args: SqlParam[] = [...known.map((p) => `${p}-%`), bare]
+    const q = (table: string): Promise<SqlRow[]> =>
+      sqlQuery(`SELECT id FROM ${table} WHERE ${ns} AND LOCATE(?, id) > 0 ORDER BY id`, args)
+    const rows = (await Promise.all([q('issues'), q('wisps')])).flat()
+    const got = resolvePartialId(ref.id, [...new Set(rows.map((r) => String(r.id)))], prefixes)
+    if (got.kind === 'ok') out.set(ref.id, got.id)
+  }
+  return out
+}
+
 /** One edge of `bd dep list <id> --direction=down|up --json`. */
 export interface SqlDepEdge {
   id: string
@@ -666,6 +749,8 @@ export function resolveExternalDepTarget(target: string): string {
   return i >= 0 && i + 1 < rest.length ? rest.slice(i + 1) : target
 }
 
+const DOWN_PARALLEL = 16
+
 /**
  * `bd dep list <id> --direction=<d> --json` for many ids at once (issues.go
  * GetDependencies/DependentsWithMetadata): dependency rows from `dependencies`
@@ -679,14 +764,36 @@ export async function sqlDepEdges(ids: string[], direction: 'down' | 'up'): Prom
   if (!uniq.length) return out
   type Raw = { owner: string; other: string; type: string }
   const raws: Raw[] = []
-  for (const part of chunks(uniq)) {
-    const ph = part.map(() => '?').join(',')
+  if (direction === 'down') {
+    // bd lists a bead's edges in Dolt's plan order for `WHERE issue_id = ?` with only the row id and
+    // target selected; `IN (...)`, UNION parts and wider projections plan differently and reorder a
+    // bead's own edges. So: one narrow `=` query per bead (bounded concurrency), then the types by id.
     for (const table of ['dependencies', 'wisp_dependencies']) {
-      const rows =
-        direction === 'down'
-          ? await sqlQuery(`SELECT issue_id AS owner, ${DEP_TARGET} AS other, type FROM ${table} WHERE issue_id IN (${ph})`, part)
-          : await sqlQuery(`SELECT ${DEP_TARGET} AS owner, issue_id AS other, type FROM ${table} WHERE ${DEP_TARGET} IN (${ph})`, part)
-      for (const r of rows) raws.push({ owner: String(r.owner), other: String(r.other), type: String(r.type ?? '') })
+      for (const part of chunks(uniq, DOWN_PARALLEL)) {
+        const lists = await Promise.all(
+          part.map((id) => sqlQuery(`SELECT id, ${DEP_TARGET} AS o FROM ${table} WHERE issue_id = ?`, [id])),
+        )
+        const rowIds: string[] = []
+        for (const l of lists) for (const r of l) rowIds.push(String(r.id))
+        const types = new Map<string, string>()
+        for (const idPart of chunks([...new Set(rowIds)])) {
+          const ph = idPart.map(() => '?').join(',')
+          for (const r of await sqlQuery(`SELECT id, type FROM ${table} WHERE id IN (${ph})`, idPart)) {
+            types.set(String(r.id), String(r.type ?? ''))
+          }
+        }
+        part.forEach((owner, i) => {
+          for (const r of lists[i]) raws.push({ owner, other: String(r.o), type: types.get(String(r.id)) ?? '' })
+        })
+      }
+    }
+  } else {
+    for (const part of chunks(uniq)) {
+      const ph = part.map(() => '?').join(',')
+      for (const table of ['dependencies', 'wisp_dependencies']) {
+        const rows = await sqlQuery(`SELECT ${DEP_TARGET} AS owner, issue_id AS other, type FROM ${table} WHERE ${DEP_TARGET} IN (${ph})`, part)
+        for (const r of rows) raws.push({ owner: String(r.owner), other: String(r.other), type: String(r.type ?? '') })
+      }
     }
   }
   const want = new Set(uniq)

@@ -38,6 +38,18 @@
   8 ms worst gap). SQL failure falls back automatically to the old bd path with a
   `[sql-fallback]` log line; `BEADS_BRIDGE_SQL=off` forces the old path.
   Live parity/benchmark scripts: `ops/sql-parity/`.
+- **SQL snapshot parity: partial ids and edge order.** `retrieval_snapshot` on a
+  live bead differed between `BEADS_BRIDGE_SQL` on and off. (1) A truncated,
+  line-wrapped mention (`task-jht` for `task-jht8m`) is resolved by bd as a unique
+  partial id but the SQL path only looked up exact ids and dropped it. The SQL
+  path now ports bd's `ResolvePartialID` (hash-substring match, exact hash wins,
+  unique resolves, ambiguous or no match is skipped) for snapshot nodes, the
+  root and `bead_connections`. (2) Same-depth neighbours swapped order because
+  batched `IN (...)` plans return a bead's own `dependencies` rows in a
+  different order than bd's `WHERE issue_id = ?`; down edges are now one narrow
+  `=` query per bead (bounded concurrency), which reproduces bd's order.
+  bd behaviour is unchanged. New live parity scripts `ab.ts`, `deps.ts`,
+  `partial.ts`.
 
 - Config area moved from `~/.config/pai/` to `~/.config/beads-bridge/` (OAuth
   state and setup key, tool key, personality, identity, `stores.yaml`). A file

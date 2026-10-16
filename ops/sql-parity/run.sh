@@ -4,6 +4,9 @@
 #   bench.ts bundle | retrieval | snapshot <root…> | connections <root…>
 #   list.ts                      runListQuery (SQL) vs runListAsync (bd), 69 filter shapes
 #   stall.ts connections|snapshot <root…>   worst event-loop gap (run once on main, once on this branch)
+#   ab.ts <root…>                retrieval_snapshot OLD vs NEW printed between @@@ markers, for diffing
+#   deps.ts [id…]                bd dep list edge order vs sqlDepEdges (SAMPLE=n); exit 1 on mismatch
+#   partial.ts [store…]          bd partial-id resolution vs sqlResolvePartialIds; exit 1 on mismatch
 # Copies the working tree into a SCRATCH dir on the host (default mini1:
 # ~/.local/share/beads-bridge-parity) — never the live app dir, never a
 # deploy/restart — and runs there, where the bd wrappers and Dolt are real.
