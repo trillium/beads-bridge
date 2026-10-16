@@ -110,11 +110,14 @@ export function redirectStoreEnv(beadsDir: string): () => void {
     BRAIN_EXFIL_FLAT: process.env.BRAIN_EXFIL_FLAT,
     INBOX_EVENTS_FILE: process.env.INBOX_EVENTS_FILE,
     BEADS_BRIDGE_STORE_GUARD: process.env.BEADS_BRIDGE_STORE_GUARD,
+    BEADS_BRIDGE_SQL: process.env.BEADS_BRIDGE_SQL,
   }
   const root = dirname(beadsDir)
   // A scratch store is deliberately NOT the registry's workspace; the
   // store-identity guard (store-health.ts) would refuse it as misrouted.
   process.env.BEADS_BRIDGE_STORE_GUARD = 'off'
+  // The SQL read path talks to the shared Dolt DB, not the scratch store.
+  process.env.BEADS_BRIDGE_SQL = 'off'
   process.env.BEADS_DIR = beadsDir
   process.env.BRAIN_KNOWLEDGE_ROOT = root
   process.env.BRAIN_EXFIL_FLAT = '1'
@@ -172,9 +175,11 @@ export function shimBdRouter(routes: Record<string, string>): () => void {
   )
   const prevPath = process.env.PATH ?? ''
   const prevGuard = process.env.BEADS_BRIDGE_STORE_GUARD
+  const prevSql = process.env.BEADS_BRIDGE_SQL
   process.env.PATH = `${binDir}:${prevPath}`
   // Scratch stores are not the registry workspace; see redirectStoreEnv.
   process.env.BEADS_BRIDGE_STORE_GUARD = 'off'
+  process.env.BEADS_BRIDGE_SQL = 'off' // SQL reads bypass the scratch router
   let restored = false
   return () => {
     if (restored) return
@@ -182,6 +187,8 @@ export function shimBdRouter(routes: Record<string, string>): () => void {
     process.env.PATH = prevPath
     if (prevGuard === undefined) delete process.env.BEADS_BRIDGE_STORE_GUARD
     else process.env.BEADS_BRIDGE_STORE_GUARD = prevGuard
+    if (prevSql === undefined) delete process.env.BEADS_BRIDGE_SQL
+    else process.env.BEADS_BRIDGE_SQL = prevSql
     rmSync(binDir, { recursive: true, force: true })
   }
 }

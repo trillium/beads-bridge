@@ -3,6 +3,7 @@
 // bounded parallelism preserving input order.
 import { execFile } from 'child_process'
 import { promisify } from 'util'
+import { noteSpawn } from './spawn-stats'
 import { assertStoreReadable, assertStoreWritable, isWriteVerb, readFailureNote } from './store-health'
 
 const execFileAsync = promisify(execFile)
@@ -15,6 +16,7 @@ export async function execStdout(store: string, args: string[], timeoutMs: numbe
   // stale or fallback copy.
   if (isWriteVerb(args[0])) await assertStoreWritable(store)
   else await assertStoreReadable(store)
+  noteSpawn(args)
   const { stdout } = await execFileAsync(store, args, {
     encoding: 'utf8',
     timeout: timeoutMs,

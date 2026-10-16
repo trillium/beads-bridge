@@ -17,7 +17,7 @@ import {
   shimBdRouter,
   removeScratchStore,
 } from './live-test-store'
-import { runList } from '../routes/query/store'
+import { runListAsync } from '../routes/query/store'
 import { execStdout } from './exec'
 
 const execFileAsync = promisify(execFile)
@@ -105,13 +105,10 @@ describe('live-test-store helper', () => {
       assert.match(out, /task-[A-Za-z0-9]+/, 'scratch store issues task-prefixed ids')
       const list = await execStdout('task', ['list', '--json', '--limit', '10'], 30000)
       assert.match(list, /router probe/, 'the scratch bead reads back through the wrapper (async path)')
-      // The sync path MUST agree: Bun's spawnSync without explicit env
-      // reuses the process-start snapshot, so a wrapper-name shim is
-      // invisible to it — routing the leaf `bd` plus runList's explicit
-      // live env (Node parity) is what keeps sync reads (runList via
-      // lookupProject) on the same scratch store.
-      const { rows } = runList('task', [], [], { exclude: [], limit: 10, allStates: true })
-      assert.ok(rows.some((r) => r.title.includes('router probe')), 'the SYNC path reads the same scratch store')
+      // The structured list path (query/store.ts runListAsync) must agree
+      // with the raw wrapper read above: both land in the scratch store.
+      const { rows } = await runListAsync('task', [], [], { exclude: [], limit: 10, allStates: true })
+      assert.ok(rows.some((r) => r.title.includes('router probe')), 'the structured list path reads the same scratch store')
       // Passthrough: unrouted invocations still reach the real binary.
       const v = await execStdout('bd', ['--version'], 15000)
       assert.match(v, /bd version/, 'unrouted bd calls pass through the router')

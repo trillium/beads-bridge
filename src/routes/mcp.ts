@@ -18,8 +18,9 @@ import {
   unknownStoreError,
 } from '../lib/store-aliases'
 import { beadText, mapLimit } from '../lib/exec'
+import { fetchBeadTexts, renderBeadBlock } from '../lib/bead-text'
 import { bundleIds } from './beads'
-import { runList } from './query/store'
+import { runListQuery } from './query/store'
 import { cleanLabel, LABEL_RE } from './query/params'
 import { validateCreateLabels } from '../lib/create'
 import { createOperationBead, formatReconciliation } from '../lib/idempotent-create'
@@ -145,19 +146,35 @@ function beadStore(id: string): { store: string } | { error: string } {
   return { store }
 }
 
-async function showBead(id: string): Promise<string> {
+// Resolve an id to its store, or to the error text the tool shows for it.
+function resolveShow(id: string): { store: string } | { text: string } {
   const resolved = resolveBeadStore(id.trim())
   if (resolved.kind === 'ambiguous') {
-    return ambiguousBeadIdError(id.trim(), resolved.prefix, resolved.candidates)
+    return { text: ambiguousBeadIdError(id.trim(), resolved.prefix, resolved.candidates) }
   }
   const store = storeFromId(id)
-  if (!store) return unknownBeadIdError(id)
+  if (!store) return { text: unknownBeadIdError(id) }
   relayStatus.markVerified(id.trim())
+  return { store }
+}
+
+async function showBead(id: string): Promise<string> {
+  const r = resolveShow(id)
+  if ('text' in r) return r.text
   const [body, comments] = await Promise.all([
-    beadText(store, ['show', id]),
-    beadText(store, ['comments', id]),
+    beadText(r.store, ['show', id]),
+    beadText(r.store, ['comments', id]),
   ])
-  return [`# ${id} (STORE: ${store})`, '', comments ? `${body}\n\n## Comments\n${comments}` : body].join('\n')
+  return renderBeadBlock(id, r.store, { body, comments })
+}
+
+// beads_bundle: same per-bead blocks as showBead, rendered with batched
+// subprocesses (src/lib/bead-text.ts) instead of two spawns per bead.
+async function showBeads(ids: string[]): Promise<string[]> {
+  const resolved = ids.map((id) => ({ id, r: resolveShow(id) }))
+  const refs = resolved.flatMap(({ id, r }) => ('store' in r ? [{ id, store: r.store }] : []))
+  const texts = await fetchBeadTexts(refs)
+  return resolved.map(({ id, r }) => ('text' in r ? r.text : renderBeadBlock(id, r.store, texts.get(id)!)))
 }
 
 const mcpHandler = createMcpHandler((server) => {
@@ -183,7 +200,7 @@ const mcpHandler = createMcpHandler((server) => {
     async ({ ids }: { ids: string[] }) => {
       const valid = bundleIds(ids)
       if (!valid.length) return err('No valid bead ids.')
-      const parts = await mapLimit(valid, 12, showBead)
+      const parts = await showBeads(valid)
       return ok(parts.join('\n\n---\n\n'))
     },
   )
@@ -216,7 +233,7 @@ const mcpHandler = createMcpHandler((server) => {
       const all = (label ?? []).map(cleanLabel).filter((x): x is string => !!x).slice(0, 10)
       const orLabels = (any ?? []).map(cleanLabel).filter((x): x is string => !!x).slice(0, 10)
       // No filters means list-all (up to limit) — store discovery is a feature.
-      const { rows, error } = runList(store, all, orLabels, {
+      const { rows, error } = await runListQuery(store, all, orLabels, {
         exclude: (exclude ?? []).map(cleanLabel).filter((x): x is string => !!x).slice(0, 10),
         title: title?.slice(0, 120),
         status: status?.slice(0, 64),
@@ -1014,7 +1031,7 @@ const mcpHandler = createMcpHandler((server) => {
     async ({ store, count }: { store?: string; count?: number }) => {
       const stores = pickStores(store?.trim() || undefined)
       if (!Array.isArray(stores)) return err(stores.error)
-      const { candidates, pool } = gatherCandidates(stores)
+      const { candidates, pool } = await gatherCandidates(stores)
       if (!candidates.length) return ok('# random pick\n\nNo open beads in scope — queues are clear.')
       const picks = sampleIndices(candidates.length, count ?? 1).map((i) => candidates[i])
       return ok(formatPicks(picks, pool))

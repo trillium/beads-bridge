@@ -5,13 +5,16 @@
 // with bounded fan-out via mapLimit. Reads only — no mutations here.
 // Pure builders/parsers/formatters stay subprocess-free for unit tests.
 import { execStdout, beadText, mapLimit } from './exec'
+import { withSqlFallback } from './sql'
+import { sqlBeadsById, sqlListSweep, sqlSearchSweep, type BdRow, type SqlDepEdge } from './sql-beads'
+import { loadGraphNodes, loadLabelPeers } from './graph-sql'
 import { formatAge, humanAge, parseStampMs, renderStamp, stampFieldsOf } from './age'
 import { STORES, BASE } from '../config'
 import { storeFromId, extractLinks } from '../util'
 import { resolveStoreName } from './store-aliases'
 import { cleanLabel } from '../routes/query/params'
 import { listArgs } from '../routes/query/store'
-import { runList } from '../routes/query/store'
+import { runListAsync } from '../routes/query/store'
 
 export interface RetrievalRow {
   store: string
@@ -91,6 +94,12 @@ export function parseRetrievalRows(stdout: string, store: string): RetrievalRow[
     .filter((x) => x.id !== '?')
 }
 
+// SQL rows are bd-shaped; running them through the SAME parser as the bd
+// stdout keeps typing, slicing and defaults byte-identical across both paths.
+export function rowsFromSql(rows: BdRow[], store: string): RetrievalRow[] {
+  return parseRetrievalRows(JSON.stringify(rows), store)
+}
+
 // ---- 1. federated full-text search ----
 
 export interface SearchOpts {
@@ -128,13 +137,23 @@ export async function federatedSearch(
   const limit = Math.min(RETRIEVAL_MAX_LIMIT, Math.max(1, opts.limit ?? 30))
   const status = opts.status?.trim().slice(0, 64) || undefined
   const args = searchArgs(query, { status, labels, perStore })
-  const per = await mapLimit(stores, 6, async (store): Promise<{ rows: RetrievalRow[]; error?: string }> => {
-    try {
-      return { rows: parseRetrievalRows(await execStdout(store, args, 15000), store) }
-    } catch (e) {
-      return { rows: [], error: (e instanceof Error ? e.message : String(e)).slice(0, 200) }
-    }
-  })
+  const viaBd = (): Promise<{ rows: RetrievalRow[]; error?: string }[]> =>
+    mapLimit(stores, 6, async (store): Promise<{ rows: RetrievalRow[]; error?: string }> => {
+      try {
+        return { rows: parseRetrievalRows(await execStdout(store, args, 15000), store) }
+      } catch (e) {
+        return { rows: [], error: (e instanceof Error ? e.message : String(e)).slice(0, 200) }
+      }
+    })
+  // One statement for the whole sweep instead of one `bd search` per store.
+  const viaSql = async (): Promise<{ rows: RetrievalRow[]; error?: string }[]> => {
+    const q = query.trim()
+    const byStore = q
+      ? await sqlSearchSweep(stores, q, { limit: perStore, status: status ?? 'all', labels })
+      : await sqlListSweep(stores, { limit: perStore, status, allStates: !status })
+    return stores.map((s) => ({ rows: rowsFromSql(byStore.get(s) ?? [], s) }))
+  }
+  const per = await withSqlFallback('retrieval_search', viaSql, viaBd)
   const rows: RetrievalRow[] = []
   const errors: StoreError[] = []
   per.forEach((r, i) => {
@@ -207,13 +226,19 @@ export async function recentActivity(
   const since = opts.since?.trim().slice(0, 64) || undefined
   const perStore = Math.min(RETRIEVAL_MAX_PER_STORE, Math.max(limit, 10))
   const args = activityArgs({ limit: perStore, status, labels, since })
-  const per = await mapLimit(stores, 6, async (store): Promise<{ rows: RetrievalRow[]; error?: string }> => {
-    try {
-      return { rows: parseRetrievalRows(await execStdout(store, args, 15000), store) }
-    } catch (e) {
-      return { rows: [], error: (e instanceof Error ? e.message : String(e)).slice(0, 200) }
-    }
-  })
+  const viaBd = (): Promise<{ rows: RetrievalRow[]; error?: string }[]> =>
+    mapLimit(stores, 6, async (store): Promise<{ rows: RetrievalRow[]; error?: string }> => {
+      try {
+        return { rows: parseRetrievalRows(await execStdout(store, args, 15000), store) }
+      } catch (e) {
+        return { rows: [], error: (e instanceof Error ? e.message : String(e)).slice(0, 200) }
+      }
+    })
+  const viaSql = async (): Promise<{ rows: RetrievalRow[]; error?: string }[]> => {
+    const byStore = await sqlListSweep(stores, { limit: perStore, sort: 'updated', labels, status, allStates: !status, since })
+    return stores.map((s) => ({ rows: rowsFromSql(byStore.get(s) ?? [], s) }))
+  }
+  const per = await withSqlFallback('retrieval_activity', viaSql, viaBd)
   const errors: StoreError[] = []
   const lists = per.map((r, i) => {
     if (r.error) errors.push({ store: stores[i], error: r.error })
@@ -416,17 +441,26 @@ export async function claimedBeads(opts: { stores?: string[]; limit?: number; st
   const perStore = Math.min(RETRIEVAL_MAX_PER_STORE, Math.max(limit, 10))
   const now = Date.now()
   const staleAfterMs = opts.staleAfterMs ?? CLAIM_STALE_AFTER_MS
-  const per = await mapLimit(stores, 6, async (store): Promise<{ rows: ClaimedRow[]; error?: string }> => {
-    try {
-      const out = await execStdout(store, ['list', '--json', '--status', 'in_progress', '--limit', String(perStore), '--sort', 'updated'], 15000)
-      const rows = parseRetrievalRows(out, store).map((r) => toClaimedRow(r, now, staleAfterMs))
-      // Oldest claims first — abandoned work surfaces at the top.
-      rows.sort((a, b) => (b.claimAgeMs ?? -1) - (a.claimAgeMs ?? -1))
-      return { rows }
-    } catch (e) {
-      return { rows: [], error: (e instanceof Error ? e.message : String(e)).slice(0, 200) }
-    }
-  })
+  const toClaimed = (list: RetrievalRow[]): ClaimedRow[] => {
+    const rows = list.map((r) => toClaimedRow(r, now, staleAfterMs))
+    // Oldest claims first — abandoned work surfaces at the top.
+    rows.sort((a, b) => (b.claimAgeMs ?? -1) - (a.claimAgeMs ?? -1))
+    return rows
+  }
+  const viaBd = (): Promise<{ rows: ClaimedRow[]; error?: string }[]> =>
+    mapLimit(stores, 6, async (store): Promise<{ rows: ClaimedRow[]; error?: string }> => {
+      try {
+        const out = await execStdout(store, ['list', '--json', '--status', 'in_progress', '--limit', String(perStore), '--sort', 'updated'], 15000)
+        return { rows: toClaimed(parseRetrievalRows(out, store)) }
+      } catch (e) {
+        return { rows: [], error: (e instanceof Error ? e.message : String(e)).slice(0, 200) }
+      }
+    })
+  const viaSql = async (): Promise<{ rows: ClaimedRow[]; error?: string }[]> => {
+    const byStore = await sqlListSweep(stores, { limit: perStore, status: 'in_progress', sort: 'updated' })
+    return stores.map((s) => ({ rows: toClaimed(rowsFromSql(byStore.get(s) ?? [], s)) }))
+  }
+  const per = await withSqlFallback('retrieval_claimed', viaSql, viaBd)
   const errors: StoreError[] = []
   const rows = per.flatMap((r, i) => {
     if (r.error) errors.push({ store: stores[i], error: r.error })
@@ -562,6 +596,7 @@ export async function walkGraph(
   fetch: NeighborFetcher,
   maxDepth: number,
   maxBeads: number,
+  prefetch?: (ids: string[]) => Promise<void>,
 ): Promise<{ nodes: SnapshotNode[]; truncated: boolean }> {
   const seen = new Set<string>([rootId])
   const nodes: SnapshotNode[] = []
@@ -569,6 +604,9 @@ export async function walkGraph(
   let frontier: { id: string; depth: number; via: string }[] = [{ id: rootId, depth: 0, via: 'root' }]
   while (frontier.length) {
     const next: { id: string; depth: number; via: string }[] = []
+    // Batched fetchers load the whole level up front; their errors propagate
+    // (unlike fetch() errors below) so the caller can fall back to the bd walk.
+    if (prefetch) await prefetch(frontier.map((f) => f.id))
     for (const { id, depth, via } of frontier) {
       if (nodes.length >= maxBeads) {
         truncated = true
@@ -659,7 +697,56 @@ function mentionedIn(store: string, id: string, text: string): string[] {
   return out
 }
 
+type Edge = { id: string; via: string }
+
+// Edge assembly shared by the bd path and the SQL path, so neighbor order,
+// dedupe and the 60-neighbor caps cannot drift between them.
+async function assembleNeighbors(
+  store: string,
+  id: string,
+  meta: RetrievalRow,
+  down: Edge[],
+  up: Edge[],
+  childIds: string[],
+  text: string,
+  peers: (label: string, store: string) => Promise<string[]>,
+): Promise<NeighborSet> {
+  const neighbors: Edge[] = [...down, ...up]
+  // Children: explicit --parent listing plus dotted-suffix dependents.
+  for (const cid of childIds) if (cid !== id) neighbors.push({ id: cid, via: 'child' })
+  for (const c of up) {
+    if (c.via === 'parent-child' && c.id.startsWith(`${id}.`)) {
+      neighbors.push({ id: c.id, via: 'child' })
+    }
+  }
+  // Dotted suffix → parent edge (child → parent upward).
+  const pm = id.match(/^(.+)\.\d+$/)
+  if (pm && storeFromId(pm[1])) neighbors.push({ id: pm[1], via: 'parent' })
+  // Same project: project: labels join beads across task/stories + own store.
+  const projectLabels = meta.labels.filter((l) => l.startsWith('project:')).slice(0, 3)
+  const searchStores = snapshotSearchStores(store)
+  for (const label of projectLabels) {
+    for (const s of searchStores) {
+      for (const pid of await peers(label, s)) {
+        if (pid !== id) neighbors.push({ id: pid, via: `label:${label}` })
+      }
+      if (neighbors.length >= 60) break
+    }
+    if (neighbors.length >= 60) break
+  }
+  for (const m of mentionedIn(store, id, text)) neighbors.push({ id: m, via: 'mentioned' })
+  // Dedupe neighbor edges, keep first via.
+  const seen = new Set<string>()
+  const deduped = neighbors.filter((n) => (seen.has(n.id) ? false : (seen.add(n.id), true)))
+  return { meta, neighbors: deduped.slice(0, 60) }
+}
+
+function snapshotSearchStores(store: string): string[] {
+  return [...new Set([store, 'task', 'stories'])].filter((s) => STORES.includes(s)).slice(0, 3)
+}
+
 // Live neighbor fetcher: parent/child/dependency/mentioned/project edges.
+// (bd-subprocess path; the SQL path is sqlNeighborFetcher below.)
 export async function snapshotNeighbors(id: string): Promise<NeighborSet | null> {
   const store = storeFromId(id)
   if (!store) return null
@@ -672,40 +759,77 @@ export async function snapshotNeighbors(id: string): Promise<NeighborSet | null>
     ),
   ])
   if (!meta) return null
-  const neighbors: { id: string; via: string }[] = [...down, ...up]
-  // Children: explicit --parent listing plus dotted-suffix dependents.
+  const childIds: string[] = []
   try {
     const out = await execStdout(store, ['list', '--json', '--limit', '50', '--parent', id], 12000)
-    for (const r of parseRetrievalRows(out, store)) {
-      if (r.id !== id) neighbors.push({ id: r.id, via: 'child' })
-    }
+    for (const r of parseRetrievalRows(out, store)) childIds.push(r.id)
   } catch { /* children are best-effort */ }
-  for (const c of up) {
-    if (c.via === 'parent-child' && c.id.startsWith(`${id}.`)) {
-      neighbors.push({ id: c.id, via: 'child' })
-    }
-  }
-  // Dotted suffix → parent edge (child → parent upward).
-  const pm = id.match(/^(.+)\.\d+$/)
-  if (pm && storeFromId(pm[1])) neighbors.push({ id: pm[1], via: 'parent' })
-  // Same project: project: labels join beads across task/stories + own store.
-  const projectLabels = meta.labels.filter((l) => l.startsWith('project:')).slice(0, 3)
-  const searchStores = [...new Set([store, 'task', 'stories'])].filter((s) => STORES.includes(s)).slice(0, 3)
-  for (const label of projectLabels) {
-    for (const s of searchStores) {
-      const { rows } = runList(s, [label], [], { exclude: [], status: undefined, limit: 8, allStates: true })
-      for (const r of rows) {
-        if (r.id !== id) neighbors.push({ id: r.id, via: `label:${label}` })
+  return assembleNeighbors(store, id, meta, down, up, childIds, text, async (label, s) => {
+    const { rows } = await runListAsync(s, [label], [], { exclude: [], status: undefined, limit: 8, allStates: true })
+    return rows.map((r) => r.id)
+  })
+}
+
+const edgeOf = (e: SqlDepEdge, self: string, dir: 'down' | 'up'): Edge | null =>
+  !e.id || e.id === self ? null : { id: e.id, via: e.type || (dir === 'down' ? 'depends-on' : 'depended-on-by') }
+
+// SQL neighbor fetcher: `prefetch` loads a whole BFS level in a few
+// statements (errors PROPAGATE so the caller can fall back to the bd walk —
+// walkGraph swallows fetch() errors), `fetch` then answers from that cache.
+export function sqlNeighborFetcher(): { fetch: NeighborFetcher; prefetch: (ids: string[]) => Promise<void> } {
+  const cache = new Map<string, NeighborSet | null>()
+  const peerCache = new Map<string, Map<string, BdRow[]>>()
+  return {
+    async prefetch(ids) {
+      const refs = [...new Set(ids)]
+        .filter((id) => !cache.has(id))
+        .map((id) => ({ id, store: storeFromId(id) }))
+      for (const r of refs) if (!r.store) cache.set(r.id, null)
+      const todo = refs.filter((r): r is { id: string; store: string } => !!r.store)
+      if (!todo.length) return
+      const nodes = await loadGraphNodes(todo, 'retrieval_snapshot')
+      // Peers: one statement per distinct project label across the level.
+      const wanted = new Map<string, Set<string>>()
+      for (const n of nodes.values()) {
+        if (!n.meta) continue
+        const labels = (n.meta.labels ?? []).filter((l) => l.startsWith('project:')).slice(0, 3)
+        for (const l of labels) {
+          const set = wanted.get(l) ?? new Set<string>()
+          for (const s of snapshotSearchStores(n.store)) set.add(s)
+          wanted.set(l, set)
+        }
       }
-      if (neighbors.length >= 60) break
-    }
-    if (neighbors.length >= 60) break
+      for (const [label, stores] of wanted) {
+        const have = peerCache.get(label)
+        const missing = [...stores].filter((s) => !have?.has(s))
+        if (!missing.length) continue
+        const got = (await loadLabelPeers([label], missing)).get(label)!
+        peerCache.set(label, new Map([...(have ?? []), ...got]))
+      }
+      for (const n of nodes.values()) {
+        if (!n.meta) {
+          cache.set(n.id, null)
+          continue
+        }
+        const [meta] = rowsFromSql([n.meta], n.store)
+        const set = await assembleNeighbors(
+          n.store,
+          n.id,
+          meta,
+          n.down.map((e) => edgeOf(e, n.id, 'down')).filter((e): e is Edge => !!e),
+          n.up.map((e) => edgeOf(e, n.id, 'up')).filter((e): e is Edge => !!e),
+          n.children.map((c) => c.id),
+          n.text,
+          async (label, s) => (peerCache.get(label)?.get(s) ?? []).map((r) => r.id),
+        )
+        cache.set(n.id, set)
+      }
+    },
+    async fetch(id) {
+      if (!cache.has(id)) throw new Error(`sql snapshot: ${id} was not prefetched`)
+      return cache.get(id) ?? null
+    },
   }
-  for (const m of mentionedIn(store, id, text)) neighbors.push({ id: m, via: 'mentioned' })
-  // Dedupe neighbor edges, keep first via.
-  const seen = new Set<string>()
-  const deduped = neighbors.filter((n) => (seen.has(n.id) ? false : (seen.add(n.id), true)))
-  return { meta, neighbors: deduped.slice(0, 60) }
 }
 
 export interface SnapshotOpts {
@@ -728,10 +852,24 @@ export async function reconstructSnapshot(input: string, opts: SnapshotOpts = {}
     alternatives = rows.slice(1).map((r) => r.id)
   } else {
     const store = storeFromId(clean)!
-    const meta = await showRow(store, clean)
+    const meta = await withSqlFallback(
+      'retrieval_snapshot',
+      async () => {
+        const row = (await sqlBeadsById([clean])).get(clean)
+        return row ? (rowsFromSql([row], store)[0] ?? null) : null
+      },
+      () => showRow(store, clean),
+    )
     if (!meta) return { root: clean, beads: [], truncated: false, error: `Bead not found: ${clean}` }
   }
-  const { nodes, truncated } = await walkGraph(root, snapshotNeighbors, depth, cap)
+  const { nodes, truncated } = await withSqlFallback(
+    'retrieval_snapshot',
+    () => {
+      const nf = sqlNeighborFetcher()
+      return walkGraph(root, nf.fetch, depth, cap, nf.prefetch)
+    },
+    () => walkGraph(root, snapshotNeighbors, depth, cap),
+  )
   return { root, alternatives, beads: nodes, truncated }
 }
 

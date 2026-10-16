@@ -8,7 +8,7 @@ import { wrap } from '../wrap'
 import { withDebug, failureDebug } from './debug-state'
 import { warmBundle } from './beads'
 import { LABEL_RE, MAX_LABELS, strParam, listParam, cleanLabel } from './query/params'
-import { runList } from './query/store'
+import { runListQuery } from './query/store'
 import { resolveStoreName } from '../lib/store-aliases'
 import { formatSection } from './query/format'
 
@@ -16,7 +16,7 @@ export const mountOrder = -15
 export const singleQueryRouter = Router()
 
 // GET /q/:store — single-store label query (aliases resolve to canonical).
-singleQueryRouter.get('/q/:store', (req: Request, res: Response, next: NextFunction) => {
+singleQueryRouter.get('/q/:store', async (req: Request, res: Response, next: NextFunction) => {
   const req2 = resolveStoreName(pstr(req.params.store))
   if (req2.kind !== 'exact' && req2.kind !== 'alias') return next()
   const store = req2.store
@@ -41,7 +41,7 @@ singleQueryRouter.get('/q/:store', (req: Request, res: Response, next: NextFunct
   // No filters means list-all (up to limit) — store discovery is a feature.
   const limit = Math.min(50, Math.max(1, parseInt(strParam(req.query.limit) ?? '20', 10) || 20))
   const status = strParam(req.query.status)?.slice(0, 64)
-  const { rows, error } = runList(store, all, any, {
+  const { rows, error } = await runListQuery(store, all, any, {
     exclude,
     title: strParam(req.query.title)?.slice(0, 120),
     desc: strParam(req.query.desc)?.slice(0, 120),

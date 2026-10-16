@@ -90,7 +90,7 @@ activityRouter.get('/resume/:id/last-turn', async (req: Request, res: Response) 
   const hours = Math.min(168, Math.max(1, parseInt(String(req.query.hours ?? '24'), 10) || 24))
   const sinceIso = new Date(Date.now() - hours * 3600_000).toISOString()
   const scopeTag = `resume:${id}`
-  const slugs = new Set(discoverScopeLabels(id))
+  const slugs = new Set(await discoverScopeLabels(id))
 
   const lines = [
     `# last turn — ${id} (since ${sinceIso})`,
