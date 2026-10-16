@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.8.0
+
+- **Store routing is verified, not assumed** (feedback 82t1, k3az). The bridge
+  reaches every store through that store's own CLI, and since the authoritative
+  stores moved to a remote brain host many of those wrappers are broken
+  (`no beads database found`) or resolve into another store's workspace
+  (`scratch`, `errors`, ... all land in `brain`). New `store_health` MCP tool
+  runs `<store> where` per store and classifies it (`ok`, `no-database`,
+  `misrouted`, `fallback-local`, `local-shadow`, `unreachable`); with
+  `roundtrip: true` it also reads a known record and creates, reads back and
+  closes a test bead through the same CLI. Every write (create/edit/comment/
+  note/close/label, the paste route) is refused for a store that is provably not
+  at its authoritative location, and reads refuse a store that would answer from
+  the wrong one — no fallback store is ever used. A broken store's read error
+  now names the store and cause instead of a bare "no beads database found".
+  Logic in `src/lib/store-health.ts` + `store-roundtrip.ts`;
+  `BEADS_BRIDGE_STORE_GUARD=off` disables the guard.
+- **`feedback_edit` MCP tool** (feedback mwfd): amend an existing feedback
+  record by filename or short id (`replace` or `append`). Records are mutable
+  only through this tool; each edit archives the previous version read-only
+  under `<feedback dir>/.history/`, bumps frontmatter `revision`/`updated_at`/
+  `last_edit_reason`, and succeeds only after the record reads back from disk.
+
 ## Unreleased
 
 - Config area moved from `~/.config/pai/` to `~/.config/beads-bridge/` (OAuth

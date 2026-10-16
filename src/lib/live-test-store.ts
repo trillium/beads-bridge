@@ -109,8 +109,12 @@ export function redirectStoreEnv(beadsDir: string): () => void {
     BRAIN_KNOWLEDGE_ROOT: process.env.BRAIN_KNOWLEDGE_ROOT,
     BRAIN_EXFIL_FLAT: process.env.BRAIN_EXFIL_FLAT,
     INBOX_EVENTS_FILE: process.env.INBOX_EVENTS_FILE,
+    BEADS_BRIDGE_STORE_GUARD: process.env.BEADS_BRIDGE_STORE_GUARD,
   }
   const root = dirname(beadsDir)
+  // A scratch store is deliberately NOT the registry's workspace; the
+  // store-identity guard (store-health.ts) would refuse it as misrouted.
+  process.env.BEADS_BRIDGE_STORE_GUARD = 'off'
   process.env.BEADS_DIR = beadsDir
   process.env.BRAIN_KNOWLEDGE_ROOT = root
   process.env.BRAIN_EXFIL_FLAT = '1'
@@ -167,12 +171,17 @@ export function shimBdRouter(routes: Record<string, string>): () => void {
     { mode: 0o755 },
   )
   const prevPath = process.env.PATH ?? ''
+  const prevGuard = process.env.BEADS_BRIDGE_STORE_GUARD
   process.env.PATH = `${binDir}:${prevPath}`
+  // Scratch stores are not the registry workspace; see redirectStoreEnv.
+  process.env.BEADS_BRIDGE_STORE_GUARD = 'off'
   let restored = false
   return () => {
     if (restored) return
     restored = true
     process.env.PATH = prevPath
+    if (prevGuard === undefined) delete process.env.BEADS_BRIDGE_STORE_GUARD
+    else process.env.BEADS_BRIDGE_STORE_GUARD = prevGuard
     rmSync(binDir, { recursive: true, force: true })
   }
 }

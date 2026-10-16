@@ -10,6 +10,7 @@ import { join, dirname } from 'path'
 import { BASE } from '../config'
 import { withCb, shortCode } from '../util'
 import { isWebAgent } from '../agent-detect'
+import { assertStoreWritable, isWriteVerb } from '../lib/store-health'
 import { PASTE_SOURCE_LABEL, PASTE_UNTRIAGED_LABEL } from '../lib/provenance'
 
 export const pasteRouter = Router()
@@ -63,10 +64,12 @@ export function buildPasteArgs(title: string, text: string): string[] {
   return ['create', title, '--description', text, '--label', PASTE_SOURCE_LABEL, '--label', PASTE_UNTRIAGED_LABEL]
 }
 
-const run = (store: string, args: string[]): Promise<string> =>
-  new Promise((resolve, reject) =>
+const run = async (store: string, args: string[]): Promise<string> => {
+  if (isWriteVerb(args[0])) await assertStoreWritable(store)
+  return new Promise((resolve, reject) =>
     execFile(store, args, { timeout: 30000 }, (e, so, se) =>
       e ? reject(new Error(String(se || e.message))) : resolve(so)))
+}
 
 pasteRouter.get('/paste', async (req: Request, res: Response) => {
   // Agents get the contract as text; browsers get the form UI.
