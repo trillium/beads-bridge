@@ -25,7 +25,9 @@ import { validateCreateLabels } from '../lib/create'
 import { createOperationBead, formatReconciliation } from '../lib/idempotent-create'
 import { DEP_TYPES, MAX_BATCH_BEADS, formatBatch, runBatch } from '../lib/batch'
 import { beadConnections, formatConnections } from '../lib/connections'
-import { feedbackDir, writeFeedback } from '../lib/feedback'
+import { editFeedback, feedbackDir, formatFeedbackEdit, writeFeedback } from '../lib/feedback'
+import { formatStoreHealth, probeStore, registryPathFor, type StoreHealthRow } from '../lib/store-health'
+import { ROUNDTRIP_REFUSED_STORES, formatRoundTrip, storeRoundTrip } from '../lib/store-roundtrip'
 import { editBead } from '../lib/edit'
 import { formatWhoami, loadProfile, readWhoamiNotes, serverVersion, updateProfile } from '../lib/whoami'
 import { appendPersonality, editPersonalitySection, ensurePersonality, loadPersonality, savePersonality, PERSONALITY_MAX_CHARS } from '../lib/personality'
@@ -571,6 +573,65 @@ const mcpHandler = createMcpHandler((server) => {
         return ok(`Feedback filed as ${filename}`)
       } catch (e) {
         return err(`feedback failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    },
+  )
+
+  // Edit an existing feedback record in place (feedback mwfd). Contract:
+  // records are mutable ONLY through this tool; each edit archives the
+  // previous version under <feedback dir>/.history/, bumps frontmatter
+  // `revision`, and is verified by reading the record back from disk.
+  server.registerTool(
+    'feedback_edit',
+    {
+      title: 'Edit feedback record',
+      description: 'Amend or correct an existing feedback record in place instead of filing a new one. Pass the record filename (e.g. 2026-10-16T16-35-30-990Z-feedback-82t1.md) or its short id (82t1). mode "replace" (default) swaps the text; "append" adds a dated amendment below it. Audit trail: the previous version is archived read-only under .history/, and the record\'s frontmatter carries revision, updated_at and last_edit_reason. The reply confirms the change was read back from disk.',
+      inputSchema: z.object({
+        id: z.string().max(120).describe('Feedback filename (with or without .md) or short id, e.g. "mwfd"'),
+        text: requiredBodyText('The new feedback text (replace) or the amendment to add (append)'),
+        mode: z.enum(['replace', 'append']).optional().describe('replace (default) or append'),
+        reason: z.string().max(300).optional().describe('Why this record is being changed; kept in the audit trail'),
+      }),
+    },
+    async ({ id, text, mode, reason }: { id: string; text: string; mode?: 'replace' | 'append'; reason?: string }) => {
+      try {
+        return ok(formatFeedbackEdit(editFeedback({ id, text, mode, reason })))
+      } catch (e) {
+        return err(`feedback_edit failed: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    },
+  )
+
+  // Store identity + round-trip proof (feedback 82t1 / k3az): asks each
+  // store's own CLI where it really points, and refuses nothing silently.
+  server.registerTool(
+    'store_health',
+    {
+      title: 'Store health and routing',
+      description: `Check that the bridge reaches each Beads store at its authoritative location — the same CLI (\`<store> where\`) a human uses. Without \`store\`: one row per store (ok / no-database / misrouted / fallback-local / local-shadow / unreachable). Writes to a store that is not ok are refused, never redirected to a fallback store. With \`store\` and \`roundtrip: true\`: also reads a known record, creates a test bead, reads it back and closes it (not available for: ${ROUNDTRIP_REFUSED_STORES.join(', ')}).`,
+      inputSchema: z.object({
+        store: z.string().max(80).optional().describe('One store name; omit for all stores'),
+        roundtrip: z.boolean().optional().describe('With store: read a known record, then create/read back/close a test bead'),
+      }),
+    },
+    async ({ store, roundtrip }: { store?: string; roundtrip?: boolean }) => {
+      try {
+        if (store) {
+          const req = resolveStoreName(store)
+          if (req.kind === 'ambiguous') return err(`store_health: '${store}' is ambiguous: ${req.candidates.join(', ')}`)
+          if (req.kind === 'unknown') return err(`store_health: unknown store '${store}'. Known: ${STORES.join(', ')}`)
+          const name = req.store
+          if (roundtrip) return ok(formatRoundTrip(await storeRoundTrip(name, { write: true })))
+          const p = await probeStore(name, { force: true, registryPath: registryPathFor(name) })
+          return ok(formatStoreHealth([{ ...p, registryPath: registryPathFor(name) }]))
+        }
+        const rows: StoreHealthRow[] = await mapLimit(STORES, 6, async (s) => ({
+          ...(await probeStore(s, { force: true, registryPath: registryPathFor(s) })),
+          registryPath: registryPathFor(s),
+        }))
+        return ok(formatStoreHealth(rows))
+      } catch (e) {
+        return err(`store_health failed: ${e instanceof Error ? e.message : String(e)}`)
       }
     },
   )

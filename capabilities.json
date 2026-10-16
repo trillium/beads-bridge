@@ -343,6 +343,20 @@
       "op": "agent_presence",
       "introduced": "1.7.0",
       "beads": []
+    },
+    {
+      "id": "feedback_edit",
+      "title": "Edit feedback record",
+      "op": "feedback_edit",
+      "introduced": "1.8.0",
+      "beads": ["task-mpj2o"]
+    },
+    {
+      "id": "store_health",
+      "title": "Store health and routing",
+      "op": "store_health",
+      "introduced": "1.8.0",
+      "beads": ["task-mpj2o"]
     }
   ]
 }

@@ -7,6 +7,7 @@
 // bead read back afterwards — the guardrail against false-success reports.
 import { execFileSync } from 'child_process'
 import { execStdout } from './exec'
+import { StoreUnavailableError, assertStoreWritableSync } from './store-health'
 
 export interface MutationReceipt {
   operation: string
@@ -45,6 +46,7 @@ function failureMessage(store: string, args: string[], e: unknown): string {
 // Sync variant for sync route handlers (same shell-free, throw-on-failure
 // contract as runMutation).
 export function runMutationSync(store: string, args: string[], timeoutMs = 75000): string {
+  assertStoreWritableSync(store)
   try {
     return execFileSync(store, args, {
       encoding: 'utf8',
@@ -61,6 +63,7 @@ export async function runMutation(store: string, args: string[], timeoutMs = 750
   try {
     return await execStdout(store, args, timeoutMs)
   } catch (e) {
+    if (e instanceof StoreUnavailableError) throw e
     throw new Error(failureMessage(store, args, e).slice(0, 300))
   }
 }

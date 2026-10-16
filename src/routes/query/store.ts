@@ -3,6 +3,7 @@
 // ({rows, error?}) so pages degrade per-store instead of 500ing.
 import { spawnSync } from 'child_process'
 import { execStdout } from '../../lib/exec'
+import { assertStoreReadableSync } from '../../lib/store-health'
 import { cleanLabel, type Row } from './params'
 
 export interface ListOpts {
@@ -58,6 +59,11 @@ export function runList(
   // inherit the live environment. Passing it explicitly restores Node
   // semantics. Production behavior is unchanged — the server never
   // mutates process.env per request, so live === snapshot there.
+  try {
+    assertStoreReadableSync(store)
+  } catch (e) {
+    return { rows: [], error: e instanceof Error ? e.message : String(e) }
+  }
   const r = spawnSync(store, listArgs(all, any, opts), {
     encoding: 'utf8',
     timeout: 12000,
