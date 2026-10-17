@@ -35,9 +35,10 @@ Reuse the **same** `operation_id` for:
 
 Change it for a genuinely different request.
 
-Callers that supply **no** `operation_id` keep the previous behaviour
-exactly: one call, one bead, no key, no lookup, no revision notes. That
-compatibility floor is asserted in `idempotency-live.test.ts`.
+Callers that supply **no** `operation_id` get the implicit-intent behaviour
+described under [Implicit intents](#implicit-intents-no-operation_id) below:
+distinct requests still make distinct beads, but an overlapping or retried
+same-title request converges on one bead.
 
 ## How the key works
 
@@ -159,11 +160,90 @@ Dispositions: `created`, `revision` (something was reconciled), `duplicate`
 (identical replay — recorded, bead unchanged), `promoted` (added scope became
 a child bead).
 
+## Implicit intents (no `operation_id`)
+
+### The second incident (2026-10-17)
+
+One user request produced **two** beads titled *Verify localStorage support
+and persistence in Tesla browser* — `task-i6nzy` and `task-p4pu8`, created
+**3 seconds apart** (06:49:54Z / 06:49:57Z) by the same caller
+(`by:loopback-local`, `source:mcp`). The user sent a command, then added
+information while the first agent turn was still running; both turns called
+`bead_create` with the same title and **different bodies** (709 vs 1205
+chars) and **no `operation_id`**.
+
+**Why the existing detection missed it.**
+
+1. The only protection for id-less creates was `ckey:` (`createKey` in
+   `create.ts`), a hash of store + title + **body** + labels + parent. A
+   follow-up that *adds information* has a different body, so it always hashed
+   differently (`ckey:de81aa3be6da4543` vs `ckey:f9d6251af40dea9a`) — the
+   key was built to recognise a byte-identical *retry*, never a continuation.
+2. `ckey` is lookup-then-create with no process-level lock: two overlapping
+   calls both ran the lookup before either create finished, so even
+   *identical* concurrent calls both created.
+3. `opkey:` (above) needs the caller to volunteer an `operation_id`; neither
+   turn did, and the tool cannot make a caller do so.
+
+`src/lib/intent.test.ts` ("baseline: why the old ckey path made two beads")
+reproduces both failures against `createBead`.
+
+### The rule
+
+`src/lib/intent.ts`. A create without `operation_id` is a **follow-up of the
+same intent**, and is merged onto the existing bead instead of creating a new
+one, only when **all** of these hold:
+
+| Condition | Why |
+|---|---|
+| same store, same caller (`by:`), same normalized title, same `parent` | the intent key `ikey:<12 hex>` = hash of these — deliberately **not** the body |
+| the earlier bead is still **open** | a closed bead is finished work; the same words again are a new task |
+| the earlier bead is younger than the window (**2 min**, `BEADS_BRIDGE_INTENT_WINDOW_MS`) | a follow-up arrives while the turn is running or just after; the same title next week is a new task |
+| the bodies are **related**: either is empty, one contains the other, or they share ≥ 40 % of the smaller body's significant words (> 3 letters) | same title with an unrelated body is a different task (the two incident bodies share 55 %) |
+
+Everything else stays a separate bead, and the caller can force it with
+**`distinct: true`**. The title match alone never merges anything. The
+relatedness gate is a conservative heuristic that only runs *inside* the
+window and the other four conditions, so a wrong guess costs one merged
+bead that `distinct: true` / `operation_id` avoids — it is not a general
+similarity matcher.
+
+A merge uses the same policy as `operation_id` revisions (title
+authoritative, body additive, labels union) and appends a `[bb-rev]` note
+with `op=ikey:…`.
+
+### Mechanics
+
+- **Per-intent lock** (`withOperationLock`): the second of two overlapping
+  calls waits for the first to finish and register its bead, then converges
+  on it — no lookup-then-create race inside a process.
+- **Process registry** (`IntentRegistry`): remembers recent intents so the
+  common case needs no store round trip. Accelerator only.
+- **`ikey:` label** on every bead created here (leads the label list so the
+  10-label cap cannot drop it): the store is the source of truth, so a bridge
+  restart or a second process still finds the bead.
+- **Retry after a timeout**: `createBead` already recovers a late-landing
+  write by `ckey`; the retry then finds the landed bead by `ikey` and
+  reconciles onto it.
+- **Partial completion**: once the bead exists, a failing later step (revision
+  note, edit, label) no longer fails the whole call. The result carries
+  `incomplete`, the MCP tool returns `PARTIAL: bead <id> …` (an error, never a
+  clean success) naming the safe retry, and repeating the call re-derives
+  every step from the bead's current state — it converges on the same bead
+  and completes what is missing, appending nothing twice.
+- **Read-after-write**: a follow-up is only `verified` when the merged title
+  and body read back on the bead afterwards.
+
+Not covered: `bead_batch_create`, the relay's capture/upsert paths and
+`bead_edit` repeated by hand do not go through this path.
+
 ## Tests
 
 `src/lib/idempotency.test.ts` — pure algebra: key derivation, content
 hashing, label merge, envelope round-trip, the ordering rule, lock
 serialization.
+
+`src/lib/intent.test.ts` — implicit intents against an in-memory fake store: the incident (overlapping and sequential), five concurrent identical creates, cold-registry lookup via `ikey`, retry after a committed/uncommitted timeout, partial completion (note/edit/label failures), and the distinct-tasks cases (unrelated body, beyond window, closed predecessor, other caller/parent, `distinct: true`). Also reproduces the old `ckey` path making two beads.
 
 `src/lib/idempotency-live.test.ts` — real scratch store, real CLI:
 
@@ -176,7 +256,7 @@ serialization.
 | Several runtime/model executions | five concurrent submissions → one bead, seqs 1..5 in order |
 | Cross-process race | pre-existing bead wins as canonical |
 | Distinct added scope | `promote: true` → child bead, promotion recorded |
-| No logical id | old behaviour: two beads, no key, no history |
+| No logical id, different titles | two beads, no `opkey` |
 
 ## Not covered
 

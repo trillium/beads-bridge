@@ -45,10 +45,12 @@ import { createBead, type CreateInput } from './create'
 import { editBead } from './edit'
 import { closeBead, labelBead, noteBead } from './mutate'
 import { verifyBead } from './mutate'
+import { createIntentBead, formatIntentReconciliation, type IntentDeps, type IntentResult } from './intent'
 import {
   childOperationKey,
   contentHash,
   formatReconciliation,
+  mergeBody,
   mergeLabels,
   nextSeq,
   normalizeOperationId,
@@ -66,6 +68,8 @@ export interface OperationCreateInput extends CreateInput {
   operationId?: string
   /** Caller declares the added scope materially distinct -> child bead. */
   promote?: boolean
+  /** No operation id: force a separate bead even if a recent same-title one exists. */
+  distinct?: boolean
 }
 
 export type Disposition = 'created' | 'revision' | 'duplicate' | 'promoted'
@@ -85,6 +89,10 @@ export interface OperationCreateResult {
   collapsed?: string[]
   /** Set when the store CLI reported a failure but the bead had landed. */
   recovered?: string
+  /** Implicit-intent path (no operation id): the receipt text to show instead of the opkey line. */
+  intentReceipt?: string
+  /** Steps that failed after the bead existed; repeating the call completes them. */
+  incomplete?: string[]
 }
 
 interface StoreRow {
@@ -201,19 +209,6 @@ export async function readBeadState(store: string, id: string): Promise<BeadStat
   }
 }
 
-// Additive body merge (policy above): identical/contained text changes
-// nothing, a superseding body wins wholesale, anything else is appended
-// under a visible revision marker so the bead still reads as one document.
-export function mergeBody(current: string, next: string, rev: number, opKey: string): string {
-  const cur = current.trim()
-  const add = next.trim()
-  if (!add) return current
-  if (cur.includes(add)) return current
-  if (cur && add.includes(cur)) return add
-  const marker = `[bb-rev ${rev} · ${opKey}]`
-  return cur ? `${cur}\n\n${marker}\n${add}` : add
-}
-
 async function recordRevision(
   store: string,
   id: string,
@@ -253,21 +248,12 @@ export async function createOperationBead(input: OperationCreateInput): Promise<
   const store = input.store
   const opId = normalizeOperationId(input.operationId)
 
-  // Floor: no logical id -> exactly the pre-existing create behaviour.
+  // No logical id: the implicit-intent path (intent.ts). A same-title
+  // follow-up inside the window converges on the canonical bead; anything
+  // else is the pre-existing single create.
   if (!opId) {
-    const created = await createBead(input)
-    return {
-      id: created.id,
-      store,
-      disposition: 'created',
-      revision: 0,
-      operationKey: '',
-      applied: ['created (no logical operation id — single-create behaviour)'],
-      verified: created.verified,
-      detail: created.detail,
-      collapsed: [],
-      ...(created.recovered ? { recovered: created.recovered } : {}),
-    }
+    const r = await createIntentBead(input, realIntentDeps)
+    return intentResult(r)
   }
 
   const opKey = operationKey(store, opId)
@@ -453,4 +439,53 @@ async function runOperation(input: OperationCreateInput, opKey: string, opId: st
   }
 }
 
-export { formatReconciliation }
+export { formatReconciliation, mergeBody }
+
+function intentResult(r: IntentResult): OperationCreateResult {
+  return {
+    id: r.id,
+    store: r.store,
+    disposition: r.disposition,
+    revision: r.revision,
+    operationKey: '',
+    applied: r.applied,
+    verified: r.verified,
+    detail: r.detail,
+    intentReceipt: formatIntentReconciliation(r),
+    incomplete: r.incomplete,
+    ...(r.recovered ? { recovered: r.recovered } : {}),
+  }
+}
+
+export const realIntentDeps: IntentDeps = {
+  create: (input) => createBead(input),
+  findByLabel: (store, label) => findByOperationKey(store, label),
+  readState: async (store, id) => {
+    const out = await execStdout(store, ['show', id, '--json'], SHOW_TIMEOUT).catch(() => null)
+    const empty = { title: '', description: '', labels: [] as string[] }
+    if (!out) return empty
+    try {
+      const parsed: unknown = JSON.parse(out || 'null')
+      const obj = (Array.isArray(parsed) ? parsed[0] : parsed) as Record<string, unknown> | null
+      if (!obj || typeof obj !== 'object') return empty
+      return {
+        title: typeof obj.title === 'string' ? obj.title : '',
+        description: typeof obj.description === 'string' ? obj.description : '',
+        labels: Array.isArray(obj.labels) ? obj.labels.map(String) : [],
+        ...(typeof obj.status === 'string' ? { status: obj.status } : {}),
+      }
+    } catch {
+      return empty
+    }
+  },
+  history: (store, id) => readRevisionHistory(store, id),
+  edit: async (store, id, patch) => {
+    await editBead({ store, id, ...patch })
+  },
+  addLabels: async (store, id, labels) => {
+    await labelBead(store, id, { add: labels.join(',') })
+  },
+  note: async (store, id, text) => (await noteBead(store, id, text)).verified,
+  verify: (store, id) => verifyBead(store, id),
+  now: () => Date.now(),
+}
