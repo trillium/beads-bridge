@@ -7,6 +7,7 @@ import { execStdout } from './exec'
 import { aliasesForStore } from './store-spellings'
 import { cleanLabel } from '../routes/query/params'
 import { withProvenance, type Provenance } from './provenance'
+import { priorityReadsBack, type Priority } from './priority'
 
 export interface CreateInput {
   store: string
@@ -14,6 +15,9 @@ export interface CreateInput {
   description?: string
   labels?: string[]
   parent?: string
+  // Real P status (0-4) via `bd create --priority`; a priority:P0 label never
+  // sets it (lib/priority.ts). Omitted = the store default.
+  priority?: Priority
   // Origin stamp (task-mm2zq): which creation path made this bead, plus
   // the caller where one is known. Merged into labels by buildCreateArgs
   // so every createBead caller stamps uniformly — MCP tool, batch, relay.
@@ -31,6 +35,7 @@ export function buildCreateArgs(input: CreateInput): string[] {
   const labels = withProvenance(input.labels ?? [], input.provenance)
   if (labels.length) args.push('-l', labels.join(','))
   if (input.parent) args.push('--parent', input.parent)
+  if (input.priority !== undefined) args.push('--priority', String(input.priority))
   return args
 }
 
@@ -90,7 +95,7 @@ const CREATE_KEY_WINDOW_MS = 60 * 60 * 1000
 
 export function createKey(input: CreateInput): string {
   const digest = createHash('sha256')
-    .update([input.store.trim().toLowerCase(), input.title, input.description ?? '', (input.labels ?? []).join(','), input.parent ?? ''].join('\u0000'))
+    .update([input.store.trim().toLowerCase(), input.title, input.description ?? '', (input.labels ?? []).join(','), input.parent ?? '', ...(input.priority === undefined ? [] : [`p${input.priority}`])].join('\u0000'))
     .digest('hex')
   return `${CREATE_KEY_PREFIX}${digest.slice(0, 16)}`
 }
@@ -217,7 +222,11 @@ export async function createBead(
     return {
       id,
       detail: (shown ?? 'unreadable after create').slice(0, 1200),
-      verified: shown !== null,
+      // A requested priority is only verified when the P header reads back
+      // exactly — never inferred from the label or the create's exit status.
+      // (A key-matched pre-existing bead was not created by this call, so
+      // its priority is not ours to assert.)
+      verified: shown !== null && (input.priority === undefined || (reused && !recovered) || priorityReadsBack(shown, input.priority)),
       ...(reused ? { reused } : {}),
       ...(recovered ? { recovered } : {}),
     }

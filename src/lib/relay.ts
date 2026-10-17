@@ -5,6 +5,7 @@ import { createBead } from './create'
 import { editBead } from './edit'
 import { commentBead, labelBead, noteBead } from './mutate'
 import { requireVerified } from './receipts'
+import { parsePriority, priorityLabelError, type Priority } from './priority'
 import { storeFromId } from '../util'
 import { renderStamp } from './age'
 import { STORES } from '../config'
@@ -195,18 +196,27 @@ function snippet(s: string, n = 300): string {
   return s.length > n ? `${s.slice(0, n)}…` : s
 }
 
-export async function fetchProjectRows(limit = 200): Promise<RankRow[]> {
-  const { rows } = await runListQuery('projects', [], [], {
+// Every project row, never a window of them. The old 200-row cap silently
+// dropped most of a 700+ project store, so exact ids and names beyond the
+// window fell through to fuzzy matching (2026-10-17 misroutes). A result that
+// reaches the cap is an error, not a partial answer.
+export const PROJECT_ROWS_LIMIT = 5000
+
+export async function fetchProjectRows(limit = PROJECT_ROWS_LIMIT): Promise<RankRow[]> {
+  const cap = Math.max(1, Math.min(PROJECT_ROWS_LIMIT, limit))
+  const { rows, error } = await runListQuery('projects', [], [], {
     exclude: [],
     status: undefined,
-    limit: Math.max(1, Math.min(200, limit)),
+    limit: cap,
     allStates: true,
   })
+  if (error) throw new Error(`project list unavailable: ${error} — refusing to resolve a project from an unreadable store`)
+  if (rows.length >= cap) throw new Error(`project list truncated at ${cap} rows — refusing to resolve a project from a partial list`)
   return rows
 }
 
 export async function resolveProject(text: string, limit = 5): Promise<ProjectCandidate[]> {
-  const rows = await fetchProjectRows(200)
+  const rows = await fetchProjectRows()
   const ranked = rankProjects(text, rows, limit)
   const enriched = await mapLimit(ranked, 4, async (c) => {
     const body = await showBeadAsync('projects', c.id)
@@ -215,28 +225,106 @@ export async function resolveProject(text: string, limit = 5): Promise<ProjectCa
   return enriched
 }
 
-export function resolveProjectIdOrSlug(ref: string, rows: RankRow[]): RankRow | null {
+// A projects-store bead id: `project-` + hash, optional dotted child suffix.
+export const PROJECT_ID_RE = /^project-[a-z0-9]+(?:\.\d+)*$/i
+
+export type ProjectMatchVia = 'id' | 'slug' | 'title' | 'alias'
+
+export type ProjectMatch =
+  | { kind: 'exact'; row: RankRow; via: ProjectMatchVia }
+  | { kind: 'ambiguous'; rows: RankRow[]; via: ProjectMatchVia }
+  | { kind: 'none' }
+
+// EXACT matching only, in strict tiers: id, then slug, then whole title,
+// then alias. The first tier with any hit decides; several hits in that tier
+// are ambiguous. Fuzzy token overlap is deliberately absent — it is ranking
+// for suggestions (rankProjects), never grounds to pick a write target.
+export function matchProject(ref: string, rows: RankRow[]): ProjectMatch {
   const clean = ref.trim()
-  if (!clean) return null
+  if (!clean) return { kind: 'none' }
   const byId = rows.find((r) => r.id.toLowerCase() === clean.toLowerCase())
-  if (byId) return byId
+  if (byId) return { kind: 'exact', row: byId, via: 'id' }
   const slug = clean.toLowerCase().replace(/^project:/, '')
-  const bySlug = rows.find((r) => slugOf(r.labels, r.title).toLowerCase() === slug)
-  if (bySlug) return bySlug
-  return null
+  const normRef = normalize(clean.replace(/^project:/i, ''))
+  const tiers: [ProjectMatchVia, (r: RankRow) => boolean][] = [
+    ['slug', (r) => slugOf(r.labels, r.title).toLowerCase() === slug],
+    ['title', (r) => !!normRef && normalize(r.title) === normRef],
+    ['alias', (r) => !!normRef && aliasTexts(r.labels).some((a) => normalize(a) === normRef)],
+  ]
+  for (const [via, test] of tiers) {
+    const hits = rows.filter(test)
+    if (hits.length === 1) return { kind: 'exact', row: hits[0], via }
+    if (hits.length > 1) return { kind: 'ambiguous', rows: hits, via }
+  }
+  return { kind: 'none' }
 }
 
-export async function lookupProject(ref: string): Promise<{ row: RankRow; state: ProjectState; slug: string } | null> {
-  const rows = await fetchProjectRows(200)
-  const direct = resolveProjectIdOrSlug(ref, rows)
-  if (direct) {
-    return { row: direct, state: projectState(direct.labels), slug: slugOf(direct.labels, direct.title) }
+function candidateLine(r: { id: string; title: string; labels?: string[] }): string {
+  const slug = slugOf(r.labels ?? [], r.title)
+  const state = r.labels ? projectState(r.labels) : ''
+  return `- ${r.id} — ${r.title.slice(0, 120)}${state ? ` [${state}]` : ''} slug=${slug}`
+}
+
+export function ambiguousProjectError(ref: string, rows: RankRow[], via: ProjectMatchVia): Error {
+  return new Error(
+    [
+      `ambiguous project "${ref}": ${rows.length} projects match by ${via} — nothing was written. Re-run with the exact project id:`,
+      ...rows.slice(0, 10).map(candidateLine),
+    ].join('\n'),
+  )
+}
+
+export function unresolvedProjectError(ref: string, rows: RankRow[]): Error {
+  const near = rankProjects(ref, rows, 5)
+  const idNote = PROJECT_ID_RE.test(ref.trim()) ? ` No project has the exact id ${ref.trim()}; an id is never fuzzy-matched.` : ''
+  return new Error(
+    [
+      `unknown project "${ref}": no id, slug, title, or alias matches exactly — nothing was written.${idNote} Re-run with an exact project id.`,
+      ...(near.length ? ['Nearest by name (NOT matched — pick an id from here only if one is right):', ...near.map((c) => `- ${c.id} — ${c.title} [${c.state}] slug=${c.slug}`)] : ['No near candidates.']),
+    ].join('\n'),
+  )
+}
+
+// Exact id fetch straight from the store: independent of any list window.
+// bd resolves partial ids by hash substring, so the returned id must equal
+// the one asked for or it is treated as not found.
+export async function fetchProjectById(id: string): Promise<RankRow | null> {
+  const want = id.trim()
+  if (!PROJECT_ID_RE.test(want)) return null
+  try {
+    const out = await execStdout('projects', ['show', want, '--json'], 12000)
+    const parsed = JSON.parse(out || 'null') as unknown
+    const d = (Array.isArray(parsed) ? parsed[0] : parsed) as { id?: unknown; title?: unknown; labels?: unknown } | null
+    if (!d || typeof d.id !== 'string' || d.id.toLowerCase() !== want.toLowerCase()) return null
+    return { id: d.id, title: String(d.title ?? ''), labels: Array.isArray(d.labels) ? d.labels.map(String) : [] }
+  } catch {
+    return null
   }
-  const ranked = rankProjects(ref, rows, 1)
-  if (!ranked.length) return null
-  const row = rows.find((r) => r.id === ranked[0].id)
-  if (!row) return null
-  return { row, state: projectState(row.labels), slug: slugOf(row.labels, row.title) }
+}
+
+export interface ProjectLookup {
+  row: RankRow
+  state: ProjectState
+  slug: string
+  via: ProjectMatchVia
+}
+
+const toLookup = (row: RankRow, via: ProjectMatchVia): ProjectLookup => ({ row, state: projectState(row.labels), slug: slugOf(row.labels, row.title), via })
+
+// The single door every project-targeting write goes through. Exact id wins
+// and is read straight from the store; otherwise exact slug/title/alias over
+// the COMPLETE project list. Ambiguous or unmatched refs THROW with their
+// candidates — a write target is never guessed.
+export async function lookupProject(ref: string): Promise<ProjectLookup> {
+  const clean = ref.trim()
+  if (!clean) throw new Error('project is required (id, slug, or name)')
+  const byId = await fetchProjectById(clean)
+  if (byId) return toLookup(byId, 'id')
+  const rows = await fetchProjectRows()
+  const m = matchProject(clean, rows)
+  if (m.kind === 'exact') return toLookup(m.row, m.via)
+  if (m.kind === 'ambiguous') throw ambiguousProjectError(clean, m.rows, m.via)
+  throw unresolvedProjectError(clean, rows)
 }
 
 export async function promoteProject(id: string, reason: string): Promise<{ promoted: boolean; detail: string }> {
@@ -259,6 +347,8 @@ export interface ProjectEditInput {
   description?: string
   note?: string
   lifecycle?: ProjectLifecycle
+  // Real P status (0-4 or P0-P4) — lib/priority.ts.
+  priority?: number | string
 }
 
 export interface ProjectEditPlan {
@@ -267,6 +357,7 @@ export interface ProjectEditPlan {
   description?: string
   note?: string
   lifecycle?: ProjectLifecycle
+  priority?: Priority
 }
 
 // Pure validation: resolves the project reference and rejects malformed
@@ -279,17 +370,19 @@ export function planProjectEdit(input: ProjectEditInput): ProjectEditPlan {
   const description = input.description
   const note = input.note?.trim()
   const lifecycle = input.lifecycle
-  if (!title && description === undefined && !note && !lifecycle) {
-    throw new Error('give title, description, note, and/or lifecycle')
+  const priority = parsePriority(input.priority)
+  if (!title && description === undefined && !note && !lifecycle && priority === undefined) {
+    throw new Error('give title, description, note, lifecycle, and/or priority')
   }
   if (lifecycle && lifecycle !== 'active' && lifecycle !== 'deprecated') {
     throw new Error(`unknown lifecycle: ${lifecycle} (want active|deprecated)`)
   }
-  return { ref, title: title || undefined, description, note: note || undefined, lifecycle }
+  return { ref, title: title || undefined, description, note: note || undefined, lifecycle, priority }
 }
 
 export interface ProjectEditResult {
   id: string
+  via?: ProjectMatchVia
   slug: string
   title: string
   state: ProjectState
@@ -308,16 +401,16 @@ const isUnverified = (e: unknown): boolean => e instanceof Error && e.message.st
 export async function editProject(input: ProjectEditInput): Promise<ProjectEditResult> {
   const plan = planProjectEdit(input)
   const found = await lookupProject(plan.ref)
-  if (!found) throw new Error(`unknown project: ${plan.ref}`)
   const id = found.row.id
   const slug = found.slug
   const steps: FlowStep[] = []
   const content: string[] = []
   if (plan.title) content.push('title')
   if (plan.description !== undefined) content.push('description')
+  if (plan.priority !== undefined) content.push(`priority P${plan.priority}`)
   if (content.length) {
     try {
-      const edited = await editBead({ store: 'projects', id, title: plan.title, description: plan.description })
+      const edited = await editBead({ store: 'projects', id, title: plan.title, description: plan.description, priority: plan.priority })
       requireVerified({ operation: 'updated', id, store: 'projects', verified: edited.verified })
       steps.push({ name: 'update', ok: true, detail: `${content.join(' + ')} updated (verified)` })
     } catch (e) {
@@ -349,6 +442,7 @@ export async function editProject(input: ProjectEditInput): Promise<ProjectEditR
   const complete = steps.length > 0 && steps.every((s) => s.ok)
   return {
     id,
+    via: found.via,
     slug,
     title: (plan.title ?? found.row.title).slice(0, 160),
     state: projectState(found.row.labels),
@@ -364,7 +458,7 @@ export function formatProjectEdit(r: ProjectEditResult): string {
   return [
     `# project updated ${r.id} (STORE: projects)`,
     ``,
-    `project: ${r.slug}`,
+    `project: ${r.slug}${r.via ? ` (matched exactly by ${r.via})` : ''}`,
     `title: ${r.title}`,
     `state: ${r.state} · lifecycle: ${lifecycle}`,
     ``,
@@ -396,7 +490,6 @@ export async function captureEntry(input: CaptureInput): Promise<{ id: string; s
   let projectId: string | null = null
   if (input.project?.trim()) {
     const found = await lookupProject(input.project.trim())
-    if (!found) throw new Error(`unknown project: ${input.project}`)
     slug = found.slug
     projectId = found.row.id
     wasBacklog = found.state === 'backlog'
@@ -428,17 +521,21 @@ export interface UpsertInput {
   project?: string
   labels?: string[]
   allowUpdate?: boolean
+  // Real P status (0-4 or P0-P4) — lib/priority.ts.
+  priority?: number | string
 }
 
 export async function upsertTask(input: UpsertInput): Promise<{ mode: 'created' | 'updated'; id: string; duplicateOf?: string; slug?: string; promoted: boolean; detail: string }> {
   const title = input.title.trim().slice(0, 200)
   if (!title) throw new Error('title is required')
+  const priority = parsePriority(input.priority)
+  const labelErr = priorityLabelError(input.labels)
+  if (labelErr) throw new Error(labelErr)
   let slug: string | undefined
   let projectId: string | null = null
   let wasBacklog = false
   if (input.project?.trim()) {
     const found = await lookupProject(input.project.trim())
-    if (!found) throw new Error(`unknown project: ${input.project}`)
     slug = found.slug
     projectId = found.row.id
     wasBacklog = found.state === 'backlog'
@@ -451,7 +548,10 @@ export async function upsertTask(input: UpsertInput): Promise<{ mode: 'created' 
     limit: 20,
     allStates: true,
   })
-  const scoped = rows.length ? rows : (await runListQuery('task', [], [], { exclude: [], status: undefined, limit: 50, allStates: true })).rows
+  // With a project, duplicates are looked for INSIDE it only: falling back to
+  // all tasks would "update" a same-titled task of another project and
+  // never create the one asked for under this project.
+  const scoped = rows.length || slug ? rows : (await runListQuery('task', [], [], { exclude: [], status: undefined, limit: 50, allStates: true })).rows
   const dup = input.allowUpdate === false ? null : findDuplicate(title, scoped)
   let promoted = false
   const maybePromote = async () => {
@@ -459,17 +559,18 @@ export async function upsertTask(input: UpsertInput): Promise<{ mode: 'created' 
   }
   if (dup) {
     const extra = input.description?.trim()
-    if (extra) {
+    if (extra || priority !== undefined) {
       try {
-        const edited = await editBead({ store: 'task', id: dup.id, description: extra })
+        const edited = await editBead({ store: 'task', id: dup.id, description: extra || undefined, priority })
         requireVerified({ operation: 'updated', id: dup.id, store: 'task', verified: edited.verified })
       } catch (e) {
         // editBead throws on write failure AND on unverified writes (both
-        // carry a message); fall back to a comment only for write failures.
-        // An unverified edit already names the bead — rethrow, never mask it
-        // as success via a comment.
-        if (e instanceof Error && e.message.startsWith('unverified:')) throw e
-        requireVerified(await commentBead('task', dup.id, extra))
+        // carry a message); fall back to a comment only for write failures
+        // of a description-only update. An unverified edit already names the
+        // bead — rethrow, never mask it as success via a comment. A failed
+        // priority write is never downgraded to a comment.
+        if ((e instanceof Error && e.message.startsWith('unverified:')) || priority !== undefined) throw e
+        requireVerified(await commentBead('task', dup.id, extra!))
       }
     } else {
       requireVerified(await commentBead('task', dup.id, `Touched by relay upsert ${new Date().toISOString()}`))
@@ -483,7 +584,7 @@ export async function upsertTask(input: UpsertInput): Promise<{ mode: 'created' 
   }
   const extraLabels = (input.labels ?? []).map(cleanLabel).filter((x): x is string => !!x)
   const labels = [...(slug ? [`project:${slug}`] : []), ...extraLabels].slice(0, 10)
-  const created = await createBead({ store: 'task', title, description: input.description, labels, provenance: { source: 'relay' } })
+  const created = await createBead({ store: 'task', title, description: input.description, labels, priority, provenance: { source: 'relay' } })
   requireVerified({ operation: 'created', id: created.id, store: 'task', verified: created.verified })
   await maybePromote()
   return { mode: 'created', id: created.id, slug, promoted, detail: created.detail }
@@ -503,7 +604,6 @@ export async function requestDispatch(input: DispatchInput): Promise<{ id: strin
   let slug: string | undefined
   if (input.project?.trim()) {
     const found = await lookupProject(input.project.trim())
-    if (!found) throw new Error(`unknown project: ${input.project}`)
     slug = found.slug
   }
   let taskRef: string | undefined
@@ -628,13 +728,11 @@ export async function runFlow(input: FlowInput): Promise<FlowResult> {
   let promoted = false
   if (input.projectHint?.trim()) {
     try {
-      const found = await resolveProject(input.projectHint.trim(), 1)
-      if (found.length) {
-        project = found[0]
-        steps.push({ name: 'resolve-project', ok: true, detail: `${project.id} (${project.state}) via ${project.via}` })
-      } else {
-        steps.push({ name: 'resolve-project', ok: false, detail: `no project match for "${input.projectHint.trim().slice(0, 120)}"` })
-      }
+      // Exact-or-fail: the same door every write uses. A fuzzy "best guess"
+      // here would pick the write target for upsertTask below.
+      const found = await lookupProject(input.projectHint.trim())
+      project = { id: found.row.id, slug: found.slug, title: found.row.title.slice(0, 160), state: found.state, backlog: found.state === 'backlog', score: 100, via: found.via }
+      steps.push({ name: 'resolve-project', ok: true, detail: `${project.id} (${project.state}) via ${project.via}` })
     } catch (e) {
       steps.push({ name: 'resolve-project', ok: false, detail: e instanceof Error ? e.message : String(e) })
     }
@@ -667,7 +765,7 @@ export async function runFlow(input: FlowInput): Promise<FlowResult> {
     promoted = up.promoted
     steps.push({ name: 'create/update-task', ok: true, detail: `${up.mode} ${up.id}${up.promoted ? ' (promoted project)' : ''}` })
     if (!project && up.slug) {
-      const rows = await fetchProjectRows(200)
+      const rows = await fetchProjectRows()
       const row = rows.find((r) => slugOf(r.labels, r.title) === up.slug)
       if (row) {
         const state = projectState(row.labels)
