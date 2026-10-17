@@ -25,6 +25,34 @@ content (right — auto-follows the newest result, bead refs as tabs).
   selected activity), broadcast as named `event: view` frames. See
   "Layout" and "Shared view state" below.
 
+## Event stream (display-only, task-7y3fm)
+
+The main pane of `/live` (the document body on a phone) is a newest-first
+stream of Jumbotron-style records, one per call, built from the existing
+`/live/events` + `/live/recent` data — no new route, so the vps01 allowlist
+(`/live`, `/live/config`, `/live/view`, `/live/heartbeat`, `/live/recent`,
+`/live/events`) is unchanged. It replaces the old bead-tab detail pane; the
+activity list (drawer on a phone) remains.
+
+- **Strictly display-only:** no controls, handlers or key bindings inside the
+  stream (asserted in `src/routes/live-stream.test.ts`).
+- **Record:** family badge icon + large tool name + time; the exact arguments
+  in large monospace; pills for operation type (family), outcome
+  (icon + text), duration, caller, client, bead count; result head below.
+- **Family vs outcome:** family colors/icons come from `src/lib/tool-family.ts`
+  (read, write, relay, feedback, memory, system, other) and never use green or
+  red; outcome is its own green/red pill with an icon and the word.
+- **Arguments are now recorded** (previously names only): `args` is redacted
+  JSON, cut at `ACTIVITY_ARG_CHARS` (default 1200) with `argsOmitted` = chars
+  dropped. Redaction (`src/lib/redact.ts`) hides values by key name (token,
+  secret, password, authorization, api key, cookie, credential…) and by shape
+  (Bearer/Basic, `sk-`/`ghp_`/`xox*`/AWS/JWT, PEM keys, `token=` pairs), and
+  runs BEFORE the cut. The result summary is redacted too.
+- **Truncation is explicit:** a dashed scissors marker reads
+  "truncated — N more chars of arguments|result not shown" (`summaryOmitted`
+  for the result head).
+- Capture a phone-width shot: `node ops/live-shot.mjs <url> out.png 3000 390 844`.
+
 ## Layout: drawer on a phone, two panels on desktop
 
 The page is mobile-first (reviewed on an iPhone in portrait): below 900px the
@@ -221,6 +249,7 @@ out by activity.
 | `ACTIVITY_AUTOFOLLOW_DEFAULT` | `1` | Page auto-follows newest (`0/false/no/off` disables) |
 | `ACTIVITY_MAX_EVENTS` | `200` | Ring cap (10–1000) |
 | `ACTIVITY_SUMMARY_CHARS` | `300` | Summary cap (40–1000) |
+| `ACTIVITY_ARG_CHARS` | `1200` | Redacted argument JSON cap (80–4000) |
 | `ACTIVITY_MAX_BEADREFS` | `10` | Bead refs per event (1–40) |
 
 ## Coordination note

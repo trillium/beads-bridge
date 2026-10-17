@@ -5,6 +5,7 @@
 import { describe, it, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  activityArgChars,
   activityAutoFollowDefault,
   activityMaxBeadRefs,
   activityMaxEvents,
@@ -142,7 +143,7 @@ describe('withActivity', () => {
       body: JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: tool, arguments: args } }),
     })
 
-  it('records tool, caller, session, arg names, bead refs — never values', async () => {
+  it('records tool, caller, session, arg names, bead refs — secret values redacted', async () => {
     const inner = async () => new Response(jsonRpcResult('# task-f89c9\n\nbody text'), { status: 200 })
     const h = withActivity(inner)
     const res = await runWithScope({ tool: 'bead_show', caller: 'loopback-local' }, () => h(mcpReq('bead_show', { id: 'task-f89c9', secret: 's3cr3t' })))
@@ -155,7 +156,50 @@ describe('withActivity', () => {
     assert.deepEqual(rec[0].argNames, ['id', 'secret'])
     assert.ok(rec[0].beadRefs.includes('task-f89c9'))
     const serialized = JSON.stringify(rec[0])
-    assert.ok(!serialized.includes('s3cr3t'), 'arg values must never be recorded')
+    assert.ok(!serialized.includes('s3cr3t'), 'secret arg values must never be recorded')
+    assert.equal(rec[0].args, '{"id":"task-f89c9","secret":"[redacted]"}', 'non-secret args are shown exactly')
+    assert.equal(rec[0].argsOmitted, 0)
+  })
+
+  it('redacts secrets in displayed args and result summary, by key and by shape', async () => {
+    const inner = async () => new Response(jsonRpcResult(`echo Authorization: ${['Bear', 'er '].join('')}abcdef1234567890xyz done`), { status: 200 })
+    const h = withActivity(inner)
+    await runWithScope({ tool: 'bead_comment', caller: 'loopback-local' }, () =>
+      h(mcpReq('bead_comment', {
+        id: 'task-1',
+        text: `deploy with ${['gh', 'p_'].join('')}abcdefghijklmnopqrstuvwxyz0123 then ${['pass', 'word='].join('')}hunter2`,
+        headers: { Authorization: ['Bear', 'er '].join('') + 'zzzzzzzzzzzzzzzz', 'X-Api-Key': 'kv-77aa' },
+        author: 'trillium',
+      })),
+    )
+    const e = recentEvents(1)[0]
+    for (const leak of [['gh', 'p_'].join('') + 'abc', 'hunter2', 'zzzzzzzz', 'kv-77aa', 'abcdef1234567890xyz']) {
+      assert.ok(!JSON.stringify(e).includes(leak), `${leak} leaked into the ring`)
+    }
+    assert.ok(e.args!.includes('"author":"trillium"'), 'a key merely containing "auth" is not a secret')
+    assert.ok(e.args!.includes('"id":"task-1"'))
+    assert.ok(e.summary.includes('[redacted]'))
+  })
+
+  it('marks truncated args with the exact count of dropped chars', async () => {
+    const inner = async () => new Response(jsonRpcResult('ok'), { status: 200 })
+    const h = withActivity(inner)
+    const big = 'x'.repeat(5000)
+    await runWithScope({ tool: 'bead_note', caller: 'loopback-local' }, () => h(mcpReq('bead_note', { text: big })))
+    const e = recentEvents(1)[0]
+    const full = JSON.stringify({ text: big })
+    assert.equal(e.args!.length, activityArgChars())
+    assert.equal(e.argsOmitted, full.length - activityArgChars())
+    assert.equal(e.args, full.slice(0, activityArgChars()))
+  })
+
+  it('reports how much of a long result summary was cut', async () => {
+    const inner = async () => new Response(jsonRpcResult('y'.repeat(1000)), { status: 200 })
+    const h = withActivity(inner)
+    await runWithScope({ tool: 'query_store', caller: 'loopback-local' }, () => h(mcpReq('query_store', { q: 1 })))
+    const e = recentEvents(1)[0]
+    assert.equal(e.summary.length, activitySummaryChars())
+    assert.equal(e.summaryOmitted, 1000 - activitySummaryChars())
   })
 
   it('skips bare/loop-excluded tools (loop prevention)', async () => {
