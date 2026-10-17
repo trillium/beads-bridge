@@ -412,7 +412,7 @@ const mcpHandler = createMcpHandler((server) => {
     'bead_create',
     {
       title: 'Create bead',
-      description: 'Create a new bead in a store. Labels attach it: project:<slug> links to a project, resume:<id> scopes it to a resume. Supply operation_id (a logical id you choose and reuse for retried or continued versions of the SAME request): repeat submissions with one operation_id are reconciled onto ONE bead as revisions — never duplicates. Only report success when this call returns a receipt — report the ID verbatim from tool output, never from inference.',
+      description: 'Create a new bead in a store. Labels attach it: project:<slug> links to a project, resume:<id> scopes it to a resume. Supply operation_id (a logical id you choose and reuse for retried or continued versions of the SAME request): repeat submissions with one operation_id are reconciled onto ONE bead as revisions — never duplicates. Without one, a same-title create by the same caller within ~2 minutes, still open and with a related body, is treated as a follow-up and merged onto that bead (pass distinct: true for a separate task). Only report success when this call returns a receipt — report the ID verbatim from tool output, never from inference.',
       inputSchema: z.object({
         store: z.string().describe('Store name, e.g. task, stories, brain'),
         title: z.string().min(1).max(200).describe('Bead title'),
@@ -422,10 +422,11 @@ const mcpHandler = createMcpHandler((server) => {
         priority: z.union([z.number().int().min(0).max(4), z.string().max(3)]).optional().describe(PRIORITY_INPUT_HELP),
         operation_id: z.string().min(1).max(200).optional().describe('Logical operation id for this request. Reuse the SAME value for retries, replays, or a continuation turn that adds scope; each reuse is recorded as a revision of the one bead instead of creating another. Omit it for a plain one-off create (no key, no revision history).'),
         promote: z.boolean().optional().describe('With operation_id on an existing action: the added scope is materially DISTINCT work — create it as a child bead of the existing one instead of merging it into the body.'),
+        distinct: z.boolean().optional().describe('Without operation_id: set true when this is a genuinely SEPARATE task that merely shares a title with a recent bead. By default a same-title create by the same caller within ~2 minutes whose body relates to a still-open earlier bead is treated as a follow-up and merged onto it.'),
       }),
     },
-    async ({ store, title, description, labels, parent, priority, operation_id, promote }: {
-      store: string; title: string; description?: string; labels?: string[]; parent?: string; priority?: number | string; operation_id?: string; promote?: boolean
+    async ({ store, title, description, labels, parent, priority, operation_id, promote, distinct }: {
+      store: string; title: string; description?: string; labels?: string[]; parent?: string; priority?: number | string; operation_id?: string; promote?: boolean; distinct?: boolean
     }) => {
       const req = resolveStoreName(store ?? '')
       if (req.kind === 'ambiguous') return err(ambiguousStoreError(req.requested, req.candidates))
@@ -449,7 +450,7 @@ const mcpHandler = createMcpHandler((server) => {
       try { realPriority = parsePriority(priority) } catch (e) { return err(e instanceof Error ? e.message : String(e)) }
       try {
         const provenance = { source: 'mcp' as const, caller: currentRequestCaller() }
-        const { id, detail, verified, disposition, revision, operationKey, applied, childId, recovered } = await createOperationBead({
+        const { id, detail, verified, disposition, revision, operationKey, applied, childId, recovered, intentReceipt, incomplete } = await createOperationBead({
           store,
           title,
           description,
@@ -458,6 +459,7 @@ const mcpHandler = createMcpHandler((server) => {
           priority: realPriority,
           operationId: operation_id,
           promote: promote === true,
+          distinct: distinct === true,
           provenance,
         })
         relayStatus.touch({ id, kind: 'task', title })
@@ -466,7 +468,15 @@ const mcpHandler = createMcpHandler((server) => {
           relayStatus.touch({ id, kind: 'verify', title, needsVerify: true })
           return err(unverifiedMessage(receipt))
         }
-        const idem = operationKey ? `\n${formatReconciliation({ disposition, id, operationKey, revision, applied, childId })}` : ''
+        if (incomplete?.length) {
+          // The bead exists and reads back, but a later step did not land:
+          // say so loudly (never a clean success) and name the safe retry.
+          relayStatus.touch({ id, kind: 'verify', title, needsVerify: true })
+          return err(`PARTIAL: bead ${id} (STORE: ${store}) exists and reads back, but: ${incomplete.join('; ')}. Repeat the same bead_create call — it converges on ${id} and completes the missing steps; it will not create a duplicate.`)
+        }
+        const idem = operationKey
+          ? `\n${formatReconciliation({ disposition, id, operationKey, revision, applied, childId })}`
+          : intentReceipt ? `\n${intentReceipt}` : ''
         return ok(formatReceipt(receipt, `Labels: ${withProvenance(valid, provenance).join(', ') || '(none)'}${createAliasNote}${recovered ? `\nNote: ${recovered} — this receipt is the bead as it reads back now.` : ''}${idem}`))
       } catch (e) {
         relayStatus.touch({ id: `new:${store}`, kind: 'failure', title: `create failed in ${store}: ${title}`, state: 'failed' })

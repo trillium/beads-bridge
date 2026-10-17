@@ -354,14 +354,14 @@ describe('materially distinct added scope is promoted, not silently merged', () 
   })
 })
 
-describe('compatibility floor: no logical id means old behaviour exactly', () => {
-  it('two id-less creates still make two beads, neither carrying an opkey label', { timeout: 180000 }, async (t) => {
+describe('compatibility floor: no logical id keeps one-bead-per-DISTINCT-request', () => {
+  it('two id-less creates with different titles still make two beads, neither carrying an opkey label', { timeout: 180000 }, async (t) => {
     const a = await createOperationBead(provisioningAsk('nokey-a'))
     const b = await createOperationBead(provisioningAsk('nokey-b'))
     t.after(() => cleanup(a.id, b.id))
     assert.equal(a.disposition, 'created')
     assert.equal(b.disposition, 'created')
-    assert.equal(a.revision, 0, 'no logical id means no revision history')
+    assert.equal(a.revision, 1, 'an id-less create records only its own creation revision (intent path)')
     assert.notEqual(a.id, b.id, 'id-less callers keep one-bead-per-call semantics')
     const shown = (await showBeadAsync(STORE, a.id)) as string
     assert.ok(!shown.includes('opkey:'), 'no idempotency key is stamped when none was supplied')

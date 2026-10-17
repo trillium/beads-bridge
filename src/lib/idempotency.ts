@@ -155,6 +155,19 @@ export function addedScope(
   return { labels, hasNewBody }
 }
 
+// Additive body merge (policy above): identical/contained text changes
+// nothing, a superseding body wins wholesale, anything else is appended
+// under a visible revision marker so the bead still reads as one document.
+export function mergeBody(current: string, next: string, rev: number, opKey: string): string {
+  const cur = current.trim()
+  const add = next.trim()
+  if (!add) return current
+  if (cur.includes(add)) return current
+  if (cur && add.includes(cur)) return add
+  const marker = `[bb-rev ${rev} · ${opKey}]`
+  return cur ? `${cur}\n\n${marker}\n${add}` : add
+}
+
 // `[bb-rev] envelope + payload. One line of machine-readable header, then
 // the submission payload verbatim so the revision is readable after the fact
 // without re-deriving anything.
