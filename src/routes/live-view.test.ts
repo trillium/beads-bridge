@@ -224,7 +224,7 @@ describe('/live view state over HTTP', () => {
         assert.ok(frame)
         assert.equal(frame.tool, 'query_store')
         assert.equal(frame.kind, undefined, 'activity frames stay untyped on the wire')
-        assert.deepEqual([...new Set(viewer.namedEvents)], ['view'], 'view is the only named event')
+        assert.deepEqual([...new Set(viewer.namedEvents)], ['view', 'build'], 'view and build are the only named events')
       } finally {
         await viewer.close()
       }
