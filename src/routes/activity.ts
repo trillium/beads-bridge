@@ -22,6 +22,7 @@ import {
   latestHeartbeat,
   sseHeartbeatFrame,
 } from '../lib/heartbeat-latest'
+import { TOOL_FAMILIES } from '../lib/tool-family'
 import { withDebug, failureDebug } from './debug-state'
 import { discoverScopeLabels } from './query/scope'
 import { mapLimit } from '../lib/exec'
@@ -335,6 +336,14 @@ export function renderLivePage(
   --pre-bg: #efece4;
   --scrim: rgba(20, 16, 10, .45);
   --shadow: rgba(30, 25, 15, .25);
+  /* Event-stream action families. Never green/red: those are the outcome pill's. */
+  --fam-read: #0b5bd3;
+  --fam-write: #c2410c;
+  --fam-relay: #7c3aed;
+  --fam-feedback: #be185d;
+  --fam-system: #0e7490;
+  --fam-memory: #a16207;
+  --fam-other: #5b6472;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -353,6 +362,13 @@ export function renderLivePage(
     --pre-bg: #24211b;
     --scrim: rgba(0, 0, 0, .6);
     --shadow: rgba(0, 0, 0, .55);
+    --fam-read: #7aa7ff;
+    --fam-write: #fb923c;
+    --fam-relay: #b79bff;
+    --fam-feedback: #f472b6;
+    --fam-system: #5fd0e8;
+    --fam-memory: #facc15;
+    --fam-other: #a9b1bd;
   }
 }
 * { box-sizing: border-box; }
@@ -403,6 +419,34 @@ body.drawer-open #scrim { opacity: 1; pointer-events: auto; }
 .tabs button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 h2 { font-size: 17px; overflow-wrap: anywhere; }
 .meta { overflow-wrap: anywhere; }
+/* Event stream (display-only): newest record on top, older ones pushed down. */
+#stream { display: flex; flex-direction: column; gap: 14px; margin: 0; padding: 0; list-style: none; }
+.rec { --fam: var(--fam-other); position: relative; border: 1px solid var(--edge); border-left: 10px solid var(--fam); border-radius: 12px; padding: 14px 14px 12px; background: color-mix(in srgb, var(--fam) 7%, var(--surface)); overflow: hidden; }
+.rec.fam-read { --fam: var(--fam-read); } .rec.fam-write { --fam: var(--fam-write); } .rec.fam-relay { --fam: var(--fam-relay); }
+.rec.fam-feedback { --fam: var(--fam-feedback); } .rec.fam-system { --fam: var(--fam-system); } .rec.fam-memory { --fam: var(--fam-memory); }
+.rec.is-new { animation: rec-in .35s ease-out; }
+@keyframes rec-in { from { opacity: 0; transform: translateY(-14px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .rec.is-new { animation: none; } }
+.rec-head { display: flex; align-items: center; gap: 12px; }
+.rec-badge { flex: 0 0 auto; width: 44px; height: 44px; border-radius: 11px; display: grid; place-items: center; color: var(--surface); background: var(--fam); }
+.rec-badge svg { width: 26px; height: 26px; }
+.rec-tool { margin: 0; font-size: 24px; line-height: 1.15; font-weight: 800; letter-spacing: -.01em; overflow-wrap: break-word; min-width: 0; flex: 1; }
+@media (max-width: 520px) { .rec-head { flex-wrap: wrap; } .rec-tool { font-size: 21px; flex-basis: calc(100% - 60px); } .rec-time { flex-basis: 100%; margin-left: 56px; margin-top: -6px; } }
+.rec-time { flex: 0 0 auto; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; align-self: flex-start; }
+.rec-args { margin: 12px 0 0; padding: 10px 12px; font: 600 17px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--pre-bg); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.rec-noargs { margin: 10px 0 0; font-size: 15px; color: var(--muted); font-style: italic; }
+.rec-names { margin: 10px 0 0; font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
+/* Truncation is never silent: a dashed, scissored marker states exactly what was cut. */
+.trunc { display: flex; align-items: center; gap: .5em; margin-top: 6px; padding: 5px 10px; border: 2px dashed var(--fam); border-radius: 8px; font-size: 14px; font-weight: 700; color: var(--ink); background: var(--surface); }
+.trunc svg { width: 1.2em; height: 1.2em; flex: 0 0 auto; color: var(--fam); }
+.pills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.pill { display: inline-flex; align-items: center; gap: .35em; font-size: 12.5px; line-height: 1.2; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--edge); background: var(--chip-bg); color: var(--ink); overflow-wrap: anywhere; }
+.pill svg { width: 1.1em; height: 1.1em; flex: 0 0 auto; }
+.pill.op { border-color: var(--fam); color: var(--fam); background: var(--surface); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); border-color: var(--ok); font-weight: 700; }
+.pill.error { background: var(--err-soft); color: var(--err); border-color: var(--err); font-weight: 700; }
+.rec-sum { margin-top: 10px; font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
+.rec-empty { color: var(--muted); font-size: 16px; }
 /* Anything wide scrolls inside its own box; the page body never goes sideways. */
 pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; background: var(--pre-bg); color: var(--ink); padding: 10px; border-radius: 8px; max-width: 100%; }
 @media (min-width: 900px) {
@@ -432,7 +476,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; backgro
 <div class="panelhead"><span>Activity</span><button class="ctl" id="closeNav" aria-label="Hide activity navigation"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg><span>Close</span></button></div>
 <div id="left"><p>No events yet.</p></div>
 </nav>
-<section id="detail"><div id="right"><p>Waiting for MCP activity… trigger any tool call and it appears here.</p></div></section>
+<section id="detail" aria-label="MCP call event stream"><ol id="stream" aria-live="off"><li class="rec-empty">Waiting for MCP activity… trigger any tool call and it appears here.</li></ol></section>
 </main>
 <script>
 // Shared view state is server-authoritative for this bridge instance: one
@@ -447,7 +491,9 @@ var sharedHeartbeat = HB_JSON;
 var heartbeatStaleAfterMs = STALE_TOKEN;
 var state = { events: [], bySeq: {}, selected: null, autoFollow: AUTO_TOKEN, paused: false, cache: {}, viewRevision: 0, drawerLocal: false, heartbeat: null, heartbeatRev: 0 };
 var leftEl = document.getElementById('left');
-var rightEl = document.getElementById('right');
+var streamEl = document.getElementById('stream');
+var familyRules = FAMILY_JSON;
+var shownSeqs = {};
 var dotEl = document.getElementById('dot');
 var followEl = document.getElementById('follow');
 var pauseEl = document.getElementById('pause');
@@ -571,57 +617,76 @@ function render() {
       if (drawerOpen()) setDrawer(false, true); // reveal what the card points at
     });
   }
-  renderDetail();
+  renderStream();
 }
-function renderDetail() {
-  var e = state.bySeq[state.selected];
-  if (!e) { return; }
-  var h = '<h2 style="margin-top:0">' + esc(e.tool) + ' <span class="chip ' + esc(e.outcome) + '">' + esc(e.outcome) + '</span></h2>'
-    + '<div class="meta">seq ' + e.seq + ' · ' + esc(e.at) + ' · caller ' + esc(e.caller) + ' · client ' + esc(e.client)
-    + ' · ' + e.durationMs + 'ms' + (e.sessionId ? ' · session ' + esc(e.sessionId) : '') + '</div>'
-    + '<p>' + esc(e.summary || '(empty result)') + '</p>';
-  if (e.beadRefs && e.beadRefs.length) {
-    h += '<div class="tabs">';
-    for (var i = 0; i < e.beadRefs.length; i++) {
-      var id = e.beadRefs[i];
-      var on = state.cache[e.seq + ':' + id] && state.cache[e.seq + ':on'] === id ? ' on' : (i === 0 && !state.cache[e.seq + ':on'] ? ' on' : '');
-      h += '<button data-id="' + esc(id) + '" class="' + on + '">' + esc(id) + '</button>';
-    }
-    h += '</div><pre id="beadbody">loading…</pre>';
+function familyOf(tool) {
+  for (var i = 0; i < familyRules.length; i++) {
+    var f = familyRules[i];
+    if (f.tools.indexOf(tool) !== -1) return f;
+    for (var j = 0; j < f.prefixes.length; j++) { if (tool.indexOf(f.prefixes[j]) === 0) return f; }
+  }
+  return { key: 'other', label: 'other' };
+}
+var FAM_ICON = {
+  read: '<path d="M1.5 8s2.3-4.5 6.5-4.5S14.5 8 14.5 8 12.2 12.5 8 12.5 1.5 8 1.5 8z"/><circle cx="8" cy="8" r="2"/>',
+  write: '<path d="M10.5 2.5l3 3L5.5 13.5l-3.5.5.5-3.5z"/>',
+  relay: '<path d="M2 5h10M9 2l3 3-3 3M14 11H4M7 8l-3 3 3 3"/>',
+  feedback: '<path d="M2.5 3h11v7h-6l-3 3v-3h-2z"/>',
+  system: '<rect x="2" y="2.5" width="12" height="4.5" rx="1"/><rect x="2" y="9" width="12" height="4.5" rx="1"/><path d="M4.5 4.8h.01M4.5 11.3h.01"/>',
+  memory: '<path d="M3 2.5h8l2 2v9H3z"/><path d="M5.5 7h5M5.5 10h5"/>',
+  other: '<circle cx="8" cy="8" r="5.5"/><path d="M8 5.5v3M8 10.8h.01"/>'
+};
+function famSvg(key) {
+  return '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (FAM_ICON[key] || FAM_ICON.other) + '</svg>';
+}
+function truncMark(n, what) {
+  var scissors = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><circle cx="4" cy="4" r="1.8"/><circle cx="4" cy="12" r="1.8"/><path d="M5.5 5.2L14 12M5.5 10.8L14 4"/></svg>';
+  return '<div class="trunc">' + scissors + '<span>truncated — ' + n + ' more char' + (n === 1 ? '' : 's') + ' of ' + what + ' not shown</span></div>';
+}
+function pill(cls, inner) { return '<span class="pill ' + cls + '">' + inner + '</span>'; }
+function recHtml(e, isNew) {
+  var fam = familyOf(e.tool);
+  var h = '<li class="rec fam-' + esc(fam.key) + (isNew ? ' is-new' : '') + '" data-seq="' + e.seq + '">'
+    + '<div class="rec-head"><span class="rec-badge">' + famSvg(fam.key) + '</span>'
+    + '<h2 class="rec-tool">' + esc(e.tool) + '</h2><time class="rec-time" datetime="' + esc(e.at) + '">' + esc(tstr(e.at)) + '</time></div>';
+  if (typeof e.args === 'string' && e.args) {
+    h += '<pre class="rec-args">' + esc(e.args) + '</pre>';
+    if (e.argsOmitted > 0) h += truncMark(e.argsOmitted, 'arguments');
+  } else if (typeof e.args === 'string') {
+    h += '<p class="rec-noargs">no arguments</p>';
+  } else if (e.argNames && e.argNames.length) {
+    h += '<p class="rec-names">arguments: ' + esc(e.argNames.join(', ')) + ' (values not recorded)</p>';
   } else {
-    h += '<p><i>No bead references in this result.</i></p>';
+    h += '<p class="rec-noargs">no arguments</p>';
   }
-  rightEl.innerHTML = h;
-  var btns = rightEl.querySelectorAll('.tabs button');
-  for (var k = 0; k < btns.length; k++) {
-    btns[k].addEventListener('click', function () { showBead(e, this.getAttribute('data-id')); });
+  h += '<div class="pills">'
+    + pill('op', famSvg(fam.key) + esc(fam.label))
+    + pill(esc(e.outcome), stIcon(e.outcome) + (e.outcome === 'ok' ? 'ok' : esc(e.outcome)))
+    + pill('', e.durationMs + ' ms')
+    + pill('', esc(e.caller))
+    + pill('', esc(e.client));
+  if (e.beadRefs && e.beadRefs.length) h += pill('', e.beadRefs.length + ' bead' + (e.beadRefs.length > 1 ? 's' : ''));
+  h += '</div>';
+  if (e.summary) {
+    h += '<div class="rec-sum">' + esc(e.summary) + '</div>';
+    if (e.summaryOmitted > 0) h += truncMark(e.summaryOmitted, 'result');
   }
-  if (e.beadRefs && e.beadRefs.length) {
-    var first = state.cache[e.seq + ':on'] || e.beadRefs[0];
-    showBead(e, first);
-  }
+  return h + '</li>';
 }
-function showBead(e, id) {
-  state.cache[e.seq + ':on'] = id;
-  var btns = rightEl.querySelectorAll('.tabs button');
-  for (var i = 0; i < btns.length; i++) {
-    if (btns[i].getAttribute('data-id') === id) btns[i].className = 'on'; else btns[i].className = '';
+// Display-only: records are newest-first (state.events is sorted by seq desc);
+// only records not drawn before animate in. No handlers, no controls.
+function renderStream() {
+  if (!state.events.length) return;
+  var h = '';
+  for (var i = 0; i < state.events.length; i++) {
+    var e = state.events[i];
+    h += recHtml(e, firstStream === false && !shownSeqs[e.seq]);
+    shownSeqs[e.seq] = true;
   }
-  var body = document.getElementById('beadbody');
-  var key = e.seq + ':' + id;
-  if (state.cache[key]) { if (body) body.textContent = state.cache[key]; return; }
-  if (body) body.textContent = 'loading…';
-  fetch('/' + encodeURIComponent(id), { headers: { 'Accept': 'text/plain' } }).then(function (r) {
-    return r.text();
-  }).then(function (t) {
-    state.cache[key] = t.slice(0, 20000);
-    var b = document.getElementById('beadbody');
-    if (b && state.cache[e.seq + ':on'] === id) b.textContent = state.cache[key];
-  }).catch(function (err) {
-    var b = document.getElementById('beadbody');
-    if (b) b.textContent = 'fetch failed: ' + err;
-  });
+  firstStream = false;
+  streamEl.innerHTML = h;
 }
+var firstStream = true;
 function select(seq, auto) {
   if (state.paused && auto) return;
   state.selected = seq;
@@ -693,7 +758,9 @@ function startPoll() {
     .split('HB_JSON')
     .join(heartbeatJson)
     .split('STALE_TOKEN')
-    .join(String(staleAfterMs));
+    .join(String(staleAfterMs))
+    .split('FAMILY_JSON')
+    .join(JSON.stringify(TOOL_FAMILIES).replace(/</g, '\\u003c'));
 }
 
 /** The responsive page: drawer on a phone, two panels on desktop. */

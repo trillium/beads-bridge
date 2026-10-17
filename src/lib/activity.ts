@@ -13,8 +13,8 @@
 // - Loop prevention: tools in HEARTBEAT_EXCLUDED_TOOLS (heartbeat,
 //   relay_status, timeout_probe) are never recorded, and the /live
 //   endpoints are GET-only so the UI can never re-trigger itself.
-// - Request shape privacy: arg NAMES only (clientClass/parseMcpBody from
-//   mcp-telemetry) — values never leave the request.
+// - Request shape privacy: arg NAMES always; arg VALUES only as redacted,
+//   bounded JSON (./redact) so the event stream can show the call faithfully.
 // SAFETY: pure reads + ring push. No store reads, no writes, no agent
 // requests. Recording never throws and never alters the response — every
 // step is guarded, the boundary always returns the original response.
@@ -22,6 +22,7 @@ import { currentScope } from './followons'
 import { HEARTBEAT_EXCLUDED_TOOLS } from './heartbeat'
 import { clientClass, parseMcpBody } from './mcp-telemetry'
 import { storeFromId } from '../util'
+import { clip, displayArgs, redactString } from './redact'
 
 // ---- config (backend-configurable auto-follow etc.) -------------------------
 
@@ -39,6 +40,11 @@ export function activityMaxEvents(): number {
 /** Max chars of result summary per event. */
 export function activitySummaryChars(): number {
   return numEnv('ACTIVITY_SUMMARY_CHARS', 300, 40, 1000)
+}
+
+/** Max chars of redacted argument JSON shown per event. */
+export function activityArgChars(): number {
+  return numEnv('ACTIVITY_ARG_CHARS', 1200, 80, 4000)
 }
 
 /** Max bead refs extracted per event. */
@@ -73,12 +79,21 @@ export interface ActivityEvent {
   authed: boolean
   /** Wall time of the inner chain, ms. */
   durationMs: number
-  /** Tool argument NAMES only, sorted. Values never recorded. */
+  /** Tool argument NAMES only, sorted. */
   argNames: string[]
+  /**
+   * Argument values as redacted JSON (secrets replaced, see ./redact), cut at
+   * activityArgChars(). Absent/'' when the call had no arguments.
+   */
+  args?: string
+  /** Chars cut off the end of `args` (0/absent = shown in full). */
+  argsOmitted?: number
   /** Validated bead ids referenced by the result (bounded). */
   beadRefs: string[]
-  /** Bounded head of the result text, footer stripped. */
+  /** Bounded head of the result text, footer stripped, secrets redacted. */
   summary: string
+  /** Chars cut off the end of `summary` (0/absent = shown in full). */
+  summaryOmitted?: number
 }
 
 // ---- ring ---------------------------------------------------------------------
@@ -261,6 +276,11 @@ function walkText(node: unknown, out: string[]): void {
  * the raw head. Collapsed whitespace, capped at activitySummaryChars().
  */
 export function summarizeResult(bodyText: string, max = activitySummaryChars()): string {
+  return normalizedResult(bodyText).slice(0, max)
+}
+
+/** The whole normalized result text summarizeResult cuts from (unbounded). */
+function normalizedResult(bodyText: string): string {
   try {
     // SSE-framed answers (event: message / data: {...}) unwrap to the
     // data payload first so summaries hold result text, not framing.
@@ -284,7 +304,7 @@ export function summarizeResult(bodyText: string, max = activitySummaryChars()):
     } catch {
       /* not JSON — use the raw head */
     }
-    return candidate.replace(/\s+/g, ' ').trim().slice(0, max)
+    return candidate.replace(/\s+/g, ' ').trim()
   } catch {
     return ''
   }
@@ -301,6 +321,16 @@ function isErrorBody(status: number, bodyText: string): boolean {
 
 // ---- fetch wrapper ---------------------------------------------------------------
 
+/** tools/call `params.arguments` from a parsed JSON-RPC body (else undefined). */
+function rawArguments(body: unknown): unknown {
+  try {
+    const params = (body as { params?: { arguments?: unknown } } | null)?.params
+    return params?.arguments
+  } catch {
+    return undefined
+  }
+}
+
 export type FetchLike = (req: globalThis.Request) => Promise<globalThis.Response>
 
 /**
@@ -313,6 +343,7 @@ export function withActivity(next: FetchLike): FetchLike {
   return async (fetchReq: globalThis.Request): Promise<globalThis.Response> => {
     const start = Date.now()
     let parsed = { tool: 'unknown' as string, argNames: [] as string[] }
+    let shownArgs = { text: '', omitted: 0 }
     let sessionId: string | null = null
     let client = 'none'
     let authed = false
@@ -321,6 +352,7 @@ export function withActivity(next: FetchLike): FetchLike {
         const body: unknown = await fetchReq.clone().json()
         const p = parseMcpBody(body)
         parsed = { tool: p.tool ?? 'unknown', argNames: p.argNames }
+        shownArgs = displayArgs(rawArguments(body), activityArgChars())
       }
       const h = fetchReq.headers
       sessionId = h.get('mcp-session-id')
@@ -345,6 +377,8 @@ export function withActivity(next: FetchLike): FetchLike {
           authed,
           durationMs: Date.now() - start,
           argNames: parsed.argNames,
+          args: shownArgs.text,
+          argsOmitted: shownArgs.omitted,
           beadRefs: [],
           summary: 'handler failed',
         })
@@ -374,6 +408,8 @@ export function withActivity(next: FetchLike): FetchLike {
       } catch {
         bodyText = ''
       }
+      const fullSummary = redactString(normalizedResult(bodyText))
+      const shownSummary = clip(fullSummary, activitySummaryChars())
       recordEvent({
         at: new Date(Date.now()).toISOString(),
         tool,
@@ -384,8 +420,11 @@ export function withActivity(next: FetchLike): FetchLike {
         authed,
         durationMs: Date.now() - start,
         argNames: parsed.argNames,
+        args: shownArgs.text,
+        argsOmitted: shownArgs.omitted,
         beadRefs: extractBeadRefs(bodyText),
-        summary: summarizeResult(bodyText),
+        summary: shownSummary.text,
+        summaryOmitted: shownSummary.omitted,
       })
     } catch {
       /* recording never alters the response */
