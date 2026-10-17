@@ -55,15 +55,15 @@ describe('/live event stream', () => {
     })
   })
 
-  it('is display-only: the stream region adds no controls or key handlers', async () => {
+  it('adds only local view toggles: raw/expand/copy buttons, no new fetches or routes', async () => {
     await withApp(async (url) => {
       const html = await (await fetch(`${url}/live`)).text()
-      const start = html.indexOf('<section id="detail"')
-      const end = html.indexOf('</section>', start)
-      const region = html.slice(start, end)
-      assert.ok(!/<(button|input|a |select|textarea)/.test(region), 'no interactive elements inside the stream')
-      const js = html.slice(html.indexOf('function familyOf'), html.indexOf('function select(seq'))
-      assert.ok(!/addEventListener|onclick|tabindex|keydown/.test(js), 'stream render code attaches no handlers')
+      for (const needle of ['data-raw=', 'data-expand=', 'id="copyAll"', 'function yamlHtml', 'function rawLine', 'rec-raw']) {
+        assert.ok(html.includes(needle), `page is missing ${needle}`)
+      }
+      const js = html.slice(html.indexOf('function copyText'), html.indexOf('function select(seq'))
+      assert.ok(!/fetch\(|method:\s*'(POST|PUT|DELETE)'/.test(js), 'toggle code makes no requests')
+      assert.ok(!html.includes('YAML_LIB_JS'), 'yaml lib placeholder must be filled')
     })
   })
 

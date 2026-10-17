@@ -34,8 +34,9 @@ stream of Jumbotron-style records, one per call, built from the existing
 `/live/events`) is unchanged. It replaces the old bead-tab detail pane; the
 activity list (drawer on a phone) remains.
 
-- **Strictly display-only:** no controls, handlers or key bindings inside the
-  stream (asserted in `src/routes/live-stream.test.ts`).
+- **Read-only data:** the stream only reads; the sole controls are the local
+  raw/expand/copy toggles below (no requests, asserted in
+  `src/routes/live-stream.test.ts`).
 - **Record:** family badge icon + large tool name + time; the exact arguments
   in large monospace; pills for operation type (family), outcome
   (icon + text), duration, caller, client, bead count; result head below.
@@ -51,6 +52,18 @@ activity list (drawer on a phone) remains.
 - **Truncation is explicit:** a dashed scissors marker reads
   "truncated — N more chars of arguments|result not shown" (`summaryOmitted`
   for the result head).
+- **YAML view + raw toggle (inbox-egkk):** each record draws its arguments
+  and result head as a YAML-style tree (keys/strings/numbers/booleans/null
+  highlighted, `--y-*` tokens, light+dark) client-side from the same JSONL
+  event — storage and wire format are unchanged, no new route. Strings over
+  280 chars collapse to `… +N chars` with an expand button (state kept across
+  re-renders). A per-record **raw** button swaps to the exact JSONL line
+  (with **copy**); **Copy all as JSONL** copies the whole stream
+  chronologically. Both views show the already-redacted event, so raw never
+  exposes more than the rendered view. Cut-off args (`argsOmitted > 0`) stay
+  plain text under the scissors marker, since clipped JSON can't be parsed.
+  The renderer is `src/lib/live-yaml.ts` (inlined into the page; tested in
+  `src/lib/live-yaml.test.ts`). Toggles are local view state only.
 - Capture a phone-width shot: `node ops/live-shot.mjs <url> out.png 3000 390 844`.
 
 ## Layout: drawer on a phone, two panels on desktop

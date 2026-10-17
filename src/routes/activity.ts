@@ -16,6 +16,7 @@ import {
   recentEvents,
   subscribeActivity,
 } from '../lib/activity'
+import { LIVE_YAML_JS } from '../lib/live-yaml'
 import { currentViewFrame, sseViewFrame } from '../lib/view-state'
 import {
   HEARTBEAT_STALE_AFTER_MS,
@@ -340,6 +341,7 @@ export function renderLivePage(
   --scrim: rgba(20, 16, 10, .45);
   --shadow: rgba(30, 25, 15, .25);
   /* Event-stream action families. Never green/red: those are the outcome pill's. */
+  --y-key: #0b4fb3; --y-str: #1b6b2f; --y-num: #a3400a; --y-bool: #7c2fc7; --y-null: #6b6459;
   --fam-read: #0b5bd3;
   --fam-write: #c2410c;
   --fam-relay: #7c3aed;
@@ -350,6 +352,7 @@ export function renderLivePage(
 }
 @media (prefers-color-scheme: dark) {
   :root {
+    --y-key: #8db4ff; --y-str: #8fd9a0; --y-num: #f2a56b; --y-bool: #c9a2ff; --y-null: #a89e8d;
     --bg: #14120e;
     --surface: #1e1b16;
     --ink: #ece6d9;
@@ -450,6 +453,16 @@ h2 { font-size: 17px; overflow-wrap: anywhere; }
 .pill.error { background: var(--err-soft); color: var(--err); border-color: var(--err); font-weight: 700; }
 .rec-sum { margin-top: 10px; font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
 .rec-empty { color: var(--muted); font-size: 16px; }
+/* YAML-style structured view + raw JSONL toggle. Contrast checked >= 4.5:1 on --pre-bg in both schemes. */
+.rec-args.yaml { font-weight: 500; font-size: 15px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.y-k { color: var(--y-key); font-weight: 700; } .y-s { color: var(--y-str); } .y-n { color: var(--y-num); }
+.y-b { color: var(--y-bool); font-weight: 700; } .y-null { color: var(--y-null); font-style: italic; } .y-p { color: var(--muted); }
+.y-more { font: inherit; font-size: 13px; font-weight: 700; color: var(--accent); background: transparent; border: 1px dashed var(--accent); border-radius: 6px; padding: 0 6px; cursor: pointer; }
+.rec-tools { display: flex; gap: 6px; margin-left: auto; align-self: flex-start; }
+.rec-tools button, #streamtools button { font: inherit; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--edge); background: var(--surface); color: var(--ink); cursor: pointer; }
+.rec-tools button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+#streamtools { display: flex; gap: 8px; align-items: center; margin: 0 0 12px; font-size: 13px; color: var(--muted); }
+.rec-raw { margin: 12px 0 0; padding: 10px 12px; font: 500 13px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--pre-bg); border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-all; user-select: all; }
 /* Anything wide scrolls inside its own box; the page body never goes sideways. */
 pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; background: var(--pre-bg); color: var(--ink); padding: 10px; border-radius: 8px; max-width: 100%; }
 @media (min-width: 900px) {
@@ -479,7 +492,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12.5px; backgro
 <div class="panelhead"><span>Activity</span><button class="ctl" id="closeNav" aria-label="Hide activity navigation"><svg class="icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg><span>Close</span></button></div>
 <div id="left"><p>No events yet.</p></div>
 </nav>
-<section id="detail" aria-label="MCP call event stream"><ol id="stream" aria-live="off"><li class="rec-empty">Waiting for MCP activity… trigger any tool call and it appears here.</li></ol></section>
+<section id="detail" aria-label="MCP call event stream"><div id="streamtools"><button type="button" id="copyAll">Copy all as JSONL</button><span id="copyMsg" role="status"></span></div><ol id="stream" aria-live="off"><li class="rec-empty">Waiting for MCP activity… trigger any tool call and it appears here.</li></ol></section>
 </main>
 <script>
 // Shared view state is server-authoritative for this bridge instance: one
@@ -499,6 +512,8 @@ var leftEl = document.getElementById('left');
 var streamEl = document.getElementById('stream');
 var familyRules = FAMILY_JSON;
 var shownSeqs = {};
+var rawOpen = {};
+var yExpanded = {};
 var dotEl = document.getElementById('dot');
 var followEl = document.getElementById('follow');
 var pauseEl = document.getElementById('pause');
@@ -540,6 +555,7 @@ function refreshView() {
 // One always-visible status surface: the most recently composed heartbeat
 // block, refreshed in place. Age ticks locally so a stale heartbeat reads
 // as stale rather than as current.
+YAML_LIB_JS
 function ageStr(ms) {
   if (!isFinite(ms) || ms < 0) ms = 0;
   var s = Math.floor(ms / 1000);
@@ -654,8 +670,19 @@ function recHtml(e, isNew) {
   var h = '<li class="rec fam-' + esc(fam.key) + (isNew ? ' is-new' : '') + '" data-seq="' + e.seq + '">'
     + '<div class="rec-head"><span class="rec-badge">' + famSvg(fam.key) + '</span>'
     + '<h2 class="rec-tool">' + esc(e.tool) + '</h2><time class="rec-time" datetime="' + esc(e.at) + '">' + esc(tstr(e.at)) + '</time></div>';
+  h = h.replace('</time></div>', '</time><span class="rec-tools"><button type="button" data-raw="' + e.seq + '" aria-pressed="' + (rawOpen[e.seq] ? 'true' : 'false') + '">raw</button>'
+    + (rawOpen[e.seq] ? '<button type="button" data-copy="' + e.seq + '">copy</button>' : '') + '</span></div>');
+  if (rawOpen[e.seq]) {
+    h += '<pre class="rec-raw" data-rawfor="' + e.seq + '">' + esc(rawLine(e)) + '</pre>';
+    return h + '</li>';
+  }
+  var ctx = { expanded: yExpanded };
   if (typeof e.args === 'string' && e.args) {
-    h += '<pre class="rec-args">' + esc(e.args) + '</pre>';
+    var parsed, ok = true;
+    try { parsed = JSON.parse(e.args); } catch (x) { ok = false; }
+    if (ok && e.argsOmitted > 0) ok = false;
+    h += ok ? '<pre class="rec-args yaml">' + yamlHtml({ args: parsed }, e.seq, ctx) + '</pre>'
+            : '<pre class="rec-args">' + esc(e.args) + '</pre>';
     if (e.argsOmitted > 0) h += truncMark(e.argsOmitted, 'arguments');
   } else if (typeof e.args === 'string') {
     h += '<p class="rec-noargs">no arguments</p>';
@@ -673,13 +700,13 @@ function recHtml(e, isNew) {
   if (e.beadRefs && e.beadRefs.length) h += pill('', e.beadRefs.length + ' bead' + (e.beadRefs.length > 1 ? 's' : ''));
   h += '</div>';
   if (e.summary) {
-    h += '<div class="rec-sum">' + esc(e.summary) + '</div>';
+    h += '<pre class="rec-args yaml rec-sum">' + yamlHtml({ summary: e.summary }, e.seq + '#', ctx) + '</pre>';
     if (e.summaryOmitted > 0) h += truncMark(e.summaryOmitted, 'result');
   }
   return h + '</li>';
 }
 // Display-only: records are newest-first (state.events is sorted by seq desc);
-// only records not drawn before animate in. No handlers, no controls.
+// only records not drawn before animate in. Raw/expand toggles are local state.
 function renderStream() {
   if (!state.events.length) return;
   var h = '';
@@ -692,6 +719,32 @@ function renderStream() {
   streamEl.innerHTML = h;
 }
 var firstStream = true;
+function copyText(text, done) {
+  function fallback() {
+    var ta = document.createElement('textarea'); ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    var ok = false; try { ok = document.execCommand('copy'); } catch (x) {}
+    document.body.removeChild(ta); done(ok);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function () { done(true); }, fallback);
+  else fallback();
+}
+function flash(msg) { var m = document.getElementById('copyMsg'); m.textContent = msg; setTimeout(function () { m.textContent = ''; }, 2000); }
+// Toggles are local view state only; the stream itself stays GET/SSE.
+function keepScroll(fn) { var y = window.scrollY; var d = document.getElementById('detail'); var dy = d ? d.scrollTop : 0; fn(); window.scrollTo(window.scrollX, y); if (d) d.scrollTop = dy; }
+document.getElementById('detail').addEventListener('click', function (ev) {
+  var t = ev.target; if (!t || !t.closest) return;
+  var b = t.closest('button'); if (!b) return;
+  if (b.id === 'copyAll') { copyText(rawStream(state.events), function (ok) { flash(ok ? 'copied ' + state.events.length + ' lines' : 'copy failed'); }); return; }
+  if (b.hasAttribute('data-raw')) { var q = b.getAttribute('data-raw'); rawOpen[q] = !rawOpen[q]; keepScroll(renderStream); return; }
+  if (b.hasAttribute('data-copy')) {
+    var e = state.bySeq[b.getAttribute('data-copy')] || state.events.filter(function (x) { return String(x.seq) === b.getAttribute('data-copy'); })[0];
+    if (e) copyText(rawLine(e), function (ok) { flash(ok ? 'copied 1 line' : 'copy failed'); });
+    return;
+  }
+  if (b.hasAttribute('data-expand')) { yExpanded[b.getAttribute('data-expand')] = true; keepScroll(renderStream); return; }
+  if (b.hasAttribute('data-collapse')) { delete yExpanded[b.getAttribute('data-collapse')]; keepScroll(renderStream); }
+});
 function select(seq, auto) {
   if (state.paused && auto) return;
   state.selected = seq;
@@ -769,6 +822,8 @@ function startPoll() {
     .join(String(staleAfterMs))
     .split('BUILD_GUARD_JS')
     .join(buildGuardJs('function () { state.viewRevision = 0; state.heartbeatRev = 0; }'))
+    .split('YAML_LIB_JS')
+    .join(LIVE_YAML_JS)
     .split('FAMILY_JSON')
     .join(JSON.stringify(TOOL_FAMILIES).replace(/</g, '\\u003c'));
 }

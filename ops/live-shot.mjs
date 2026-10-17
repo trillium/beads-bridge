@@ -8,7 +8,7 @@
 // affected). This script therefore never waits for a load event - it navigates,
 // waits a fixed settle time, and captures whatever has rendered.
 //
-// Usage: node ops/live-shot.mjs <url> <out.png> [settleMs] [width] [height]
+// Usage: [LIVE_SHOT_EVAL=js] node ops/live-shot.mjs <url> <out.png> [settleMs] [width] [height]
 import { spawn } from 'node:child_process'
 import { writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
@@ -91,6 +91,14 @@ await rpc(ws, 'Emulation.setDeviceMetricsOverride', {
 })
 await rpc(ws, 'Page.navigate', { url })
 await sleep(settleMs)
+
+// Optional: LIVE_SHOT_EVAL="<js>" runs in the page after settle (e.g. click a
+// toggle) and its result is printed; LIVE_SHOT_EVAL_SETTLE_MS waits after it.
+if (process.env.LIVE_SHOT_EVAL) {
+  const r = await rpc(ws, 'Runtime.evaluate', { expression: process.env.LIVE_SHOT_EVAL, returnByValue: true })
+  console.log('eval:', JSON.stringify(r.result?.value ?? r.exceptionDetails?.text))
+  await sleep(Number(process.env.LIVE_SHOT_EVAL_SETTLE_MS ?? 500))
+}
 
 // Capture the whole document, not just the viewport: these pages are the
 // product, and a viewport-only shot crops the roll-ups.
