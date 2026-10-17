@@ -34,6 +34,11 @@ The script refuses to run over a modified deploy checkout, waits for `:3737`
 to answer `/live`, then prints the status code of every live route. Exit
 non-zero means at least one route is not 200 — that is the deploy's own gate.
 
+**Open `/live` tabs reload on deploy.** Every deploy restarts the process, which
+mints a new `BOOT_ID` (`src/lib/build-id.ts`). Pages carry the id they were
+rendered with; on seeing a different one (via `/live/config` or the SSE `build`
+frame on reconnect) they `location.reload()` once. No script change needed.
+
 ## Look at it
 
 | URL | What it shows |

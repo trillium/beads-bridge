@@ -41,6 +41,8 @@
 // second transport that could re-trigger the bridge.
 
 /** Where a variant's shape comes from, so the comparison is honest. */
+import { buildGuardJs } from './build-id'
+
 export type VariantProvenance = 'canonical' | 'record' | 'derived'
 
 export interface LiveVariant {
@@ -132,6 +134,7 @@ export function liveClientJs(): string {
     heartbeat: null, heartbeatRev: 0, staleAfterMs: 300000,
     connected: false, frames: 0
   };
+  ${buildGuardJs('function () { state.viewRevision = 0; state.heartbeatRev = 0; }')}
   var listeners = { activity: [], view: [], heartbeat: [], status: [] };
 
   function esc(s) {
@@ -216,6 +219,7 @@ export function liveClientJs(): string {
     opts = opts || {};
     var limit = Math.min(200, Math.max(1, Number(opts.limit) || 60));
     fetch('/live/config').then(function (r) { return r.json(); }).then(function (c) {
+      if (c) checkBuild(c.build);
       if (c && typeof c.maxEvents === 'number') state.config.maxEvents = c.maxEvents;
       emit('status', state.connected);
     }).catch(function () {});
@@ -231,6 +235,7 @@ export function liveClientJs(): string {
       // every connect, so a reconnect lands on current state.
       es = new EventSource('/live/events?limit=' + limit);
       es.onopen = function () { setConnected(true); };
+      es.addEventListener('build', function (m) { try { checkBuild(JSON.parse(m.data)); } catch (e) {} });
       es.onmessage = function (m) { try { ingest(JSON.parse(m.data)); setConnected(true); } catch (e) {} };
       es.addEventListener('view', function (m) { try { applyView(JSON.parse(m.data)); } catch (e) {} });
       es.addEventListener('heartbeat', function (m) { try { applyHeartbeat(JSON.parse(m.data)); } catch (e) {} });
@@ -243,6 +248,7 @@ export function liveClientJs(): string {
       // Same two read-only GETs — not a second transport, just a fallback.
       setInterval(function () {
         fetch('/live/view').then(function (r) { return r.json(); }).then(applyView).catch(function () {});
+        fetch('/live/config').then(function (r) { return r.json(); }).then(function (c) { if (c) checkBuild(c.build); }).catch(function () {});
         pollOnce();
       }, 3000);
     }

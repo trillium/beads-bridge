@@ -188,8 +188,8 @@ describe('/live persistent heartbeat', () => {
         await until('heartbeat frame', () => viewer.heartbeats.length >= 1)
         assert.deepEqual(
           [...new Set(viewer.namedEvents)].sort(),
-          ['heartbeat', 'view'],
-          'only view + heartbeat are named events',
+          ['build', 'heartbeat', 'view'],
+          'only build + view + heartbeat are named events',
         )
         assert.equal(viewer.activities.length, 0, 'heartbeat must never enter the activity ring')
       } finally {

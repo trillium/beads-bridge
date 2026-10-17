@@ -231,6 +231,24 @@ out by activity.
 - **Safety unchanged.** Observational only (memory, restart clears it),
   GET-only, no bead mutation or work creation driven by display events.
 
+## Auto-reload on deploy (`build` in `/live/config`, `event: build`)
+
+Every deploy restarts the bridge, so an open tab is on stale JS and — because
+view/heartbeat revisions restart low — would also ignore the new process's
+frames. `src/lib/build-id.ts` computes `BOOT_ID` (per process) and
+`BUILD_COMMIT` (`backendCommit()`, once at import — never per request).
+
+- The page and the variants runtime bake `BOOT_ID`; `GET /live/config` returns
+  `build: {bootId, commit}`; the SSE connect replay sends a named
+  `event: build` frame (same pattern as `event: heartbeat`).
+- Client `checkBuild`: on a different `bootId` it resets its highest-seen
+  view/heartbeat revisions, then `location.reload()`s at most once per id
+  (`sessionStorage` guard, in-memory fallback). The poll fallback also checks
+  `/live/config`.
+- No new path: the vps01 allowlist is unchanged (`/live`, `/live/config`,
+  `/live/view`, `/live/heartbeat`, `/live/recent`, `/live/events`). Tests:
+  `src/routes/live-build.test.ts`.
+
 ## Safety model (inherited from the parent bead — do not weaken)
 
 - Observational only: no store reads, no writes, no agent requests.
