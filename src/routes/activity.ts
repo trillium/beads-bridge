@@ -2,6 +2,7 @@
 // Requests come from a bounded in-memory ring filled by server.ts on every
 // response finish (restart clears it — stated on the page). Resolves come
 // from live store queries (created/closed since T), so they survive restarts.
+import { buildGuardJs, currentBuild, sseBuildFrame } from '../lib/build-id'
 import { Router } from 'express'
 import type { Request, Response } from 'express'
 import { execFile } from 'child_process'
@@ -185,7 +186,7 @@ activityRouter.get('/resume/:id/last-turn', async (req: Request, res: Response) 
 /** Backend-configurable UI defaults served to the page. */
 liveRouter.get('/live/config', (_req: Request, res: Response) => {
   try {
-    res.json({ autoFollowDefault: activityAutoFollowDefault(), maxEvents: activityMaxEvents() })
+    res.json({ autoFollowDefault: activityAutoFollowDefault(), maxEvents: activityMaxEvents(), build: currentBuild() })
   } catch {
     res.status(500).json({ error: 'config unavailable' })
   }
@@ -263,6 +264,8 @@ liveRouter.get('/live/events', (req: Request, res: Response) => {
     // Current shared view state, so a connecting or reconnecting viewer lands
     // on it instead of holding a stale local guess.
     res.write(sseViewFrame(currentViewFrame()))
+    // Build identity: a page from an older process reloads on seeing a new id.
+    res.write(sseBuildFrame())
     // Latest heartbeat when one has been observed, so a connecting or
     // reconnecting viewer lands on the persistent status surface too.
     // (Absent before any heartbeat: the page then shows its placeholder.)
@@ -489,6 +492,8 @@ var sharedView = VIEW_JSON;
 // activity. Frames carry a monotonic rev; last-write-wins.
 var sharedHeartbeat = HB_JSON;
 var heartbeatStaleAfterMs = STALE_TOKEN;
+// Auto-reload on deploy: a different bootId means a new process (and new page).
+BUILD_GUARD_JS
 var state = { events: [], bySeq: {}, selected: null, autoFollow: AUTO_TOKEN, paused: false, cache: {}, viewRevision: 0, drawerLocal: false, heartbeat: null, heartbeatRev: 0 };
 var leftEl = document.getElementById('left');
 var streamEl = document.getElementById('stream');
@@ -717,12 +722,14 @@ applyHeartbeat(sharedHeartbeat);
 refreshHeartbeat();
 setInterval(renderHeartbeat, 5000); // age ticker: stale reads as stale
 fetch('/live/config').then(function (r) { return r.json(); }).then(function (c) {
+  if (c) checkBuild(c.build);
   if (c && typeof c.autoFollowDefault === 'boolean') { state.autoFollow = c.autoFollowDefault; followEl.checked = c.autoFollowDefault; }
 }).catch(function () {});
 var es = null;
 try {
   es = new EventSource('/live/events?limit=30');
   es.onopen = function () { setLive(true); };
+  es.addEventListener('build', function (m) { try { checkBuild(JSON.parse(m.data)); } catch (e) {} });
   es.onmessage = function (m) { try { onEvent(JSON.parse(m.data)); setLive(true); } catch (e) {} };
   es.addEventListener('view', function (m) { try { applyView(JSON.parse(m.data)); } catch (e) {} });
   es.addEventListener('heartbeat', function (m) { try { applyHeartbeat(JSON.parse(m.data)); } catch (e) {} });
@@ -736,6 +743,7 @@ function startPoll() {
   setInterval(function () {
     refreshView();
     refreshHeartbeat();
+    fetch('/live/config').then(function (r) { return r.json(); }).then(function (c) { if (c) checkBuild(c.build); }).catch(function () {});
     fetch('/live/recent?limit=50').then(function (r) { return r.json(); }).then(function (d) {
       var arr = (d && d.events) || [];
       var changed = false;
@@ -759,6 +767,8 @@ function startPoll() {
     .join(heartbeatJson)
     .split('STALE_TOKEN')
     .join(String(staleAfterMs))
+    .split('BUILD_GUARD_JS')
+    .join(buildGuardJs('function () { state.viewRevision = 0; state.heartbeatRev = 0; }'))
     .split('FAMILY_JSON')
     .join(JSON.stringify(TOOL_FAMILIES).replace(/</g, '\\u003c'));
 }
