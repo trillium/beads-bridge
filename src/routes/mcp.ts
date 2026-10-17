@@ -30,6 +30,7 @@ import { editFeedback, feedbackDir, formatFeedbackEdit, writeFeedback } from '..
 import { formatStoreHealth, probeStore, registryPathFor, type StoreHealthRow } from '../lib/store-health'
 import { ROUNDTRIP_REFUSED_STORES, formatRoundTrip, storeRoundTrip } from '../lib/store-roundtrip'
 import { editBead } from '../lib/edit'
+import { PRIORITY_INPUT_HELP, parsePriority, priorityLabelError } from '../lib/priority'
 import { formatWhoami, loadProfile, readWhoamiNotes, serverVersion, updateProfile } from '../lib/whoami'
 import { appendPersonality, editPersonalitySection, ensurePersonality, loadPersonality, savePersonality, PERSONALITY_MAX_CHARS } from '../lib/personality'
 import { backendCommit, BRIDGE_OP_NAMES, capabilitiesSince, capabilityStatus, formatBridgeInfo, isSemver, loadManifest, schemaHash, whoamiDescription } from '../lib/capabilities'
@@ -386,6 +387,8 @@ const mcpHandler = createMcpHandler((server) => {
       if ('error' in bs) return err(bs.error)
       const store = bs.store
       if (!add && !remove) return err('Give add and/or remove.')
+      const addPriorityErr = priorityLabelError(add ? [add] : [])
+      if (addPriorityErr) return err(addPriorityErr.replace('pass the `priority` field', 'use `bead_edit` with `priority`'))
       try {
         const r = await labelBead(store, clean, { add, remove })
         relayStatus.touch({ id: clean, kind: 'note', title: `labels updated ${clean}` })
@@ -416,12 +419,13 @@ const mcpHandler = createMcpHandler((server) => {
         description: bodyText('Body text'),
         labels: z.array(z.string()).max(10).optional().describe('Labels, e.g. project:parlay — invalid ones are rejected'),
         parent: z.string().optional().describe('Parent bead id for hierarchy'),
+        priority: z.union([z.number().int().min(0).max(4), z.string().max(3)]).optional().describe(PRIORITY_INPUT_HELP),
         operation_id: z.string().min(1).max(200).optional().describe('Logical operation id for this request. Reuse the SAME value for retries, replays, or a continuation turn that adds scope; each reuse is recorded as a revision of the one bead instead of creating another. Omit it for a plain one-off create (no key, no revision history).'),
         promote: z.boolean().optional().describe('With operation_id on an existing action: the added scope is materially DISTINCT work — create it as a child bead of the existing one instead of merging it into the body.'),
       }),
     },
-    async ({ store, title, description, labels, parent, operation_id, promote }: {
-      store: string; title: string; description?: string; labels?: string[]; parent?: string; operation_id?: string; promote?: boolean
+    async ({ store, title, description, labels, parent, priority, operation_id, promote }: {
+      store: string; title: string; description?: string; labels?: string[]; parent?: string; priority?: number | string; operation_id?: string; promote?: boolean
     }) => {
       const req = resolveStoreName(store ?? '')
       if (req.kind === 'ambiguous') return err(ambiguousStoreError(req.requested, req.candidates))
@@ -439,6 +443,10 @@ const mcpHandler = createMcpHandler((server) => {
       }
       const { ok: valid, bad } = validateCreateLabels(labels)
       if (bad.length) return err(`bad label: ${bad.join(', ')} (match ${LABEL_RE}, max 64 chars)`)
+      const labelPriorityErr = priorityLabelError(valid)
+      if (labelPriorityErr) return err(labelPriorityErr)
+      let realPriority: ReturnType<typeof parsePriority>
+      try { realPriority = parsePriority(priority) } catch (e) { return err(e instanceof Error ? e.message : String(e)) }
       try {
         const provenance = { source: 'mcp' as const, caller: currentRequestCaller() }
         const { id, detail, verified, disposition, revision, operationKey, applied, childId, recovered } = await createOperationBead({
@@ -447,6 +455,7 @@ const mcpHandler = createMcpHandler((server) => {
           description,
           labels: valid,
           parent: parent?.trim() || undefined,
+          priority: realPriority,
           operationId: operation_id,
           promote: promote === true,
           provenance,
@@ -486,6 +495,7 @@ const mcpHandler = createMcpHandler((server) => {
           description: bodyText('Body text'),
           labels: z.array(z.string()).max(10).optional().describe('Labels — invalid ones reject the batch'),
           parent: z.string().optional().describe('Parent: earlier batch name or canonical bead id (same store as the bead)'),
+          priority: z.union([z.number().int().min(0).max(4), z.string().max(3)]).optional().describe(PRIORITY_INPUT_HELP),
           depends_on: z.array(z.string()).max(20).optional().describe('Dependencies: earlier batch names or bead ids (any store; cross-store legs land as mention-links)'),
         })).min(1).max(MAX_BATCH_BEADS).describe('Beads in commit order'),
         relations: z.array(z.object({
@@ -496,7 +506,7 @@ const mcpHandler = createMcpHandler((server) => {
       }),
     },
     async ({ beads, relations }: {
-      beads: { name: string; store: string; title: string; description?: string; labels?: string[]; parent?: string; depends_on?: string[] }[]
+      beads: { name: string; store: string; title: string; description?: string; labels?: string[]; parent?: string; priority?: number | string; depends_on?: string[] }[]
       relations?: { from: string; to: string; type: string }[]
     }) => {
       for (const b of beads) {
@@ -542,20 +552,23 @@ const mcpHandler = createMcpHandler((server) => {
     'bead_edit',
     {
       title: 'Edit bead',
-      description: 'Revise a bead\'s title and/or description. Give at least one. Only report success when this call returns a receipt — report IDs verbatim from tool output, never from inference.',
+      description: 'Revise a bead\'s title, description, and/or real priority (P0-P4 status; a priority:P0 label does NOT set it). Give at least one. Only report success when this call returns a receipt — report IDs verbatim from tool output, never from inference.',
       inputSchema: z.object({
         id: z.string().describe('Bead id'),
         title: z.string().min(1).max(200).optional().describe('New title'),
         description: bodyText('New description'),
+        priority: z.union([z.number().int().min(0).max(4), z.string().max(3)]).optional().describe(PRIORITY_INPUT_HELP),
       }),
     },
-    async ({ id, title, description }: { id: string; title?: string; description?: string }) => {
+    async ({ id, title, description, priority }: { id: string; title?: string; description?: string; priority?: number | string }) => {
       const clean = id.trim()
       const bs = beadStore(id)
       if ('error' in bs) return err(bs.error)
       const store = bs.store
+      let realPriority: ReturnType<typeof parsePriority>
+      try { realPriority = parsePriority(priority) } catch (e) { return err(e instanceof Error ? e.message : String(e)) }
       try {
-        const { detail, verified } = await editBead({ store, id: clean, title, description })
+        const { detail, verified } = await editBead({ store, id: clean, title, description, priority: realPriority })
         relayStatus.touch({ id: clean, kind: 'note', title: title ?? `edited ${clean}` })
         const receipt = { operation: 'updated', id: clean, store, verified, detail }
         if (!verified) {
@@ -1129,20 +1142,21 @@ const mcpHandler = createMcpHandler((server) => {
     'project_edit',
     {
       title: 'Edit project',
-      description: 'Edit an existing project bead directly — title, description, appended note, lifecycle status (active | deprecated) — without creating task or correction beads. Project resolves by id, slug, or name. Every mutation step verifies read-after-write; only report success when this call returns the receipt. Deprecating sets state:deprecated; active clears it. Backlog/foreground state is untouched (promote through capture/upsert).',
+      description: 'Edit an existing project bead directly — title, description, appended note, lifecycle status (active | deprecated) — without creating task or correction beads. Project resolves by EXACT id (preferred), slug, title, or alias — never fuzzy: an ambiguous or unmatched reference is an error listing candidates and writes nothing. Priority sets the real P status (0-4 / P0-P4), verified by read-back. Every mutation step verifies read-after-write; only report success when this call returns the receipt. Deprecating sets state:deprecated; active clears it. Backlog/foreground state is untouched (promote through capture/upsert).',
       inputSchema: z.object({
-        project: z.string().min(1).max(120).describe('Project id, slug, or name'),
+        project: z.string().min(1).max(120).describe('Exact project id (e.g. project-a4t); slug/title/alias accepted only when they match exactly one project'),
         title: z.string().max(200).optional().describe('New title'),
+        priority: z.union([z.number().int().min(0).max(4), z.string().max(3)]).optional().describe(PRIORITY_INPUT_HELP),
         description: bodyText('New description (empty clears it)'),
         note: bodyText('Project note to append'),
         lifecycle: z.enum(['active', 'deprecated']).optional().describe('Set deprecated (state:deprecated label) or active (clear it)'),
       }),
     },
-    async ({ project, title, description, note, lifecycle }: {
-      project: string; title?: string; description?: string; note?: string; lifecycle?: 'active' | 'deprecated'
+    async ({ project, title, description, note, lifecycle, priority }: {
+      project: string; title?: string; description?: string; note?: string; lifecycle?: 'active' | 'deprecated'; priority?: number | string
     }) => {
       try {
-        const r = await editProject({ project, title, description, note, lifecycle })
+        const r = await editProject({ project, title, description, note, lifecycle, priority })
         relayStatus.touch({ id: r.id, kind: 'note', title: title ?? `edited project ${r.slug}` })
         return r.complete ? ok(formatProjectEdit(r)) : err(formatProjectEdit(r))
       } catch (e) {
@@ -1160,14 +1174,15 @@ const mcpHandler = createMcpHandler((server) => {
       inputSchema: z.object({
         title: z.string().min(1).max(200).describe('Task title'),
         description: bodyText('Task body'),
-        project: z.string().max(120).optional().describe('Project id, slug, or name'),
-        labels: z.array(z.string()).max(10).optional().describe('Extra labels'),
+        project: z.string().max(120).optional().describe('Exact project id (preferred), or a slug/title/alias matching exactly one project; ambiguous or unmatched is an error'),
+        labels: z.array(z.string()).max(10).optional().describe('Extra labels (priority:* labels are rejected — use priority)'),
+        priority: z.union([z.number().int().min(0).max(4), z.string().max(3)]).optional().describe(PRIORITY_INPUT_HELP),
         allow_update: z.boolean().optional().describe('Update duplicate instead of creating (default true)'),
       }),
     },
-    async ({ title, description, project, labels, allow_update }: { title: string; description?: string; project?: string; labels?: string[]; allow_update?: boolean }) => {
+    async ({ title, description, project, labels, priority, allow_update }: { title: string; description?: string; project?: string; labels?: string[]; priority?: number | string; allow_update?: boolean }) => {
       try {
-        const r = await upsertTask({ title, description, project, labels, allowUpdate: allow_update ?? true })
+        const r = await upsertTask({ title, description, project, labels, priority, allowUpdate: allow_update ?? true })
         relayStatus.touch({ id: r.id, kind: 'task', title })
         return ok([`# ${r.mode} ${r.id} (STORE: task)`, ``, r.slug ? `Project: ${r.slug}${r.promoted ? ' (promoted backlog → foreground)' : ''}` : `Project: (none)`, ``, r.detail].join('\n'))
       } catch (e) {

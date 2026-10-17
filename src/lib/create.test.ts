@@ -23,6 +23,21 @@ describe('buildCreateArgs', () => {
   })
 })
 
+describe('buildCreateArgs priority', () => {
+  it('sets the real P status with --priority, never a label', () => {
+    assert.deepEqual(
+      buildCreateArgs({ store: 'projects', title: 'Sidecar', priority: 0 }),
+      ['create', 'Sidecar', '--priority', '0'],
+    )
+  })
+  it('different priorities of the same create get different content keys', () => {
+    const base = { store: 'projects', title: 'Sidecar' }
+    assert.notEqual(createKey({ ...base, priority: 0 }), createKey({ ...base, priority: 2 }))
+    // No priority keeps the pre-existing key (no churn for old callers).
+    assert.equal(createKey(base), createKey({ ...base, priority: undefined }))
+  })
+})
+
 describe('parseCreatedId', () => {
   it('finds the store-prefixed id in prose', () => {
     assert.equal(parseCreatedId('task', 'Created task-9omwr — open'), 'task-9omwr')

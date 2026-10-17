@@ -17,4 +17,8 @@ describe('buildEditArgs', () => {
     assert.deepEqual(buildEditArgs('task-1', { title: 'New' }), ['update', 'task-1', '--title', 'New'])
     assert.deepEqual(buildEditArgs('task-1', { description: 'D' }), ['update', 'task-1', '-d', 'D'])
   })
+  it('priority-only is a valid edit and uses --priority', () => {
+    assert.deepEqual(buildEditArgs('project-yg4v', { priority: 0 }), ['update', 'project-yg4v', '--priority', '0'])
+    assert.deepEqual(buildEditArgs('task-1', { title: 'T', priority: 4 }), ['update', 'task-1', '--title', 'T', '--priority', '4'])
+  })
 })

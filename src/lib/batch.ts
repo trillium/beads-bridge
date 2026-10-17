@@ -13,6 +13,7 @@ import { currentRequestCaller, type CreateSource } from './provenance'
 import { runMutation } from './mutate'
 import { unverifiedMessage } from './receipts'
 import { execStdout } from './exec'
+import { parsePriority, priorityLabelError, type Priority } from './priority'
 
 export const MAX_BATCH_BEADS = 20
 export const MAX_BATCH_RELATIONS = 40
@@ -85,6 +86,7 @@ export interface BatchBeadInput {
   description?: string
   labels?: string[]
   parent?: string
+  priority?: number | string
   depends_on?: string[]
 }
 
@@ -113,6 +115,7 @@ interface ResolvedBead {
   title: string
   description?: string
   labels: string[]
+  priority?: Priority
   parent: ResolvedRef | null
   deps: ResolvedRef[]
 }
@@ -260,6 +263,10 @@ export function validateBatch(input: BatchInput): { beads: ResolvedBead[]; relat
     if (!title) fail(`${context}: title is required`)
     const { ok, bad } = validateCreateLabels(b.labels)
     if (bad.length) fail(`${context}: bad label: ${bad.join(', ')}`)
+    const labelPriorityErr = priorityLabelError(ok)
+    if (labelPriorityErr) fail(`${context}: ${labelPriorityErr}`)
+    let priority: Priority | undefined
+    try { priority = parsePriority(b.priority) } catch (e) { fail(`${context}: ${e instanceof Error ? e.message : String(e)}`) }
     return {
       index,
       name,
@@ -267,6 +274,7 @@ export function validateBatch(input: BatchInput): { beads: ResolvedBead[]; relat
       title,
       description: b.description,
       labels: ok,
+      priority,
       parent: b.parent?.trim() ? resolveRef(b.parent, context, byName, index) : null,
       deps: (b.depends_on ?? []).map((r) => resolveRef(r, context, byName, index)),
     }
@@ -340,6 +348,7 @@ export async function runBatch(input: BatchInput, fns: BatchFns = defaultBatchFn
         description: b.description,
         labels: b.labels,
         parent: parent ?? undefined,
+        priority: b.priority,
         provenance,
       })
       landed.set(b.name, id)

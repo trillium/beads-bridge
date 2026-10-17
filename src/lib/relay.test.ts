@@ -9,6 +9,10 @@ import {
   formatProjectEdit,
   lifecycleLabels,
   lifecycleState,
+  matchProject,
+  ambiguousProjectError,
+  unresolvedProjectError,
+  PROJECT_ID_RE,
   normalize,
   planProjectEdit,
   projectState,
@@ -130,7 +134,7 @@ describe('planProjectEdit', () => {
     assert.throws(() => planProjectEdit({ project: '   ' }), /project is required/)
   })
   it('requires at least one editable field', () => {
-    assert.throws(() => planProjectEdit({ project: 'parlay' }), /give title, description, note, and\/or lifecycle/)
+    assert.throws(() => planProjectEdit({ project: 'parlay' }), /give title, description, note, lifecycle, and\/or priority/)
   })
   it('trims title and note, keeps empty description (clears)', () => {
     assert.deepEqual(planProjectEdit({ project: 'gas-city', title: '  T  ', description: '', note: '  n  ' }), {
@@ -139,6 +143,7 @@ describe('planProjectEdit', () => {
       description: '',
       note: 'n',
       lifecycle: undefined,
+      priority: undefined,
     })
   })
   it('rejects unknown lifecycle values', () => {
@@ -182,5 +187,76 @@ describe('formatProjectEdit', () => {
     const partial = { ...result, complete: false, steps: [{ name: 'note', ok: false, detail: 'boom' }] }
     const out = formatProjectEdit(partial)
     assert.match(out, /Partial: 1 step\(s\) failed — re-read project-9d5 before reporting success\./)
+  })
+})
+
+describe('planProjectEdit priority', () => {
+  it('priority alone is a valid edit and parses P-forms', () => {
+    assert.equal(planProjectEdit({ project: 'project-yg4v', priority: 'P0' }).priority, 0)
+    assert.equal(planProjectEdit({ project: 'project-yg4v', priority: 3 }).priority, 3)
+  })
+  it('rejects out-of-range or malformed priority instead of guessing', () => {
+    assert.throws(() => planProjectEdit({ project: 'project-yg4v', priority: 'P9' }), /invalid priority/)
+    assert.throws(() => planProjectEdit({ project: 'project-yg4v', priority: 'urgent' }), /invalid priority/)
+  })
+})
+
+describe('matchProject (exact-or-fail)', () => {
+  const filler = Array.from({ length: 700 }, (_, i) => ({ id: `project-f${i}`, title: `Filler ${i}`, labels: [] as string[] }))
+  const a4t = { id: 'project-a4t', title: 'displayd — API-driven display server for the lnx-server jumbotron', labels: [] as string[] }
+  const wesk = { id: 'project-wesk', title: 'thejobhackers — repo and content project', labels: ['state:foreground'] }
+  const sidecar = { id: 'project-yg4v', title: 'Sidecar', labels: ['priority:P0'] }
+  const resume = { id: 'project-nuj9.1', title: 'Sidecar', labels: ['career-ops', 'resume'] }
+
+  it('an exact id wins even when other projects share its tokens', () => {
+    // "project-a4t" token-overlaps "...-content-project"; the id must win.
+    const m = matchProject('project-a4t', [wesk, ...filler, a4t])
+    assert.equal(m.kind, 'exact')
+    assert.equal((m as { row: { id: string } }).row.id, 'project-a4t')
+  })
+  it('ids match case-insensitively', () => {
+    assert.equal(matchProject('PROJECT-A4T', [a4t]).kind, 'exact')
+  })
+  it('an id-shaped ref that matches nothing is none, never a fuzzy pick', () => {
+    assert.equal(matchProject('project-a4x', [wesk, a4t, sidecar]).kind, 'none')
+    assert.equal(matchProject('project-a4', [wesk, a4t]).kind, 'none')
+  })
+  it('two projects titled Sidecar are ambiguous and both are listed', () => {
+    const m = matchProject('Sidecar', [sidecar, resume])
+    assert.equal(m.kind, 'ambiguous')
+    const err = ambiguousProjectError('Sidecar', (m as { rows: { id: string; title: string; labels: string[] }[] }).rows, 'slug')
+    assert.match(err.message, /ambiguous project "Sidecar"/)
+    assert.match(err.message, /project-yg4v/)
+    assert.match(err.message, /project-nuj9\.1/)
+    assert.match(err.message, /nothing was written/)
+  })
+  it('a fuzzy token hit is NOT a match (slug merely containing "sidecar")', () => {
+    const bind = { id: 'project-nuj9.1', title: 'Bind payload refs to beads (explicit sidecar)', labels: [] as string[] }
+    assert.equal(matchProject('Sidecar', [bind, wesk]).kind, 'none')
+  })
+  it('slug, whole-title and alias each match exactly one project', () => {
+    const rows = [{ id: 'project-1', title: 'Gas City', labels: ['project:gas-city', 'alias:gas-town'] }, wesk]
+    assert.equal(matchProject('gas-city', rows).kind, 'exact')
+    assert.equal(matchProject('project:gas-city', rows).kind, 'exact')
+    assert.equal(matchProject('gas town', rows).kind, 'exact')
+    assert.equal((matchProject('Gas City', rows) as { via: string }).via, 'title')
+  })
+  it('unresolved errors list nearest candidates but say they were not matched', () => {
+    const bind = { id: 'project-nuj9.1', title: 'Bind payload refs to beads (explicit sidecar)', labels: [] as string[] }
+    const err = unresolvedProjectError('Sidecar', [bind, wesk])
+    assert.match(err.message, /unknown project "Sidecar"/)
+    assert.match(err.message, /nothing was written/)
+    assert.match(err.message, /NOT matched/)
+    assert.match(err.message, /project-nuj9\.1/)
+  })
+  it('unresolved id-shaped refs state that ids are never fuzzy', () => {
+    assert.match(unresolvedProjectError('project-zzzz', [sidecar]).message, /an id is never fuzzy-matched/)
+  })
+})
+
+describe('PROJECT_ID_RE', () => {
+  it('matches ids and dotted children, not names', () => {
+    for (const ok of ['project-a4t', 'project-yg4v', 'project-nuj9.1', 'project-a4t.12.1']) assert.ok(PROJECT_ID_RE.test(ok), ok)
+    for (const no of ['Sidecar', 'project:x', 'task-abc', 'project-', 'my project']) assert.ok(!PROJECT_ID_RE.test(no), no)
   })
 })
