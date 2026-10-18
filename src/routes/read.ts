@@ -2,7 +2,7 @@
 // router so literal /fetch/* and /resume win over the param routes.
 import { Router } from 'express'
 import type { Request, Response, NextFunction } from 'express'
-import { execSync } from 'child_process'
+import { execFileSync } from 'child_process'
 import { readFileSync } from 'fs'
 import path from 'path'
 import { BASE, STORES, storeAbout, fillTokens } from '../config'
@@ -93,9 +93,11 @@ readRouter.get('/next', (_req: Request, res: Response) => {
   for (const store of queueOrder) {
     for (const prio of priorities) {
       try {
-        const raw = execSync(
-          `${store} list --label human --state open --priority ${prio} --limit 1 --exclude-label triaged --exclude-label ready 2>/dev/null`,
-          { encoding: 'utf8', timeout: 8000 }
+        const raw = execFileSync(
+          store,
+          ['list', '--label', 'human', '--state', 'open', '--priority', prio, '--limit', '1',
+            '--exclude-label', 'triaged', '--exclude-label', 'ready'],
+          { encoding: 'utf8', timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'] }
         ).trim()
         if (!raw) continue
 
@@ -103,8 +105,8 @@ readRouter.get('/next', (_req: Request, res: Response) => {
         if (!match) continue
         const id = match[1]
 
-        const body = bd(store, `show ${id}`)
-        const comments = bd(store, `comments ${id}`)
+        const body = bd(store, ['show', id])
+        const comments = bd(store, ['comments', id])
         const full = comments ? `${body}\n\n## Comments\n${comments}` : body
         const directions =
           'YOUR ROLE: research this item as far as you reasonably can ' +
@@ -144,8 +146,8 @@ readRouter.get('/:store', (req: Request, res: Response, next: NextFunction) => {
 
   const q = qstr(req.query.q)
   const raw = q
-    ? bd(store, `search "${q}"`)
-    : bd(store, 'list')
+    ? bd(store, ['search', q])
+    : bd(store, ['list'])
 
   const about = storeAbout(store)
   res.type('text/plain').send(wrap({
@@ -176,8 +178,8 @@ readRouter.get('/:id', (req: Request, res: Response, next: NextFunction) => {
   const store = storeFromId(id)
   if (!store) return next()
 
-  const body = bd(store, `show ${id}`)
-  const comments = bd(store, `comments ${id}`)
+  const body = bd(store, ['show', id])
+  const comments = bd(store, ['comments', id])
   const full = comments ? `${body}\n\n## Comments\n${comments}` : body
 
   res.type('text/plain').send(wrap({
