@@ -1,6 +1,6 @@
 // Small shared helpers: coercions, cache tags, bead shell-outs, link extraction.
 import { noteSpawn } from './lib/spawn-stats'
-import { execSync } from 'child_process'
+import { execFileSync } from 'child_process'
 import { BASE } from './config'
 
 export const cacheTag = () => Math.random().toString(36).slice(2, 10)
@@ -12,10 +12,18 @@ export const qstr = (v: unknown): string | undefined =>
 // Express 5 types route params as string | string[]; coerce to one string.
 export const pstr = (v: unknown) => (Array.isArray(v) ? (v[0] ?? '') : String(v ?? ''))
 
-export function bd(store: string, args: string): string {
+// Store wrappers and bead ids are interpolated nowhere: they travel as argv.
+// The patterns also gate what may reach a spawn (no leading '-', no shell/space chars).
+export const STORE_NAME_RE = /^[a-z][a-z0-9_]*$/
+export const BEAD_ID_RE = /^[a-z0-9][a-z0-9_.-]*$/
+
+// Shell-free: `store` is the executable, `args` is argv. User text (search
+// queries, ids) can never be parsed by a shell.
+export function bd(store: string, args: readonly string[]): string {
   try {
+    if (!STORE_NAME_RE.test(store)) throw new Error(`invalid store name: ${store}`)
     noteSpawn(args, true)
-    return execSync(`${store} ${args}`, { encoding: 'utf8', timeout: 10000 }).trim()
+    return execFileSync(store, args, { encoding: 'utf8', timeout: 10000, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }).trim()
   } catch (e: unknown) {
     const err = e as { stdout?: string; message?: string }
     return err.stdout?.trim() || err.message || 'error'
@@ -31,6 +39,7 @@ export { resolveStoreName, resolveBeadStore } from './lib/store-aliases'
 import { resolveBeadStore } from './lib/store-aliases'
 
 export function storeFromId(id: string): string | null {
+  if (!BEAD_ID_RE.test(id)) return null
   const r = resolveBeadStore(id)
   return r.kind === 'ok' ? r.store : null
 }

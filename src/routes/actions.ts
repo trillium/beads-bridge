@@ -2,7 +2,7 @@
 // (bearer-token auth, idempotent mutations, closed label vocabulary).
 import express, { Router } from 'express'
 import type { Request, Response, NextFunction, RequestHandler } from 'express'
-import { execSync } from 'child_process'
+import { execFileSync } from 'child_process'
 import { readFileSync } from 'fs'
 import path from 'path'
 import { toolKey, STORES, fillTokens } from '../config'
@@ -69,12 +69,12 @@ function actionSummary(storeId: string, id: string): {
   bead_id: string; store: string; title: string; state: string; priority: string
   labels: string[]; comments: string; available_actions: string[]
 } {
-  const show = bd(storeId, `show ${id}`)
+  const show = bd(storeId, ['show', id])
   const head = show.split('\n', 1)[0] ?? ''
   const { title, priority, state } = beadStatus(head)
-  const labelRaw = bd(storeId, `label list ${id}`)
+  const labelRaw = bd(storeId, ['label', 'list', id])
   const labels = [...labelRaw.matchAll(/^\s*-\s*(.+)$/gm)].map(m => m[1].trim())
-  const comments = bd(storeId, `comments ${id}`)
+  const comments = bd(storeId, ['comments', id])
   const open = state.toUpperCase() === 'OPEN'
   return {
     bead_id: id, store: storeId, title, state: state.toLowerCase(), priority,
@@ -89,9 +89,11 @@ actionsRouter.get('/action/next', requireToolKey, (_req: Request, res: Response)
   const queueOrder = ['review', ...STORES.filter(s => s !== 'review')]
   for (const store of queueOrder) {
     try {
-      const raw = execSync(
-        `${store} list --label human --state open --limit 10 --priority P0 --exclude-label triaged --exclude-label ready 2>/dev/null`,
-        { encoding: 'utf8', timeout: 8000 }
+      const raw = execFileSync(
+        store,
+        ['list', '--label', 'human', '--state', 'open', '--limit', '10', '--priority', 'P0',
+          '--exclude-label', 'triaged', '--exclude-label', 'ready'],
+        { encoding: 'utf8', timeout: 8000, stdio: ['ignore', 'pipe', 'ignore'] }
       ).trim()
       if (!raw) continue
       const id = raw.match(/\b([a-z_]+-[a-z0-9]+)\b/)?.[1]
