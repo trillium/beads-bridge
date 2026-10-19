@@ -113,6 +113,17 @@ describe('invoke', () => {
     assert.match(out, /# capability — invoke echo_probe \(read\)/)
     assert.match(out, /provenance: backend v\S+ \/ manifest v\d+ \/ capability echo_probe \d+\.\d+\.\d+ \/ by test-caller/)
   })
+  it('runs bead_show capability returning bounded slices', async () => {
+    const r = await invokeWildcard('bead_show', { id: 'status-kdv', offset: 20000, limit: 1000 }, CTX)
+    assert.equal(r.ok, true)
+    assert.equal(r.ok && r.effect, 'read')
+    assert.equal(r.ok && r.id, 'bead_show')
+    const parsed = JSON.parse((r as { text: string }).text)
+    assert.equal(typeof parsed.text, 'string')
+    assert.equal(parsed.next_offset, 21000)
+    assert.equal(parsed.truncated, true)
+    assert.ok(parsed.total_bytes > 20000)
+  })
   it('runs the write demo with a structured receipt', async () => {
     const r = await invokeWildcard('write_probe', { note: 'wildcard write proof' }, CTX)
     assert.equal(r.ok, true)

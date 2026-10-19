@@ -11,6 +11,7 @@ import { resolveStoreName } from '../lib/store-aliases'
 import { readSection } from './sections'
 import { wrap } from '../wrap'
 import { isWebAgent } from '../agent-detect'
+import { readBeadCommentsSlice } from '../lib/comments-slice'
 
 export const mountOrder = -10
 export const readRouter = Router()
@@ -172,11 +173,40 @@ function durableObjectFormat(): string {
   }
 }
 
-// GET /{bead-id} — show bead
-readRouter.get('/:id', (req: Request, res: Response, next: NextFunction) => {
+// GET /{bead-id}/comments — slice comments with byte-range pagination
+readRouter.get('/:id/comments', async (req: Request, res: Response, next: NextFunction) => {
   const id = pstr(req.params.id)
   const store = storeFromId(id)
   if (!store) return next()
+
+  const offsetRaw = qstr(req.query.offset)
+  const limitRaw = qstr(req.query.limit)
+  const offset = offsetRaw !== undefined ? Number(offsetRaw) : undefined
+  const limit = limitRaw !== undefined ? Number(limitRaw) : undefined
+  const resSlice = await readBeadCommentsSlice(id, offset, limit)
+  if (!resSlice.ok) {
+    return void res.status(404).type('text/plain').send(resSlice.error)
+  }
+  res.type('application/json').send(JSON.stringify(resSlice.result, null, 2))
+})
+
+// GET /{bead-id} — show bead
+readRouter.get('/:id', async (req: Request, res: Response, next: NextFunction) => {
+  const id = pstr(req.params.id)
+  const store = storeFromId(id)
+  if (!store) return next()
+
+  const offsetRaw = qstr(req.query.offset)
+  const limitRaw = qstr(req.query.limit)
+  if (offsetRaw !== undefined || limitRaw !== undefined) {
+    const offset = offsetRaw !== undefined ? Number(offsetRaw) : undefined
+    const limit = limitRaw !== undefined ? Number(limitRaw) : undefined
+    const resSlice = await readBeadCommentsSlice(id, offset, limit)
+    if (!resSlice.ok) {
+      return void res.status(404).type('text/plain').send(resSlice.error)
+    }
+    return void res.type('application/json').send(JSON.stringify(resSlice.result, null, 2))
+  }
 
   const body = bd(store, ['show', id])
   const comments = bd(store, ['comments', id])
