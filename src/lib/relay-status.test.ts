@@ -240,3 +240,56 @@ describe('event timestamps and ages (task-60f3z)', () => {
     assert.match(formatRelayStatus(t, READ + 70 * 60_000), /1 hour ago/)
   })
 })
+
+describe('since delta reads (task-6b6ij)', () => {
+  const READ = Date.parse('2026-10-19T18:30:00.000Z')
+  const SINCE = '2026-10-19T18:00:00.000Z'
+
+  function timeline(): RelayStatusTracker {
+    const t = new RelayStatusTracker()
+    t.touch({ id: 'task-before', kind: 'task', title: 'Touched before the cut', now: Date.parse('2026-10-19T17:00:00.000Z') })
+    t.touch({ id: 'task-after', kind: 'task', title: 'Touched after the cut', now: Date.parse('2026-10-19T18:10:00.000Z') })
+    t.touch({ id: 'task-fail', kind: 'failure', title: 'Failed after the cut', state: 'failed', now: Date.parse('2026-10-19T18:20:00.000Z') })
+    return t
+  }
+
+  it('returns only items touched after since, and says so in the header', () => {
+    const out = formatRelayStatus(timeline(), READ, Date.parse(SINCE))
+    assert.match(out, new RegExp(`delta: items touched after ${SINCE}`))
+    assert.match(out, /- task-after /)
+    assert.match(out, /- task-fail /)
+    assert.doesNotMatch(out, /task-before/)
+  })
+
+  it('treats an item touched exactly at since as already seen', () => {
+    const t = new RelayStatusTracker()
+    t.touch({ id: 'task-edge', kind: 'task', title: 'Exactly at the cut', now: Date.parse(SINCE) })
+    assert.doesNotMatch(formatRelayStatus(t, READ, Date.parse(SINCE)), /task-edge/)
+  })
+
+  it('says clear when nothing moved since the cut, not "recently"', () => {
+    const out = formatRelayStatus(timeline(), READ, Date.parse('2026-10-19T19:00:00.000Z'))
+    assert.match(out, /clear — nothing touched since that time/)
+  })
+
+  it('returns only the delta from a full tracker (the tracker holds at most 8 items)', () => {
+    const t = new RelayStatusTracker()
+    for (let i = 0; i < 5; i++) {
+      t.touch({ id: `task-old-${i}`, kind: 'task', title: `old ${i}`, now: Date.parse('2026-10-19T10:00:00.000Z') + i })
+    }
+    for (let i = 0; i < 3; i++) {
+      t.touch({ id: `task-new-${i}`, kind: 'task', title: `new ${i}`, now: Date.parse('2026-10-19T18:40:00.000Z') + i })
+    }
+    const reading = relayStatusReading(t, READ, Date.parse(SINCE))
+    assert.equal(reading.count, 3)
+    assert.equal(reading.since, SINCE)
+    assert.ok(reading.items.every((i) => i.id.startsWith('task-new-')))
+  })
+
+  it('leaves the full projection and its reading unchanged without since', () => {
+    const reading = relayStatusReading(timeline(), READ)
+    assert.equal(reading.count, 3)
+    assert.equal('since' in reading, false)
+    assert.match(formatRelayStatus(timeline(), READ), /task-before/)
+  })
+})

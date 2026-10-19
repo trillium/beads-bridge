@@ -41,7 +41,8 @@ block) use it.
   mode `baseline`; later queries are mode `delta`.
 - The cursor advances ONLY on calls whose response shows the caller the
   state: the explicit `heartbeat` tool (the delta) and `relay_status`
-  (the full projection). Automatic footers PEEK — they project the
+  (the full projection; a `relay_status` call with `since` is a partial
+  view and does not advance). Automatic footers PEEK — they project the
   pending delta without advancing — so an intervening call can report an
   async event but never silently consume it (before task-36na1 every
   footered response consumed the delta: one-shot semantics, and a footer

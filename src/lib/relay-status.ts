@@ -168,15 +168,21 @@ export class RelayStatusTracker {
     return this.items.get(id.trim()) ?? null
   }
 
-  list(now: number = Date.now()): { item: RelayItem; state: RelayItemState }[] {
-    const out = [...this.items.values()].map((item) => ({ item, state: relayStateOf(item, now) }))
+  /**
+   * Newest-first projection, capped. `sinceMs` keeps only items whose last
+   * touch is after it. The filter runs before the cap, so the cap can never
+   * drop a delta item in favour of an older one.
+   */
+  list(now: number = Date.now(), sinceMs?: number): { item: RelayItem; state: RelayItemState }[] {
+    let out = [...this.items.values()].map((item) => ({ item, state: relayStateOf(item, now) }))
+    if (sinceMs != null) out = out.filter(({ item }) => Date.parse(item.lastTouchedAt) > sinceMs)
     out.sort((a, b) => Date.parse(b.item.lastTouchedAt) - Date.parse(a.item.lastTouchedAt))
     return out.slice(0, RELAY_STATUS_MAX_ITEMS)
   }
 
-  followups(now: number = Date.now()): RelayFollowup[] {
+  followups(now: number = Date.now(), sinceMs?: number): RelayFollowup[] {
     const out: RelayFollowup[] = []
-    for (const { item, state } of this.list(now)) {
+    for (const { item, state } of this.list(now, sinceMs)) {
       if (item.needsVerify) out.push({ id: item.id, reason: 'needs verification', tool: 'relay_verify or bead_show' })
       else if (state === 'failed') out.push({ id: item.id, reason: 'failed — re-read before replying', tool: 'bead_show' })
       else if (state === 'stale') out.push({ id: item.id, reason: 'stale — refresh if still relevant', tool: 'bead_show' })
@@ -259,8 +265,9 @@ export function relayItemTiming(item: RelayItem, state: RelayItemState, now: num
 export function relayTimings(
   tracker: RelayStatusTracker = relayStatus,
   now: number = Date.now(),
+  sinceMs?: number,
 ): RelayItemTiming[] {
-  return tracker.list(now).map(({ item, state }) => relayItemTiming(item, state, now))
+  return tracker.list(now, sinceMs).map(({ item, state }) => relayItemTiming(item, state, now))
 }
 
 /**
@@ -280,12 +287,14 @@ export function renderItemStamp(item: RelayItem, now: number = Date.now()): stri
 export function formatRelayBody(
   tracker: RelayStatusTracker = relayStatus,
   now: number = Date.now(),
+  sinceMs?: number,
 ): string {
-  const rows = tracker.list(now)
+  const rows = tracker.list(now, sinceMs)
   const lines = ['## relay-status (ephemeral bridge-activity projection — never bead lifecycle; Beads stores are authoritative)']
   lines.push(`read at ${new Date(now).toISOString()} — every age below is measured against this read; "at" is the event's own source time, "touched" is the bridge's touch`)
+  if (sinceMs != null) lines.push(`delta: items touched after ${new Date(sinceMs).toISOString()}`)
   if (!rows.length) {
-    lines.push('clear — nothing touched recently')
+    lines.push(sinceMs != null ? 'clear — nothing touched since that time' : 'clear — nothing touched recently')
   } else {
     for (const { item, state } of rows) {
       const flags = [
@@ -294,7 +303,7 @@ export function formatRelayBody(
       ].filter(Boolean).join(',')
       lines.push(`- ${item.id} [${item.kind}/${activityStateLabel(state)}] ${item.title}${flags ? ` (${flags})` : ''} — ${renderItemStamp(item, now)}`)
     }
-    for (const f of tracker.followups(now)) {
+    for (const f of tracker.followups(now, sinceMs)) {
       lines.push(`followup: ${f.tool} ${f.id} — ${f.reason}`)
     }
   }
@@ -310,8 +319,9 @@ export function formatRelayBody(
 export function formatRelayStatus(
   tracker: RelayStatusTracker = relayStatus,
   now: number = Date.now(),
+  sinceMs?: number,
 ): string {
-  return `${formatRelayBody(tracker, now)}\n${stalenessTriple()}`
+  return `${formatRelayBody(tracker, now, sinceMs)}\n${stalenessTriple()}`
 }
 
 export function withRelayStatus(
@@ -331,7 +341,14 @@ export function withRelayStatus(
 export function relayStatusReading(
   tracker: RelayStatusTracker = relayStatus,
   now: number = Date.now(),
-): { readAt: string; readAtMs: number; count: number; items: RelayItemTiming[] } {
-  const items = relayTimings(tracker, now)
-  return { readAt: new Date(now).toISOString(), readAtMs: now, count: items.length, items }
+  sinceMs?: number,
+): { readAt: string; readAtMs: number; count: number; items: RelayItemTiming[]; since?: string } {
+  const items = relayTimings(tracker, now, sinceMs)
+  return {
+    readAt: new Date(now).toISOString(),
+    readAtMs: now,
+    count: items.length,
+    items,
+    ...(sinceMs != null ? { since: new Date(sinceMs).toISOString() } : {}),
+  }
 }

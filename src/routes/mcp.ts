@@ -20,6 +20,8 @@ import {
 import { beadText, mapLimit } from '../lib/exec'
 import { fetchBeadTexts, renderBeadBlock } from '../lib/bead-text'
 import { readBeadCommentsSlice } from '../lib/comments-slice'
+import { beadFreshness, renderFreshness, type BeadFreshness } from '../lib/freshness'
+import { parseStampMs } from '../lib/age'
 import { bundleIds } from './beads'
 import { runListQuery } from './query/store'
 import { cleanLabel, LABEL_RE } from './query/params'
@@ -163,11 +165,19 @@ function resolveShow(id: string): { store: string } | { text: string } {
 async function showBead(id: string): Promise<string> {
   const r = resolveShow(id)
   if ('text' in r) return r.text
-  const [body, comments] = await Promise.all([
+  const [body, comments, freshness] = await Promise.all([
     beadText(r.store, ['show', id]),
     beadText(r.store, ['comments', id]),
+    beadFreshness(r.store, id),
   ])
-  return renderBeadBlock(id, r.store, { body, comments })
+  return `${renderBeadBlock(id, r.store, { body, comments })}\n\n${renderFreshness(freshness)}`
+}
+
+// Freshness for a sliced bead_show (JSON). Null when the id does not resolve;
+// the slice path reports that error itself.
+async function freshnessFor(id: string): Promise<BeadFreshness | null> {
+  const r = resolveShow(id)
+  return 'store' in r ? beadFreshness(r.store, id) : null
 }
 
 // beads_bundle: same per-bead blocks as showBead, rendered with batched
@@ -185,7 +195,7 @@ const mcpHandler = createMcpHandler((server) => {
     'bead_show',
     {
       title: 'Show bead',
-      description: 'Show a bead with its comments (same as GET /{bead-id}). Supports byte-range comment pagination via offset/limit ({text, next_offset, total_bytes, truncated}).',
+      description: 'Show a bead with its comments (same as GET /{bead-id}). Every answer carries freshness: as_of (this read), last_touch (store updated_at, comments included, with age) and fresh (true when body and touch were read live). Supports byte-range comment pagination via offset/limit ({text, next_offset, total_bytes, truncated, freshness}).',
       inputSchema: z.object({
         id: z.string().describe('Bead id, e.g. review-3y3'),
         offset: z.number().int().min(0).optional().describe('Byte offset into concatenated comment text (default 0)'),
@@ -197,9 +207,9 @@ const mcpHandler = createMcpHandler((server) => {
       if (offset === undefined && limit === undefined) {
         return ok(await showBead(clean))
       }
-      const res = await readBeadCommentsSlice(clean, offset, limit)
+      const [res, freshness] = await Promise.all([readBeadCommentsSlice(clean, offset, limit), freshnessFor(clean)])
       if (!res.ok) return err(res.error)
-      return ok(JSON.stringify(res.result, null, 2), true)
+      return ok(JSON.stringify({ ...res.result, freshness }, null, 2), true)
     },
   )
 
@@ -1469,23 +1479,36 @@ const mcpHandler = createMcpHandler((server) => {
     'relay_status',
     {
       title: 'Relay status',
-      description: 'Ephemeral relay-status projection: recently touched tasks, dispatches, verifications, failures, completions with their event timestamps, ages relative to this read, and state. Each row names which time it is: `at` is the event\u2019s own source timestamp, `touched` is only the bridge\u2019s touch. The response also carries a JSON timing block (readAt + per-item ISO/epoch timestamps + basis) so ages can be recomputed. Beads stores stay authoritative. Followup lines name the next read to make in the same turn when something is stale, failed, or needs verification.',
+      description: 'Ephemeral relay-status projection: recently touched tasks, dispatches, verifications, failures, completions with their event timestamps, ages relative to this read, and state. Each row names which time it is: `at` is the event\u2019s own source timestamp, `touched` is only the bridge\u2019s touch. The response also carries a JSON timing block (readAt + per-item ISO/epoch timestamps + basis) so ages can be recomputed. Pass `since` for a targeted delta (only items touched after that time) instead of polling the full projection. Beads stores stay authoritative. Followup lines name the next read to make in the same turn when something is stale, failed, or needs verification.',
       inputSchema: z.object({
         mark_verified: z.string().optional().describe('Bead id just re-read — clears its follow-up'),
         pin: z.string().optional().describe('Bead id to pin (exempt from age-out)'),
         unpin: z.string().optional().describe('Bead id to unpin'),
+        since: z.string().max(64).optional().describe('Only items touched after this time (ISO-8601 or epoch). A delta read: it does not advance the heartbeat cursor.'),
       }),
     },
-    async ({ mark_verified, pin, unpin }: { mark_verified?: string; pin?: string; unpin?: string }) => {
+    async ({ mark_verified, pin, unpin, since }: { mark_verified?: string; pin?: string; unpin?: string; since?: string }) => {
+      let sinceMs: number | undefined
+      if (since?.trim()) {
+        const ms = parseStampMs(since.trim())
+        if (ms == null) return err(`since must be an ISO-8601 time or epoch (got "${since.slice(0, 64)}")`)
+        sinceMs = ms
+      }
       if (mark_verified?.trim()) relayStatus.markVerified(mark_verified.trim())
       if (pin?.trim()) relayStatus.pin(pin.trim(), true)
       if (unpin?.trim()) relayStatus.pin(unpin.trim(), false)
-      // A relay_status read surfaces the same projection heartbeat deltas
-      // come from, so it advances the caller's cursor too (see
-      // docs/heartbeat.md). Bare response: no footer, no re-trigger.
-      advanceHeartbeatCursor(currentScope()?.caller ?? HEARTBEAT_CALLER_ANONYMOUS)
+      // A full read surfaces the same projection heartbeat deltas come from,
+      // so it advances the caller's cursor too (see docs/heartbeat.md). A
+      // `since` read shows only a subset: advancing would acknowledge items
+      // the caller never saw, so it leaves the cursor alone. Bare response:
+      // no footer, no re-trigger.
+      if (sinceMs == null) advanceHeartbeatCursor(currentScope()?.caller ?? HEARTBEAT_CALLER_ANONYMOUS)
       const now = Date.now()
-      return withTiming(formatRelayStatus(relayStatus, now), relayStatusReading(relayStatus, now), true)
+      return withTiming(
+        formatRelayStatus(relayStatus, now, sinceMs),
+        relayStatusReading(relayStatus, now, sinceMs),
+        true,
+      )
     },
   )
 
