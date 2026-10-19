@@ -8,7 +8,7 @@
       "op": "bead_show",
       "introduced": "1.0.0",
       "changed": "1.5.0",
-      "beads": ["task-4lb3r"]
+      "beads": ["task-4lb3r", "task-ap93d"]
     },
     {
       "id": "beads_bundle",

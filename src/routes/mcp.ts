@@ -19,6 +19,7 @@ import {
 } from '../lib/store-aliases'
 import { beadText, mapLimit } from '../lib/exec'
 import { fetchBeadTexts, renderBeadBlock } from '../lib/bead-text'
+import { readBeadCommentsSlice } from '../lib/comments-slice'
 import { bundleIds } from './beads'
 import { runListQuery } from './query/store'
 import { cleanLabel, LABEL_RE } from './query/params'
@@ -184,10 +185,22 @@ const mcpHandler = createMcpHandler((server) => {
     'bead_show',
     {
       title: 'Show bead',
-      description: 'Show a bead with its comments (same as GET /{bead-id})',
-      inputSchema: z.object({ id: z.string().describe('Bead id, e.g. review-3y3') }),
+      description: 'Show a bead with its comments (same as GET /{bead-id}). Supports byte-range comment pagination via offset/limit ({text, next_offset, total_bytes, truncated}).',
+      inputSchema: z.object({
+        id: z.string().describe('Bead id, e.g. review-3y3'),
+        offset: z.number().int().min(0).optional().describe('Byte offset into concatenated comment text (default 0)'),
+        limit: z.number().int().min(1).optional().describe('Max bytes of comments text to return'),
+      }),
     },
-    async ({ id }: { id: string }) => ok(await showBead(id.trim())),
+    async ({ id, offset, limit }: { id: string; offset?: number; limit?: number }) => {
+      const clean = id.trim()
+      if (offset === undefined && limit === undefined) {
+        return ok(await showBead(clean))
+      }
+      const res = await readBeadCommentsSlice(clean, offset, limit)
+      if (!res.ok) return err(res.error)
+      return ok(JSON.stringify(res.result, null, 2), true)
+    },
   )
 
   // GET /beads/{id1+id2+...} equivalent (up to 40).

@@ -23,6 +23,7 @@
 import { serverVersion } from './whoami'
 import { loadManifest } from './capabilities'
 import { scratchAppend } from './scratchpad'
+import { readBeadCommentsSlice } from './comments-slice'
 
 export type WildcardEffect = 'read' | 'write'
 
@@ -168,6 +169,50 @@ const wildcardRegistry: WildcardDef[] = [
       }
     },
   },
+  {
+    id: 'bead_show',
+    title: 'Show bead or slice comments with byte-range pagination',
+    description:
+      'Returns bead comment text in bounded byte slices ({text, next_offset, total_bytes, truncated}). ' +
+      'Replaces silent connector gateway truncation (~20,000 bytes) on large durable records ' +
+      '(such as status-kdv poke logs) with controllable offset/limit byte-range paging so bridge ' +
+      'clients can loop to completion without data loss. Omit offset/limit for full unpaged comments.',
+    version: '1.8.0',
+    effect: 'read',
+    keywords: ['bead_show', 'bead_comments', 'comments', 'comment', 'slice', 'offset', 'limit', 'pagination', 'truncate', 'truncation', 'bead', 'show', 'poke', 'log', 'status-kdv'],
+    params: [
+      {
+        name: 'id',
+        type: 'string',
+        required: true,
+        description: 'Bead id, e.g. status-kdv or task-ap93d (max 120 chars)',
+        maxLength: 120,
+      },
+      {
+        name: 'offset',
+        type: 'integer',
+        required: false,
+        description: 'Byte offset into concatenated comment text (default 0)',
+        minimum: 0,
+      },
+      {
+        name: 'limit',
+        type: 'integer',
+        required: false,
+        description: 'Max bytes of comment text to return (default: through end of text)',
+        minimum: 1,
+      },
+    ],
+    maxPayloadChars: 2000,
+    run: async (input) => {
+      const id = String(input.id ?? '').trim()
+      const offset = typeof input.offset === 'number' ? input.offset : undefined
+      const limit = typeof input.limit === 'number' ? input.limit : undefined
+      const res = await readBeadCommentsSlice(id, offset, limit)
+      if (!res.ok) throw new Error(res.error)
+      return { text: JSON.stringify(res.result, null, 2) }
+    },
+  },
 ]
 
 /** The full registry (a copy — callers must not mutate the allowlist). */
@@ -177,7 +222,7 @@ export function listWildcards(): WildcardDef[] {
 
 /** Exact id lookup (invocation path: never fuzzy — ids are stable). */
 export function findWildcard(id: string): WildcardDef | undefined {
-  return wildcardRegistry.find((d) => d.id === id)
+  return wildcardRegistry.find((d) => d.id === id || (id === 'bead_comments' && d.id === 'bead_show'))
 }
 
 export type WildcardHit = {
