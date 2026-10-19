@@ -289,3 +289,34 @@ describe('claim-state taxonomy (task-5w84p.4)', () => {
     assert.match(out, /close-reason:done/)
   })
 })
+
+describe('touch timestamps on search and snapshot (task-6b6ij)', () => {
+  const READ = Date.parse('2026-10-19T09:00:00.000Z')
+  const TOUCH = '2026-10-19T07:00:00.000Z'
+
+  it('search labels each bead store touch with its age against the read, beside the title', () => {
+    const out = formatSearch('ap93d', [
+      { store: 'task', id: 'task-ap93d', title: 'Bead comment read', status: 'closed', labels: [], updatedAt: TOUCH },
+    ], [], ['task'], [], READ)
+    assert.match(out, /- task-ap93d \[task\] — Bead comment read \[closed\] — touched 2026-10-19T07:00:00\.000Z \(2 hours ago, touch time — not the action's own time\)/)
+  })
+
+  it('search says the touch is unknown rather than inventing one', () => {
+    const out = formatSearch('x', [{ store: 'task', id: 'task-x', title: 'No stamp', labels: [] }], [], ['task'], [], READ)
+    assert.match(out, /- task-x \[task\] — No stamp — touch time unknown/)
+  })
+
+  it('snapshot states its read time and labels each bead touch the same way', () => {
+    const out = formatSnapshot({
+      root: 'task-6b6ij',
+      truncated: false,
+      beads: [
+        { store: 'task', id: 'task-6b6ij', title: 'Freshness', labels: [], updatedAt: TOUCH, depth: 0, via: 'root' },
+        { store: 'task', id: 'task-ap93d', title: 'Pagination', labels: [], depth: 1, via: 'dep' },
+      ],
+    }, READ)
+    assert.match(out, /read at 2026-10-19T09:00:00\.000Z/)
+    assert.match(out, /- task-6b6ij \[task\] — Freshness — touched 2026-10-19T07:00:00\.000Z \(2 hours ago, touch time/)
+    assert.match(out, /- task-ap93d \[task\] — Pagination — touch time unknown/)
+  })
+})

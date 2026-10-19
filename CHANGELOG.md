@@ -25,6 +25,14 @@
 
 ## Unreleased
 
+- **Read-path freshness** (task-6b6ij). `bead_show` answers now end with a
+  `## freshness` block (`as_of` = this read, `last_touch` = the store's
+  `updated_at` with age, `fresh` = body and touch both read live); the paged
+  JSON form gains a `freshness` field. `retrieval_search` and
+  `retrieval_snapshot` label each bead's store touch with its age against the
+  read, and snapshot now states its read time. `relay_status` takes `since`
+  for a targeted delta (items touched after that time) and leaves the
+  heartbeat cursor alone on that read. Logic in `src/lib/freshness.ts`.
 - **Batched bead reads over SQL** (`docs/sql-reads.md`). `beads_bundle`,
   `retrieval_search`/`_activity`/`_claimed`, `retrieval_snapshot`,
   `bead_connections`, `query_store`, `GET /q/:store`, `random`, relay lookups

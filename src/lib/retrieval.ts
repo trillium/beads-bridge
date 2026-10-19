@@ -181,7 +181,7 @@ export function formatSearch(
   }
   for (const r of rows) {
     lines.push(
-      `- ${r.id} [${r.store}] — ${r.title}${r.status ? ` [${r.status}]` : ''}${r.labels.length ? ` (${r.labels.slice(0, 4).join(', ')})` : ''}${r.updatedAt ? ` — ${renderStamp(r.updatedAt, now)}` : ' — updated at unknown'}`,
+      `- ${r.id} [${r.store}] — ${r.title}${r.status ? ` [${r.status}]` : ''}${r.labels.length ? ` (${r.labels.slice(0, 4).join(', ')})` : ''}${r.updatedAt ? ` — ${renderStamp(r.updatedAt, now, 'touch')}` : ' — touch time unknown'}`,
     )
   }
   if (unknownStores.length) lines.push(``, `Skipped unknown stores: ${unknownStores.join(', ')}`)
@@ -879,10 +879,11 @@ export async function reconstructSnapshot(input: string, opts: SnapshotOpts = {}
   return { root, alternatives, beads: nodes, truncated }
 }
 
-export function formatSnapshot(snap: Snapshot): string {
+export function formatSnapshot(snap: Snapshot, now: number = Date.now()): string {
   if (snap.error) return [`# reconstruction snapshot`, ``, snap.error].join('\n')
   const lines = [
     `# reconstruction snapshot — ${snap.root} (${snap.beads.length} beads${snap.truncated ? ', truncated at cap' : ''})`,
+    `read at ${new Date(now).toISOString()} — each touch below is the store's last update (comments included), aged against this read`,
     ``,
   ]
   if (snap.alternatives?.length) lines.push(`Other matches for the phrase: ${snap.alternatives.join(', ')}`, ``)
@@ -896,7 +897,7 @@ export function formatSnapshot(snap: Snapshot): string {
     lines.push(`## depth ${d}`, ``)
     for (const b of byDepth.get(d)!) {
       lines.push(
-        `- ${b.id} [${b.store}] — ${b.title}${b.status ? ` [${b.status}]` : ''}${b.updatedAt ? ` (updated ${b.updatedAt})` : ''} (via ${b.via})`,
+        `- ${b.id} [${b.store}] — ${b.title}${b.status ? ` [${b.status}]` : ''}${b.updatedAt ? ` — ${renderStamp(b.updatedAt, now, 'touch')}` : ' — touch time unknown'} (via ${b.via})`,
       )
     }
     lines.push(``)

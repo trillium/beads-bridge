@@ -15,6 +15,8 @@ export type CapabilityEntry = {
   deprecated?: string
   removed?: string
   beads?: string[]
+  /** Parameters this op accepts beyond the basics; registered here so the manifest names every input. */
+  params?: { name: string; type: string; description: string }[]
 }
 
 export type CapabilityManifest = {

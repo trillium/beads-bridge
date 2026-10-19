@@ -8,7 +8,7 @@
       "op": "bead_show",
       "introduced": "1.0.0",
       "changed": "1.5.0",
-      "beads": ["task-4lb3r", "task-ap93d"]
+      "beads": ["task-4lb3r", "task-ap93d", "task-6b6ij"]
     },
     {
       "id": "beads_bundle",
@@ -247,7 +247,7 @@
       "op": "retrieval_search",
       "introduced": "1.0.0",
       "changed": "1.5.0",
-      "beads": ["task-4lb3r"]
+      "beads": ["task-4lb3r", "task-6b6ij"]
     },
     {
       "id": "retrieval_activity",
@@ -263,13 +263,21 @@
       "op": "retrieval_snapshot",
       "introduced": "1.0.0",
       "changed": "1.5.0",
-      "beads": ["task-4lb3r"]
+      "beads": ["task-4lb3r", "task-6b6ij"]
     },
     {
       "id": "relay_status",
       "title": "Relay status",
       "op": "relay_status",
-      "introduced": "1.0.0"
+      "introduced": "1.0.0",
+      "beads": ["task-6b6ij"],
+      "params": [
+        {
+          "name": "since",
+          "type": "string",
+          "description": "ISO-8601 time or epoch; returns only items touched after it. A delta read: does not advance the heartbeat cursor."
+        }
+      ]
     },
     {
       "id": "heartbeat",
