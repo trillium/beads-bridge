@@ -70,5 +70,24 @@ trap - EXIT
 
 echo "--- verify ---"
 mcpjungle list servers --registry "$REGISTRY" | head -5
-COUNT="$(mcpjungle list tools --server beads-bridge --registry "$REGISTRY" 2>/dev/null | grep -c . || true)"
-echo "beads-bridge tools via gateway: $COUNT"
+# Count from the gateway HTTP API, not the unreliable `mcpjungle list tools`
+# listing (it printed 0 right after a good register, 2026-10-25), and compare
+# with the live bridge tools/list. The key reaches curl via stdin config only.
+HERE="$(cd "$(dirname "$0")" && pwd)"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/jungle-verify.XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
+curl -sf -m 10 "$REGISTRY/api/v0/tools?server=beads-bridge" > "$WORK/gw.json" \
+  || { echo "error: gateway tools API unreachable at $REGISTRY" >&2; exit 1; }
+printf 'header = "Authorization: Bearer %s"\n' "$TOOLKEY" | curl -sf -m 10 -K - "$BRIDGE_URL" \
+  -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' > "$WORK/live.raw" \
+  || { echo "error: live bridge tools/list failed at $BRIDGE_URL" >&2; exit 1; }
+TOOLKEY=""
+LIVE="$(python3 -c '
+import json,sys
+raw=open(sys.argv[1]).read()
+body="\n".join(l[6:] for l in raw.splitlines() if l.startswith("data: ")) or raw
+print(len(json.loads(body)["result"]["tools"]))' "$WORK/live.raw")" \
+  || { echo "error: live tools/list unparseable" >&2; exit 1; }
+python3 "$HERE/gateway-tools.py" report "$WORK/gw.json" "$LIVE" \
+  || { echo "error: gateway tool count differs from live bridge" >&2; exit 1; }

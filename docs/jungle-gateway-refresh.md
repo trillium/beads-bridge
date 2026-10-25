@@ -83,8 +83,10 @@ an older surface.
 - `curl -s http://127.0.0.1:8338/health` → `{"status":"ok"}`
 - `mcpjungle list servers --registry http://127.0.0.1:8338` → `beads-bridge`
   (`streamable_http`, `http://127.0.0.1:3737/mcp`)
-- `mcpjungle list tools --server beads-bridge --registry http://127.0.0.1:8338`
-  must match the live count.
+- `curl -s 'http://127.0.0.1:8338/api/v0/tools?server=beads-bridge' | python3 ops/gateway-tools.py names - | wc -l`
+  must match the live count (`mcpjungle list tools` is unreliable: it printed
+  0 while the API held 46; `ops/jungle-register-bearer.sh` and
+  `ops/mcp-refresh-check.sh` use the API).
 - Use a new `initialize` per check when testing registry changes; never reuse
   a session (see `docs/jungle-gateway.md`).
 
