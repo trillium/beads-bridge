@@ -2,11 +2,12 @@
 // Store tests point OAUTH_STORE_PATH at a temp dir — never the real one.
 import { describe, it, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import {
   CODE_TTL_MS,
+  MAX_PENDING_APPROVALS,
   PENDING_APPROVAL_TTL_MS,
   SHORT_CODE_LEN,
   EXPIRED_TOMBSTONE_TTL_MS,
@@ -381,5 +382,24 @@ describe('pending approvals (tailnet QR)', () => {
     assert.equal(consumePendingApproval(p.id, 'bbtx_a'), 'expired')
     saveStore(loadStore()) // any write persists the prune
     assert.deepEqual(JSON.parse(readFileSync(storePath(), 'utf8')).pendingApprovals, {})
+  })
+
+  it('caps open records: the oldest is evicted once the cap is exceeded', () => {
+    const first = createPendingApproval(input)
+    const ids = [first.id]
+    for (let i = 0; i < MAX_PENDING_APPROVALS; i++) ids.push(createPendingApproval(input).id)
+    const stored = JSON.parse(readFileSync(storePath(), 'utf8')).pendingApprovals
+    assert.equal(Object.keys(stored).length, MAX_PENDING_APPROVALS)
+    assert.equal(pendingApprovalState(first.id), 'expired')
+    assert.equal(pendingApprovalState(ids[ids.length - 1]), 'pending')
+  })
+})
+
+describe('saveStore', () => {
+  it('replaces the store atomically: 0600 file, no temp file left behind', () => {
+    createPendingApproval({ tx: 'bbtx_a', clientName: 'ChatGPT', redirectHost: 'chatgpt.com', scope: ['mcp'] })
+    saveStore(loadStore())
+    assert.deepEqual(readdirSync(dirname(storePath())), ['store.json'])
+    assert.equal(statSync(storePath()).mode & 0o777, 0o600)
   })
 })

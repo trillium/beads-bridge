@@ -20,7 +20,7 @@ import { isIPv4 } from 'net'
 import type { Server } from 'http'
 import { APPROVAL_PORT } from '../config'
 import { hasForwardMarkers, socketPeer } from './access-gate'
-import { cancelTx, esc } from './oauth-tx'
+import { esc } from './oauth-tx'
 import { decidePendingApproval, getPendingApproval } from './oauth'
 
 /** True for IPv4 addresses inside 100.64.0.0/10 (also ::ffff:-mapped). */
@@ -98,19 +98,16 @@ export function createTailnetApprovalApp(opts: TailnetApprovalOptions = {}): exp
       try { host = new URL(origin).host } catch { /* treated as mismatch */ }
       if (host !== req.get('host')) return void res.type('text/plain').status(403).send('cross-origin request refused\n')
     }
-    const rec = getPendingApproval(id(req))
-    if (!rec) return notFound(req, res, next)
     const approve = (req.body ?? {}).decision === 'approve'
     const result = decidePendingApproval(id(req), approve ? 'approved' : 'denied')
     if (result === 'not_found') return notFound(req, res, next)
     if (result === 'already_decided') {
       return void res.status(409).type('text/html').send(page(`<h1>Already decided</h1><p>This request was decided already. You can close this page.</p>`))
     }
-    if (!approve) cancelTx(rec.tx)
     res.type('text/html').send(page(
       approve
         ? `<h1>Approved</h1><p>The waiting browser will finish connecting on its own. You can close this page.</p>`
-        : `<h1>Denied</h1><p>The request was cancelled. You can close this page.</p>`,
+        : `<h1>Denied</h1><p>The waiting browser will be told the request was denied. You can close this page.</p>`,
     ))
   })
 

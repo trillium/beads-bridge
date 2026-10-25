@@ -8,7 +8,7 @@
 // ~/.config/beads-bridge/beads-bridge-oauth.json, 0600) so restarts don't revoke
 // ChatGPT — only in-flight approval transactions are memory-only.
 import { createHash, randomBytes, randomInt } from 'crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { configFile } from './config-dir'
 
@@ -17,6 +17,7 @@ export const CODE_TTL_MS = 10 * 60 * 1000
 export const TX_TTL_MS = 15 * 60 * 1000
 // Tailnet approval requests (QR + short code): short-lived and single-use.
 export const PENDING_APPROVAL_TTL_MS = 10 * 60 * 1000
+export const MAX_PENDING_APPROVALS = 100
 // Granted credentials live until revoked (deleting the store file revokes).
 // expiresAt === NEVER_EXPIRES (0) means "never expires". 0 is the sentinel
 // because it JSON round-trips exactly (JSON.stringify(Infinity) becomes
@@ -291,7 +292,9 @@ export function loadStore(): StoreData {
 export function saveStore(d: StoreData): void {
   const p = storePath()
   mkdirSync(join(p, '..'), { recursive: true, mode: 0o700 })
-  writeFileSync(p, JSON.stringify(prune(d)), { mode: 0o600 })
+  const tmp = `${p}.${process.pid}.${rand(6)}.tmp`
+  writeFileSync(tmp, JSON.stringify(prune(d)), { mode: 0o600 })
+  renameSync(tmp, p)
 }
 
 export function registerClient(name: string | undefined, redirectUris: string[]): { clientId: string } {
@@ -404,6 +407,8 @@ export function createPendingApproval(input: {
     expiresAt: Date.now() + PENDING_APPROVAL_TTL_MS,
   }
   d.pendingApprovals[id] = rec
+  const open = Object.entries(d.pendingApprovals).sort(([, a], [, b]) => a.createdAt - b.createdAt)
+  for (const [k] of open.slice(0, Math.max(0, open.length - MAX_PENDING_APPROVALS))) delete d.pendingApprovals[k]
   saveStore(d)
   return { id, shortCode: rec.shortCode, expiresAt: rec.expiresAt }
 }

@@ -1,7 +1,6 @@
 // In-memory OAuth authorization transactions (a restart just makes the user
 // retry). Shared by the public approval routes (src/routes/oauth.ts) and the
-// tailnet approval listener (src/lib/tailnet-approval.ts), which cancels a
-// transaction when the human denies it from the tailnet device.
+// tailnet approval listener (src/lib/tailnet-approval.ts).
 export interface Tx {
   clientId: string
   clientName?: string
@@ -21,10 +20,6 @@ export const txId = (): string =>
 export function pruneTx(): void {
   const now = Date.now()
   for (const [k, v] of pending) if (v.expiresAt <= now) pending.delete(k)
-}
-
-export function cancelTx(id: string): void {
-  pending.delete(id)
 }
 
 export function esc(s: string): string {

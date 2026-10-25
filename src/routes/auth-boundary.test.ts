@@ -392,13 +392,29 @@ describe('approval boundary: tailnet-only QR approval', () => {
     assert.deepEqual(await (await realFetch(`${pubBase}/oauth/pending/bbpa_unknown/status`)).json(), { status: 'expired' })
   })
 
-  it('(c) deny from the tailnet cancels the tx and sends the browser back access_denied', async () => {
+  it('(c) deny from the tailnet sends the browser back access_denied and consumes the record', async () => {
     const f = await startFlow(mcpResource(BASE))
     assert.equal((await post(`${tailBase}/oauth/approve/${f.approval}`, { decision: 'deny' }, TAILNET_PEER)).status, 200)
     assert.deepEqual(await (await realFetch(`${pubBase}/oauth/pending/${f.approval}/status`)).json(), { status: 'denied' })
+    const r = await post(`${pubBase}/oauth/authorize`, { tx: f.tx, approval: f.approval, decision: 'deny' })
+    assert.equal(r.status, 302)
+    const loc = new URL(r.headers.get('location') ?? '')
+    assert.equal(loc.searchParams.get('error'), 'access_denied')
+    assert.equal(r.headers.get('set-cookie'), null)
     assert.equal(pending.has(f.tx), false)
+    assert.equal(f.approval in loadStore().pendingApprovals, false)
+    const again = await post(`${pubBase}/oauth/authorize`, { tx: f.tx, approval: f.approval, decision: 'approve' })
+    assert.equal(again.status, 400)
+  })
+
+  it('(c2) a browser that still submits approve after a tailnet deny gets access_denied, no code', async () => {
+    const f = await startFlow(mcpResource(BASE))
+    await post(`${tailBase}/oauth/approve/${f.approval}`, { decision: 'deny' }, TAILNET_PEER)
     const r = await post(`${pubBase}/oauth/authorize`, { tx: f.tx, approval: f.approval, decision: 'approve' })
-    assert.equal(r.status, 400) // tx is gone: nothing to grant
+    assert.equal(r.status, 302)
+    const loc = new URL(r.headers.get('location') ?? '')
+    assert.equal(loc.searchParams.get('error'), 'access_denied')
+    assert.equal(loc.searchParams.get('code'), null)
   })
 
   it('(d) the pending record is single-use: a replay and a second tx cannot reuse it', async () => {

@@ -104,12 +104,12 @@ describe('tailnet approval app', () => {
     assert.equal(pendingApprovalState(p.id), 'approved')
   })
 
-  it('POST deny marks the record denied and cancels the transaction', async () => {
+  it('POST deny marks the record denied and leaves the transaction for the browser to close', async () => {
     const p = mk()
     pending.set('bbtx_t', { clientId: 'c', redirectUri: 'https://app.example/cb', scope: ['mcp'], state: '', challenge: 'x', resource: 'r', expiresAt: Date.now() + 1000 })
     assert.equal((await post(p.id, 'deny')).status, 200)
     assert.equal(pendingApprovalState(p.id), 'denied')
-    assert.equal(pending.has('bbtx_t'), false)
+    assert.equal(pending.has('bbtx_t'), true)
   })
 
   it('refuses a cross-origin form post', async () => {
