@@ -5,6 +5,7 @@
 import { Router } from 'express'
 import type { Request, Response } from 'express'
 import { createMcpHandler, withMcpAuth } from 'mcp-handler'
+import type { McpServer } from '@modelcontextprotocol/server'
 import { z } from 'zod'
 import { MAX_BODY_CHARS, bodyText, requiredBodyText } from '../lib/limits'
 import { BASE, STORES, toolKey } from '../config'
@@ -36,7 +37,7 @@ import { editBead } from '../lib/edit'
 import { PRIORITY_INPUT_HELP, parsePriority, priorityLabelError } from '../lib/priority'
 import { formatWhoami, loadProfile, readWhoamiNotes, serverVersion, updateProfile } from '../lib/whoami'
 import { appendPersonality, editPersonalitySection, ensurePersonality, loadPersonality, savePersonality, PERSONALITY_MAX_CHARS } from '../lib/personality'
-import { backendCommit, BRIDGE_OP_NAMES, capabilitiesSince, capabilityStatus, formatBridgeInfo, isSemver, loadManifest, schemaHash, whoamiDescription } from '../lib/capabilities'
+import { backendCommit, BRIDGE_OP_NAMES, captureToolSurface, capabilitiesSince, capabilityStatus, formatBridgeInfo, isSemver, liveToolSurface, loadManifest, schemaHash, setLiveToolSurface, whoamiDescription } from '../lib/capabilities'
 import { findWildcard, formatWildcardDescribe, formatWildcardInvoke, formatWildcardList, formatWildcardSearch, formatWildcardUnknownDescribe, invokeWildcard, searchWildcards } from '../lib/wildcard'
 import { checkSurface, extractRecordedTriple, formatSurfaceCheck, latestFeedbackFilename, readFeedbackRecord } from '../lib/surface-compare'
 import { scratchAppend, scratchClear, scratchRead } from '../lib/scratchpad'
@@ -189,7 +190,7 @@ async function showBeads(ids: string[]): Promise<string[]> {
   return resolved.map(({ id, r }) => ('text' in r ? r.text : renderBeadBlock(id, r.store, texts.get(id)!)))
 }
 
-const mcpHandler = createMcpHandler((server) => {
+const registerBridgeTools = (server: McpServer): void => {
   // GET /{bead-id} equivalent.
   server.registerTool(
     'bead_show',
@@ -756,10 +757,10 @@ const mcpHandler = createMcpHandler((server) => {
     },
     async () => {
       return ok([
-        formatBridgeInfo({ opNames: BRIDGE_OP_NAMES, base: BASE }),
+        formatBridgeInfo({ opNames: liveToolSurface(), base: BASE }),
         ``,
         `commit: ${backendCommit()}`,
-        `schema: ${schemaHash(BRIDGE_OP_NAMES)}`,
+        `schema: ${schemaHash(liveToolSurface())}`,
       ].join('\n'))
     },
   )
@@ -899,7 +900,7 @@ const mcpHandler = createMcpHandler((server) => {
             version: serverVersion(),
             manifest: m.manifestVersion,
             commit: backendCommit(),
-            schema: schemaHash(BRIDGE_OP_NAMES),
+            schema: schemaHash(liveToolSurface()),
           },
           clientTools: client_tools ?? null,
           clientSchema: client_schema ?? null,
@@ -1564,6 +1565,18 @@ const mcpHandler = createMcpHandler((server) => {
       return withTiming(text, payload, true)
     },
   )
+}
+
+// What a client sees in tools/list, captured once for the schema hash.
+setLiveToolSurface(captureToolSurface(registerBridgeTools as Parameters<typeof captureToolSurface>[0]))
+
+// Stateless transport: no session, GET /mcp is 405, nothing can carry a
+// notifications/tools/list_changed — so don't advertise that we send them.
+// serverInfo is the real bridge identity (mcp-handler defaults to
+// "mcp-typescript server on vercel 0.1.0").
+const mcpHandler = createMcpHandler(registerBridgeTools, {
+  serverInfo: { name: 'beads-bridge', version: serverVersion() },
+  capabilities: { tools: { listChanged: false } },
 })
 
 // Loopback service bearer (task-y1i3e): the MCPJungle gateway calls /mcp

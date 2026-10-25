@@ -13,6 +13,7 @@ import {
   compareSemver,
   formatBridgeInfo,
   isSemver,
+  liveToolSurface,
   loadManifest,
   schemaHash,
   stalenessTriple,
@@ -22,6 +23,7 @@ import {
   withToolVersion,
 } from './capabilities'
 import { serverVersion } from './whoami'
+import '../routes/mcp' // installs the captured live tool surface (needs FUNNEL_BASE)
 
 const MCP_SRC = readFileSync(join(__dirname, '..', 'routes', 'mcp.ts'), 'utf8')
 
@@ -184,13 +186,28 @@ describe('version in tool descriptions (task-mm1q8)', () => {
     assert.ok(whoamiDescription().includes(`v${v} `) || whoamiDescription().includes(`v${v}]`), 'description backend version matches')
     assert.ok(whoamiDescription().includes(`manifest v${manifest}`), 'description manifest matches')
   })
-  it('schemaHash still covers op names only (descriptions never feed it)', () => {
-    const h = schemaHash(BRIDGE_OP_NAMES)
+  it('schemaHash covers description and input schema, not just names', () => {
+    const base = [{ name: 'a', description: 'one', inputSchema: { type: 'object', properties: { x: { type: 'string' } } } }]
+    const h = schemaHash(base)
     assert.match(h, /^[0-9a-f]{64}$/)
-    // A description-only change leaves the hash input untouched: hashing
-    // the ops plus a description must differ, proving descriptions are out.
-    const withDesc = schemaHash([...BRIDGE_OP_NAMES, whoamiDescription()])
-    assert.notEqual(withDesc, h)
-    assert.equal(schemaHash([...BRIDGE_OP_NAMES].reverse()), h, 'order-insensitive over names')
+    assert.notEqual(schemaHash([{ ...base[0], description: 'two' }]), h, 'description change moves the hash')
+    assert.notEqual(
+      schemaHash([{ ...base[0], inputSchema: { type: 'object', properties: { x: { type: 'string' }, y: { type: 'number' } } } }]),
+      h,
+      'new parameter moves the hash',
+    )
+    assert.equal(
+      schemaHash([{ name: 'a', inputSchema: base[0].inputSchema, description: 'one' }]),
+      h,
+      'key order is irrelevant',
+    )
+  })
+  it('live surface hash is stable and carries every registered tool description', () => {
+    const live = liveToolSurface()
+    assert.deepEqual(live.map((t) => t.name).sort(), [...BRIDGE_OP_NAMES].sort())
+    assert.ok(live.every((t) => typeof t.description === 'string' && t.description.length > 0))
+    assert.equal(schemaHash(live), schemaHash([...live].reverse()))
+    const bumped = live.map((t) => (t.name === 'bead_show' ? { ...t, description: `${t.description} (edited)` } : t))
+    assert.notEqual(schemaHash(bumped), schemaHash(live))
   })
 })
