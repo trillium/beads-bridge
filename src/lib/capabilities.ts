@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { serverVersion } from './whoami'
+import { START_SESSION_DESCRIPTION_BASE } from './start-session'
 
 export type CapabilityEntry = {
   id: string
@@ -35,7 +36,7 @@ const SEMVER = /^\d+\.\d+\.\d+$/
 export const BRIDGE_OP_NAMES = [
   'bead_show', 'beads_bundle', 'query_store', 'bead_comment', 'bead_note',
   'bead_decision', 'bead_label', 'bead_create', 'bead_batch_create',
-  'bead_connections', 'bead_edit', 'bead_feedback', 'feedback_edit', 'store_health', 'whoami', 'identity_update',
+  'bead_connections', 'bead_edit', 'bead_feedback', 'feedback_edit', 'store_health', 'whoami', 'start_session', 'identity_update',
   'personality_read', 'personality_replace', 'personality_append', 'personality_section_edit',
   'scratchpad', 'random', 'timeout_probe', 'relay_resolve_project',
   'relay_list_projects', 'relay_capture', 'project_edit', 'relay_upsert_task',
@@ -262,4 +263,9 @@ export function withToolVersion(base: string): string {
 /** whoami tool description with the live version embedded (single source). */
 export function whoamiDescription(): string {
   return withToolVersion(WHOAMI_DESCRIPTION_BASE)
+}
+
+/** start_session tool description with the live version embedded (single source). */
+export function startSessionDescription(): string {
+  return withToolVersion(START_SESSION_DESCRIPTION_BASE)
 }

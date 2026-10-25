@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.9.0
+
+- **`start_session` companion entrypoint** (task-vog0d, task-wrsf4, task-lwckw,
+  task-hdiyo). A non-developer, voice-friendly tool that activates the human's
+  persistent interactive companion: it returns exactly the `whoami` block plus a
+  `capabilities` line (bridge version, manifest version, tool count) and the
+  session-start rule. `whoami` is unchanged and stays as the compatibility alias;
+  both share one implementation, so `recentNotes` stay OAuth-identity-only.
+- **Stale-client delta.** Optional `client_capabilities_version` (X.Y.Z) appends
+  tools added / removed / changed since that version, computed from
+  `capabilities.json`, plus `refresh_required: yes|no`. The manifest records the
+  version a tool changed, not whether its signature or description did, so those
+  are reported together; a version older than the manifest history, or not
+  semver, is reported as unknown rather than guessed.
+- **Automatic, idempotent use.** The tool description and the top of the
+  personality/bootstrap document say to call it first without the human naming
+  MCP or the tool, again after compaction/summarization/handoff or when unsure,
+  and immediately if substantive conversation began without it. Read-only: it
+  writes nothing beyond existing telemetry. Existing stored personality documents
+  are not rewritten; only the default document carries the rule.
+
 ## 1.8.2
 
 - **Gateway tool count comes from the gateway API.** `ops/jungle-register-bearer.sh`

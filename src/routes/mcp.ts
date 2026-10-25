@@ -37,7 +37,8 @@ import { editBead } from '../lib/edit'
 import { PRIORITY_INPUT_HELP, parsePriority, priorityLabelError } from '../lib/priority'
 import { formatWhoami, loadProfile, readWhoamiNotes, serverVersion, updateProfile } from '../lib/whoami'
 import { appendPersonality, editPersonalitySection, ensurePersonality, loadPersonality, savePersonality, PERSONALITY_MAX_CHARS } from '../lib/personality'
-import { backendCommit, BRIDGE_OP_NAMES, captureToolSurface, capabilitiesSince, capabilityStatus, formatBridgeInfo, isSemver, liveToolSurface, loadManifest, schemaHash, setLiveToolSurface, whoamiDescription } from '../lib/capabilities'
+import { backendCommit, BRIDGE_OP_NAMES, captureToolSurface, capabilitiesSince, capabilityStatus, formatBridgeInfo, isSemver, liveToolSurface, loadManifest, schemaHash, setLiveToolSurface, startSessionDescription, whoamiDescription } from '../lib/capabilities'
+import { formatCapabilitiesSummary } from '../lib/start-session'
 import { findWildcard, formatWildcardDescribe, formatWildcardInvoke, formatWildcardList, formatWildcardSearch, formatWildcardUnknownDescribe, invokeWildcard, searchWildcards } from '../lib/wildcard'
 import { checkSurface, extractRecordedTriple, formatSurfaceCheck, latestFeedbackFilename, readFeedbackRecord } from '../lib/surface-compare'
 import { scratchAppend, scratchClear, scratchRead } from '../lib/scratchpad'
@@ -702,6 +703,38 @@ const registerBridgeTools = (server: McpServer): void => {
 
   // Agent orientation: server identity plus the caller's own auth context.
   // Token values are never echoed — only client id, scopes, and expiry.
+  // Shared by whoami (compatibility alias) and start_session.
+  const whoamiBlock = (
+    ctx?: { http?: { authInfo?: { token: string; clientId: string; scopes: string[] } } },
+  ): string => {
+    const auth = ctx?.http?.authInfo
+    const rec = auth?.token ? lookupAccess(auth.token) : null
+    // The personality document is the durable bootstrap record: ensured
+    // here so whoami always returns the complete text, migrating any
+    // legacy profile notes/posture exactly once (idempotent after that).
+    const pers = ensurePersonality(loadProfile())
+    // Resume context is the operator's own content for their own agents:
+    // attach only on the authenticated path, never for unauthenticated.
+    const scratch = auth ? readWhoamiNotes() : { notes: [], total: 0 }
+    return formatWhoami({
+      server: 'beads-bridge',
+      version: serverVersion(),
+      base: BASE,
+      auth: auth
+        ? {
+          clientId: auth.clientId,
+          scopes: auth.scopes ?? [],
+          expiresAt: rec?.expiresAt,
+          audience: rec?.resource,
+        }
+        : undefined,
+      operator: loadProfile(),
+      personalityDoc: pers.doc,
+      stores: STORES,
+      recentNotes: scratch.notes,
+      scratchTotal: scratch.total,
+    })
+  }
   server.registerTool(
     'whoami',
     {
@@ -712,33 +745,28 @@ const registerBridgeTools = (server: McpServer): void => {
     async (
       _args: Record<string, never>,
       ctx?: { http?: { authInfo?: { token: string; clientId: string; scopes: string[] } } },
+    ) => ok(whoamiBlock(ctx)),
+  )
+  server.registerTool(
+    'start_session',
+    {
+      title: 'Start session',
+      description: startSessionDescription(),
+      inputSchema: z.object({
+        client_capabilities_version: z.string().max(40).optional().describe('Bridge version (X.Y.Z) your loaded tool schema came from; adds the delta to live'),
+      }),
+    },
+    async (
+      { client_capabilities_version }: { client_capabilities_version?: string },
+      ctx?: { http?: { authInfo?: { token: string; clientId: string; scopes: string[] } } },
     ) => {
-      const auth = ctx?.http?.authInfo
-      const rec = auth?.token ? lookupAccess(auth.token) : null
-      // The personality document is the durable bootstrap record: ensured
-      // here so whoami always returns the complete text, migrating any
-      // legacy profile notes/posture exactly once (idempotent after that).
-      const pers = ensurePersonality(loadProfile())
-      // Resume context is the operator's own content for their own agents:
-      // attach only on the authenticated path, never for unauthenticated.
-      const scratch = auth ? readWhoamiNotes() : { notes: [], total: 0 }
-      return ok(formatWhoami({
-        server: 'beads-bridge',
+      const m = loadManifest()
+      return ok(whoamiBlock(ctx) + formatCapabilitiesSummary({
         version: serverVersion(),
-        base: BASE,
-        auth: auth
-          ? {
-            clientId: auth.clientId,
-            scopes: auth.scopes ?? [],
-            expiresAt: rec?.expiresAt,
-            audience: rec?.resource,
-          }
-          : undefined,
-        operator: loadProfile(),
-        personalityDoc: pers.doc,
-        stores: STORES,
-        recentNotes: scratch.notes,
-        scratchTotal: scratch.total,
+        manifestVersion: m.manifestVersion,
+        toolCount: liveToolSurface().length,
+        clientVersion: client_capabilities_version?.trim() || undefined,
+        manifest: m,
       }))
     },
   )

@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { configFile } from './config-dir'
 import { loadProfile, updateProfile, type OperatorProfile } from './whoami'
+import { START_SESSION_RULE } from './start-session'
 
 // Whole-document guard against runaway writes — ~100 printed pages, not 500
 // chars. Replace/append/section-edit all enforce it on the resulting doc.
@@ -25,6 +26,8 @@ export function defaultPersonality(): string {
     '',
     'Durable operating instructions for assistants connected over MCP.',
     'This document is startup/bootstrap context: read it fully at session start.',
+    '',
+    START_SESSION_RULE,
     '',
     '## Interaction rules',
     '',
