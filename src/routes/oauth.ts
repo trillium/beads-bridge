@@ -9,6 +9,7 @@ import type { Request, Response } from 'express'
 import { protectedResourceHandler } from 'mcp-handler'
 import { BASE } from '../config'
 import { mountFetch } from '../lib/express-fetch'
+import { esc, pending, pruneTx, txId } from '../lib/oauth-tx'
 import {
   SUPPORTED_SCOPES,
   TX_TTL_MS,
@@ -44,30 +45,6 @@ export const oauthRouter = Router()
 const ISSUER = BASE.replace(/\/$/, '')
 const RESOURCE = mcpResource(BASE)
 const COOKIE = 'bb_approval'
-
-// In-memory approval transactions only (a restart just makes the user retry).
-interface Tx {
-  clientId: string
-  clientName?: string
-  redirectUri: string
-  scope: string[]
-  state: string
-  challenge: string
-  resource: string
-  expiresAt: number
-}
-const pending = new Map<string, Tx>()
-const txId = (): string =>
-  `bbtx_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
-
-function pruneTx(): void {
-  const now = Date.now()
-  for (const [k, v] of pending) if (v.expiresAt <= now) pending.delete(k)
-}
-
-function esc(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
 
 function parseCookies(req: Request): Record<string, string> {
   const out: Record<string, string> = {}

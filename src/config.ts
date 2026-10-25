@@ -25,6 +25,12 @@ export const PORT = (() => {
   const raw = Number(process.env.BEADS_BRIDGE_PORT ?? '')
   return Number.isFinite(raw) && raw > 0 ? raw : 3737
 })()
+// Tailnet-only approval listener (see src/lib/tailnet-approval.ts): a second
+// socket bound to TAILNET_IP, so it cannot share the main 0.0.0.0:PORT bind.
+export const APPROVAL_PORT = (() => {
+  const raw = Number(process.env.BEADS_BRIDGE_APPROVAL_PORT ?? '')
+  return Number.isFinite(raw) && raw > 0 ? raw : PORT + 1
+})()
 const funnel = (process.env.FUNNEL_BASE ?? '').replace(/\/$/, '')
 if (!funnel) throw new Error('FUNNEL_BASE is not set (add it to .env — see .env.example)')
 export const BASE = funnel
