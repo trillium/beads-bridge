@@ -25,6 +25,8 @@ BRIDGE_URL="${BRIDGE_URL:-http://127.0.0.1:3737/mcp}"
 TOOLKEY_PATH="${TOOLKEY_PATH:-$HOME/.config/beads-bridge/beads-bridge-toolkey}"
 JUNGLE_DB="${JUNGLE_DB:-$HOME/.local/share/mcpjungle/mcpjungle.db}"
 JUNGLE_SERVER="${JUNGLE_SERVER:-beads-bridge}"
+JUNGLE_REGISTRY="${JUNGLE_REGISTRY:-http://127.0.0.1:8338}"
+HERE="$(cd "$(dirname "$0")" && pwd)"
 CLIENT_VERSION=""
 CLIENT_TOOLS=""
 
@@ -103,11 +105,26 @@ compare_names() { # $1 = label, $2 = file of loaded names
 # --- (b) gateway catalog -----------------------------------------------------
 echo
 echo "== LOADED: MCPJungle gateway catalog (server '$JUNGLE_SERVER')"
-if command -v sqlite3 >/dev/null 2>&1 && [[ -r "$JUNGLE_DB" ]]; then
+# Prefer the gateway HTTP API (stable); fall back to the sqlite catalog.
+GW_API=0
+if curl -sf -m 10 "$JUNGLE_REGISTRY/api/v0/tools?server=$JUNGLE_SERVER" > "$WORK/gw.json" 2>/dev/null \
+   && python3 "$HERE/gateway-tools.py" names "$WORK/gw.json" > "$WORK/gw.api.names" 2>/dev/null; then
+  GW_API=1
+fi
+if [[ "$GW_API" -eq 1 ]] || { command -v sqlite3 >/dev/null 2>&1 && [[ -r "$JUNGLE_DB" ]]; }; then
   OBSERVED=1
-  sqlite3 -readonly "$JUNGLE_DB" "select t.name from tools t join mcp_servers s on s.id=t.server_id where s.name='$JUNGLE_SERVER' and t.deleted_at is null order by t.name;" > "$WORK/gw.names" 2>/dev/null
-  GW_TAG="$(sqlite3 -readonly "$JUNGLE_DB" "select t.description from tools t join mcp_servers s on s.id=t.server_id where s.name='$JUNGLE_SERVER' and t.name like '%whoami';" 2>/dev/null | grep -o 'bridge v[0-9.]* / manifest v[0-9]*' | head -1)"
-  GW_AT="$(sqlite3 -readonly "$JUNGLE_DB" "select max(t.updated_at) from tools t join mcp_servers s on s.id=t.server_id where s.name='$JUNGLE_SERVER';" 2>/dev/null)"
+  if [[ "$GW_API" -eq 1 ]]; then
+    cp "$WORK/gw.api.names" "$WORK/gw.names"
+  else
+    sqlite3 -readonly "$JUNGLE_DB" "select t.name from tools t join mcp_servers s on s.id=t.server_id where s.name='$JUNGLE_SERVER' and t.deleted_at is null order by t.name;" > "$WORK/gw.names" 2>/dev/null
+  fi
+  if [[ "$GW_API" -eq 1 ]]; then
+    GW_TAG="$(grep -o 'bridge v[0-9.]* / manifest v[0-9]*' "$WORK/gw.json" | head -1)"
+    GW_AT="API $JUNGLE_REGISTRY"
+  else
+    GW_TAG="$(sqlite3 -readonly "$JUNGLE_DB" "select t.description from tools t join mcp_servers s on s.id=t.server_id where s.name='$JUNGLE_SERVER' and t.name like '%whoami';" 2>/dev/null | grep -o 'bridge v[0-9.]* / manifest v[0-9]*' | head -1)"
+    GW_AT="$(sqlite3 -readonly "$JUNGLE_DB" "select max(t.updated_at) from tools t join mcp_servers s on s.id=t.server_id where s.name='$JUNGLE_SERVER';" 2>/dev/null)"
+  fi
   # gateway rows are stored with the server prefix stripped or not; normalise
   sed -i.bak "s/^${JUNGLE_SERVER}__//" "$WORK/gw.names"
   GW_V="$(echo "$GW_TAG" | sed -n 's/bridge v\([0-9.]*\) .*/\1/p')"

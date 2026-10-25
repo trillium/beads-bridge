@@ -67,7 +67,7 @@ Since task-y1i3e the bearer is the bridge service key instead:
 - Bridge-direct `tools/list` on `http://127.0.0.1:3737/mcp`: **36**
 - Jungle gateway `tools/list` on `http://127.0.0.1:8338/mcp`: **36**,
   every name `beads-bridge__`-prefixed
-- `mcpjungle list tools --server beads-bridge`: **36**
+- Gateway API `/api/v0/tools?server=beads-bridge` (see `docs/jungle-gateway-refresh.md`): **36**
 - Live call `beads-bridge__whoami` through jungle returns bridge output.
 
 ## S3 end-to-end proof (2026-09-16, task-622kl.3)
@@ -160,7 +160,7 @@ collisions with `beads-bridge__` tools.
 
 - Gateway `tools/list`: **55** = **36** `beads-bridge__` + **19**
   `firstmate_mcp__`, zero unprefixed
-- `mcpjungle list tools --server firstmate_mcp`: **19**, all ENABLED
+- Gateway API `/api/v0/tools?server=firstmate_mcp`: **19**, all ENABLED
 - Live call `firstmate_mcp__status_tail` through jungle returns real
   server output (wake events from firstmate state).
 - Direct stdio smoke (pre-registration): `initialize` →

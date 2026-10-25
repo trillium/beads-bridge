@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.8.2
+
+- **Gateway tool count comes from the gateway API.** `ops/jungle-register-bearer.sh`
+  no longer trusts `mcpjungle list tools | grep -c .` (it printed 0 after a good
+  register); it reads `/api/v0/tools?server=beads-bridge`, compares with the live
+  bridge `tools/list`, prints `beads-bridge tools via gateway: N (live M)` and
+  exits non-zero on mismatch. `ops/mcp-refresh-check.sh` prefers the same API
+  read and falls back to sqlite. Shared parser: `ops/gateway-tools.py`.
+
 ## 1.8.1
 
 - **Tool-surface staleness is detectable.** `initialize` now reports
