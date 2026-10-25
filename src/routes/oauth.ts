@@ -2,14 +2,18 @@
 // discovery metadata, dynamic client registration, human approval,
 // auth-code + PKCE exchange, and refresh rotation. Co-hosted with the
 // resource server; token/client state persists under ~/.config/beads-bridge so
-// restarts don't revoke ChatGPT. Human approval is gated by
-// OAUTH_SETUP_KEY (pasted once, then a cookie).
+// restarts don't revoke ChatGPT. Human approval is a tailnet-only QR/link
+// (src/lib/tailnet-approval.ts) that completes in the original browser, which
+// then holds an approval cookie so later grants are one click.
 import { Router } from 'express'
 import type { Request, Response } from 'express'
 import { protectedResourceHandler } from 'mcp-handler'
 import { BASE } from '../config'
 import { mountFetch } from '../lib/express-fetch'
 import { esc, pending, pruneTx, txId } from '../lib/oauth-tx'
+import type { Tx } from '../lib/oauth-tx'
+import { qrSvg } from '../lib/qr'
+import { tailnetApprovalUrl } from '../lib/tailnet-approval'
 import {
   SUPPORTED_SCOPES,
   TX_TTL_MS,
@@ -17,6 +21,8 @@ import {
   buildAuthorizationServerMetadata,
   chatgptResource,
   checkApproval,
+  consumePendingApproval,
+  createPendingApproval,
   cimdRedirectUris,
   consumeCode,
   geminiResource,
@@ -30,11 +36,11 @@ import {
   mintTokenPair,
   normalizeResource,
   parseScope,
+  pendingApprovalState,
   pkceChallenge,
   registerClient,
   resolveClient,
   rotateRefresh,
-  setupKeyMatches,
   setupKeyPath,
   validateRedirectUri,
 } from '../lib/oauth'
@@ -143,20 +149,66 @@ oauthRouter.post('/oauth/register', (req: Request, res: Response) => {
 // page is branded even when the static dist bundle is absent). Branding only.
 const BEAD_MARK = `<svg width="28" height="28" viewBox="0 0 64 64" aria-hidden="true" style="vertical-align:-6px;margin-right:.4rem"><defs><linearGradient id="bb-g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8f46ff"/><stop offset="1" stop-color="#7e14ff"/></linearGradient></defs><rect width="64" height="64" rx="15" fill="url(#bb-g)"/><rect x="5" y="28.5" width="54" height="7" rx="3.5" fill="#ede6ff" opacity="0.5"/><circle cx="32" cy="32" r="17" fill="#ede6ff"/><circle cx="32" cy="32" r="10.5" fill="#7e14ff"/><rect x="21.5" y="29.75" width="21" height="4.5" rx="2.25" fill="#ede6ff"/></svg>`
 
-function approvePage(tx: string, clientLabel: string, redirectHost: string, scope: string[], needsKey: boolean, error?: string): string {
-  return `<!doctype html><html><head><meta charset="utf8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" type="image/svg+xml" href="/favicon.svg"><meta name="theme-color" content="#7e14ff"><title>Approve beads-bridge</title></head><body style="font-family:system-ui;max-width:40rem;margin:3rem auto;padding:0 1rem">` +
+interface Challenge {
+  /** Pending-approval id, or null when this browser is already approved. */
+  approvalId: string | null
+  shortCode: string
+  /** Tailnet approval URL (QR + link), or null when TAILNET_IP is unusable. */
+  url: string | null
+}
+
+// How the human proves they are on the tailnet: a pending record, a link and a
+// QR code for it. Skipped for a browser that already holds an approval cookie.
+function openChallenge(txKey: string, tx: Tx): Challenge {
+  const p = createPendingApproval({
+    tx: txKey,
+    clientName: tx.clientName ?? tx.clientId,
+    redirectHost: hostOf(tx.redirectUri),
+    scope: tx.scope,
+  })
+  return { approvalId: p.id, shortCode: p.shortCode, url: tailnetApprovalUrl(p.id) }
+}
+
+function hostOf(redirectUri: string): string {
+  try { return new URL(redirectUri).host } catch { return redirectUri }
+}
+
+// Polls the unguessable status endpoint every 2 s; "approved"/"denied" submit
+// the same form the Approve/Deny buttons use, so the code/PKCE flow below is
+// unchanged. The status response carries nothing but the state word.
+const POLL_SCRIPT = `<script>(function(){var f=document.getElementById('bb-form'),m=document.getElementById('bb-wait');if(!f)return;var id=f.elements.approval.value;function go(d){var i=document.createElement('input');i.type='hidden';i.name='decision';i.value=d;f.appendChild(i);f.submit()}function tick(){fetch('/oauth/pending/'+encodeURIComponent(id)+'/status',{cache:'no-store'}).then(function(r){return r.json()}).then(function(j){if(j.status==='approved')return go('approve');if(j.status==='denied')return go('deny');if(j.status==='expired'){m.textContent='This request expired — reload this page to get a new code.';return}setTimeout(tick,2000)}).catch(function(){setTimeout(tick,2000)})}setTimeout(tick,2000)})()</script>`
+
+function approvePage(tx: string, clientLabel: string, redirectHost: string, scope: string[], challenge: Challenge, error?: string): string {
+  const head =
+    `<!doctype html><html><head><meta charset="utf8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" type="image/svg+xml" href="/favicon.svg"><meta name="theme-color" content="#7e14ff"><title>Approve beads-bridge</title></head><body style="font-family:system-ui;max-width:40rem;margin:3rem auto;padding:0 1rem">` +
     `<h1>${BEAD_MARK}Approve beads-bridge access?</h1>` +
-    (error ? `<p style="color:#a00"><b>${esc(error)}</b> — try again, this page still works.</p>` : '') +
+    (error ? `<p style="color:#a00"><b>${esc(error)}</b></p>` : '') +
     `<p><b>${esc(clientLabel)}</b> wants full bead access (scope: ${esc(scope.join(' ') || 'mcp')}). Tokens it receives can read, comment, and decide on beads.</p>` +
-    `<p>After approval you are sent back to <b>${esc(redirectHost)}</b>. ChatGPT keeps a token until you revoke it (delete <code>~/.config/beads-bridge/beads-bridge-oauth.json</code> on the bridge host).</p>` +
-    `<form method="post" action="/oauth/authorize">` +
+    `<p>After approval you are sent back to <b>${esc(redirectHost)}</b>. ChatGPT keeps a token until you revoke it (delete <code>~/.config/beads-bridge/beads-bridge-oauth.json</code> on the bridge host).</p>`
+  if (!challenge.approvalId) {
+    return head +
+      `<form method="post" action="/oauth/authorize">` +
+      `<input type="hidden" name="tx" value="${esc(tx)}">` +
+      `<p>This browser is already approved — one click:</p>` +
+      `<p><button type="submit" name="decision" value="approve">Approve</button> ` +
+      `<button type="submit" name="decision" value="deny">Deny</button></p>` +
+      `</form></body></html>`
+  }
+  const approve = challenge.url
+    ? `<p>Approve from a device on the tailnet — tap the link, or scan the code with your phone:</p>` +
+      `<p><a href="${esc(challenge.url)}" style="word-break:break-all">${esc(challenge.url)}</a></p>` +
+      `<p>${qrSvg(challenge.url, { label: 'QR code for the tailnet approval link' })}</p>` +
+      `<p>Code: <b style="font-size:2rem;letter-spacing:.2em;font-family:ui-monospace,monospace">${esc(challenge.shortCode)}</b><br>` +
+      `<small>The approval page shows the same code — approve only if it matches.</small></p>` +
+      `<p id="bb-wait" aria-live="polite">Waiting for approval…</p>`
+    : `<p><b>Tailnet approval is not configured on this bridge</b> (<code>TAILNET_IP</code> must be a tailnet address). No grant can be approved until it is.</p>`
+  return head +
+    `<form id="bb-form" method="post" action="/oauth/authorize">` +
     `<input type="hidden" name="tx" value="${esc(tx)}">` +
-    (needsKey
-      ? `<p><label>Setup key (from the bridge host file, asked once):<br><input type="password" name="setup_key" size="40" autocomplete="off"></label></p>`
-      : `<p>This browser is already approved — one click:</p>`) +
-    `<p><button type="submit" name="decision" value="approve">Approve</button> ` +
-    `<button type="submit" name="decision" value="deny">Deny</button></p>` +
-    `</form></body></html>`
+    `<input type="hidden" name="approval" value="${esc(challenge.approvalId)}">` +
+    approve +
+    `<p><button type="submit" name="decision" value="deny">Deny</button></p>` +
+    `</form>` + (challenge.url ? POLL_SCRIPT : '') + `</body></html>`
 }
 
 function redirectError(res: Response, redirectUri: string, error: string, state: string, description: string): void {
@@ -204,33 +256,56 @@ oauthRouter.get('/oauth/authorize', async (req: Request, res: Response) => {
     resource,
     expiresAt: Date.now() + TX_TTL_MS,
   })
-  let redirectHost = redirectUri
-  try { redirectHost = new URL(redirectUri).host } catch { /* keep raw */ }
-  const needsKey = !checkApproval(approvalCookie(req))
-  res.type('text/html').send(approvePage(id, resolved.name ?? clientId, redirectHost, scope, needsKey))
+  const tx = pending.get(id)!
+  const approval: Challenge = checkApproval(approvalCookie(req))
+    ? { approvalId: null, shortCode: '', url: null }
+    : openChallenge(id, tx)
+  res.type('text/html').send(approvePage(id, resolved.name ?? clientId, hostOf(redirectUri), scope, approval))
+})
+
+// Public status poll for the page above. The id is an unguessable capability;
+// the answer is one of pending|approved|denied|expired and nothing else.
+oauthRouter.get('/oauth/pending/:id/status', (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store')
+  res.json({ status: pendingApprovalState(String(req.params.id)) })
 })
 
 oauthRouter.post('/oauth/authorize', (req: Request, res: Response) => {
   pruneTx()
   const body = (req.body ?? {}) as Record<string, unknown>
   const str = (v: unknown): string => (typeof v === 'string' ? v : '')
-  // Failed attempts must NOT burn the transaction: a wrong setup key
-  // re-renders the form so the user can just retry.
-  const tx = pending.get(str(body.tx))
+  // A grant that is not (yet) approved must NOT burn the transaction: the
+  // page is re-rendered so the human can retry.
+  const txKey = str(body.tx)
+  const tx = pending.get(txKey)
   if (!tx) return void res.type('text/plain').status(400).send('approval expired — restart from ChatGPT')
+  const approvalId = str(body.approval)
+  const deny = (): void => {
+    pending.delete(txKey)
+    redirectError(res, tx.redirectUri, 'access_denied', tx.state, 'user denied the request')
+  }
   if (str(body.decision) !== 'approve') {
-    pending.delete(str(body.tx))
-    return void redirectError(res, tx.redirectUri, 'access_denied', tx.state, 'user denied the request')
+    if (approvalId) consumePendingApproval(approvalId, txKey)
+    return void deny()
   }
-  if (!checkApproval(approvalCookie(req)) && !setupKeyMatches(str(body.setup_key))) {
-    let redirectHost = tx.redirectUri
-    try { redirectHost = new URL(tx.redirectUri).host } catch { /* keep raw */ }
-    return void res.type('text/html').status(403).send(
-      approvePage(str(body.tx), tx.clientName ?? tx.clientId, redirectHost, tx.scope, true, 'wrong setup key'),
-    )
+  const cookieOk = checkApproval(approvalCookie(req))
+  if (!cookieOk) {
+    // Approval must come from the tailnet device that decided this exact tx.
+    const outcome = approvalId ? consumePendingApproval(approvalId, txKey) : 'expired'
+    if (outcome === 'denied') return void deny()
+    if (outcome === 'pending') {
+      return void res.type('text/plain').status(409).send('not approved yet — approve from your tailnet device')
+    }
+    if (outcome !== 'approved') {
+      return void res.type('text/html').status(403).send(
+        approvePage(txKey, tx.clientName ?? tx.clientId, hostOf(tx.redirectUri), tx.scope, openChallenge(txKey, tx), 'Approval expired or was not granted — use the new code below.'),
+      )
+    }
+    setApprovalCookie(res, grantApproval())
+  } else if (approvalId) {
+    consumePendingApproval(approvalId, txKey)
   }
-  if (!checkApproval(approvalCookie(req))) setApprovalCookie(res, grantApproval())
-  pending.delete(str(body.tx))
+  pending.delete(txKey)
   const { code } = mintCode({
     clientId: tx.clientId,
     redirectUri: tx.redirectUri,

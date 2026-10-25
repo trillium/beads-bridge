@@ -18,7 +18,7 @@ import express from 'express'
 import type { Request, RequestHandler } from 'express'
 import { isIPv4 } from 'net'
 import type { Server } from 'http'
-import { APPROVAL_PORT, TAILNET_IP } from '../config'
+import { APPROVAL_PORT } from '../config'
 import { hasForwardMarkers, socketPeer } from './access-gate'
 import { cancelTx, esc } from './oauth-tx'
 import { decidePendingApproval, getPendingApproval } from './oauth'
@@ -33,8 +33,12 @@ export function isTailnetAddress(addr: string): boolean {
 
 export const APPROVE_PATH = '/oauth/approve'
 
+// Read at call time (config.ts has already merged .env into process.env), so
+// tests can point the bridge at a tailnet address without re-importing config.
+const tailnetIp = (): string => process.env.TAILNET_IP ?? 'unset'
+
 /** The URL the QR code / tappable link carries, or null when TAILNET_IP is unusable. */
-export function tailnetApprovalUrl(pendingId: string, ip: string = TAILNET_IP, port: number = APPROVAL_PORT): string | null {
+export function tailnetApprovalUrl(pendingId: string, ip: string = tailnetIp(), port: number = APPROVAL_PORT): string | null {
   if (!isTailnetAddress(ip)) return null
   return `http://${ip}:${port}${APPROVE_PATH}/${pendingId}`
 }
@@ -123,13 +127,14 @@ const RETRY_MS = 30_000
  * on it.
  */
 export function startTailnetApprovalListener(app: express.Express = createTailnetApprovalApp()): Server | null {
-  if (!isTailnetAddress(TAILNET_IP)) {
+  const ip = tailnetIp()
+  if (!isTailnetAddress(ip)) {
     console.log(`  tailnet approval: DISABLED (TAILNET_IP is not a 100.64.0.0/10 address) — QR approval unavailable`)
     return null
   }
   const listen = (): Server => {
-    const server = app.listen(APPROVAL_PORT, TAILNET_IP, () => {
-      console.log(`  tailnet approval: http://${TAILNET_IP}:${APPROVAL_PORT}${APPROVE_PATH}/<id> (tailnet peers only)`)
+    const server = app.listen(APPROVAL_PORT, ip, () => {
+      console.log(`  tailnet approval: http://${ip}:${APPROVAL_PORT}${APPROVE_PATH}/<id> (tailnet peers only)`)
     })
     server.on('error', (e: NodeJS.ErrnoException) => {
       console.error(`tailnet approval listener failed (${e.code ?? e.message}); retrying in ${RETRY_MS / 1000}s`)
