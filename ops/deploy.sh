@@ -122,4 +122,33 @@ if [ -r "$KEY_FILE" ]; then
 else
   echo "    !! $KEY_FILE unreadable; skipping MCP smoke check" >&2
 fi
+
+# Gateway catalog. The MCPJungle gateway caches tool metadata at register
+# time, so a deploy that adds/removes/re-describes tools leaves every gateway
+# client (ChatGPT/Grok/Gemini) on the old surface until it is re-registered —
+# the 2026-10 catalog sat on v1.7.0 / 44 tools for 11 days against a live
+# v1.8.0 / 46. Compare live tools/list + whoami tag with the catalog
+# (ops/mcp-refresh-check.sh, read-only: exit 0 current, 1 stale, 2 unknown)
+# and re-register only when they differ. Never gates the deploy result and
+# never prints the service key; re-running is idempotent. Skipped when the
+# smoke checks above already failed (do not register a broken surface).
+echo "==> gateway catalog"
+if [ "$rc" -ne 0 ]; then
+  echo "    skipped: bridge checks failed above; fix, then run ops/mcp-refresh-check.sh"
+else
+  grc=0
+  "$DEPLOY_DIR/ops/mcp-refresh-check.sh" >/dev/null 2>&1 || grc=$?
+  case "$grc" in
+    0) echo "    gateway catalog matches live" ;;
+    1)
+      echo "    gateway catalog differs from live; re-registering"
+      if "$DEPLOY_DIR/ops/jungle-register-bearer.sh" >/dev/null 2>&1; then
+        echo "    re-registered; reconnect gateway clients (docs/jungle-gateway-refresh.md step C)"
+      else
+        echo "    !! re-register failed: run $DEPLOY_DIR/ops/jungle-register-bearer.sh" >&2
+      fi
+      ;;
+    *) echo "    gateway not observable: run $DEPLOY_DIR/ops/mcp-refresh-check.sh, then $DEPLOY_DIR/ops/jungle-register-bearer.sh if stale" ;;
+  esac
+fi
 exit $rc

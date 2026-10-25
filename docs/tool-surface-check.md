@@ -10,7 +10,8 @@ A server cannot observe the tool list a client currently holds, so the
 tool is explicit about its inputs:
 
 1. **Live surface** — `BRIDGE_OP_NAMES` in `src/lib/capabilities.ts`
-   (the same list `bridge_info`/`whoami` hash into the staleness line),
+   (the same list `bridge_info`/`whoami` hash into the staleness line; the
+   hash itself covers each tool's name, description and input schema),
    plus backend version + commit + manifest version + schema hash.
 2. **Reference surface** — one of:
    - **(a) caller-supplied** `client_tools` (your `tools/list` snapshot)
@@ -53,3 +54,7 @@ scope of the verdict is unambiguous.
 - The gateway caches tool metadata at register time, so after this
   ships run `mcpjungle register --conf <exported conf> --force` before
   gateway clients can see `tool_surface_check` (firstmate owns that step).
+
+The end-to-end refresh procedure (confirm live, confirm loaded, minimal
+refresh per client, verify) is in `docs/jungle-gateway-refresh.md`;
+`ops/mcp-refresh-check.sh` automates its read-only checks.
