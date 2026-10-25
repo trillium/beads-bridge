@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 6,
+  "manifestVersion": 7,
   "note": "Source of truth for shipped Beads Bridge MCP capabilities. A capability is shipped only when implementation + tests + this entry + changelog/version land coherently. See task-qgplz.",
   "capabilities": [
     {
@@ -365,6 +365,13 @@
       "op": "store_health",
       "introduced": "1.8.0",
       "beads": ["task-mpj2o"]
+    },
+    {
+      "id": "start_session",
+      "title": "Start session",
+      "op": "start_session",
+      "introduced": "1.9.0",
+      "beads": ["task-vog0d", "task-5l0qc", "task-wrsf4", "task-lwckw", "task-hdiyo"]
     }
   ]
 }

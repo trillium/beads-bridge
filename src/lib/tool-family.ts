@@ -30,7 +30,7 @@ export const TOOL_FAMILIES: ToolFamily[] = [
   {
     key: 'system',
     label: 'system',
-    tools: ['whoami', 'bridge_info', 'store_health', 'tool_surface_check', 'capability', 'capability_status', 'capabilities_since', 'random', 'timeout_probe', 'heartbeat'],
+    tools: ['whoami', 'start_session', 'bridge_info', 'store_health', 'tool_surface_check', 'capability', 'capability_status', 'capabilities_since', 'random', 'timeout_probe', 'heartbeat'],
     prefixes: [],
   },
 ]

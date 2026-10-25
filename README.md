@@ -99,7 +99,7 @@ Tools registered in `src/routes/mcp.ts` (46 total), grouped:
 - Beads: `bead_show`, `beads_bundle`, `bead_create`, `bead_batch_create`, `bead_edit`, `bead_comment`, `bead_note`, `bead_decision`, `bead_label`, `bead_connections`, `bead_feedback`, `feedback_edit`
 - Query/retrieval: `query_store`, `retrieval_search`, `retrieval_activity`, `retrieval_claimed`, `retrieval_snapshot`, `random`, `relay_inspect`
 - Projects/relay: `relay_resolve_project`, `relay_list_projects`, `relay_capture`, `project_edit`, `relay_upsert_task`, `relay_dispatch_request`, `relay_verify`, `relay_flow`, `relay_catchup`, `relay_attention_next`, `relay_status`
-- Meta: `whoami`, `bridge_info`, `capability_status`, `capabilities_since`, `identity_update`, `scratchpad`, `timeout_probe`, `heartbeat`, `agent_presence`, `store_health`
+- Meta: `start_session`, `whoami`, `bridge_info`, `capability_status`, `capabilities_since`, `identity_update`, `scratchpad`, `timeout_probe`, `heartbeat`, `agent_presence`, `store_health`
 
 Shipped capabilities are also tracked in `capabilities.json` (manifest v2) — a capability lands only with implementation + tests + manifest entry + changelog/version together.
 

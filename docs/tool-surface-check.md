@@ -47,6 +47,17 @@ scope of the verdict is unambiguous.
 - `newer since recorded version` reuses `capabilities_since` on the
   version the feedback recorded — i.e. what a refresh would bring.
 
+## start_session version delta
+
+`start_session` (alias-compatible with `whoami`) accepts
+`client_capabilities_version`. It answers "what is my stale client missing"
+from the `capabilities.json` history: tools added / removed / changed since
+that version and `refresh_required: yes|no` (yes whenever the client version
+differs from live — the schema hash covers every description). It cannot split
+signature from description changes, and says `unknown` for versions older than
+the manifest or not semver. Use `tool_surface_check` for a snapshot-based
+comparison.
+
 ## Operational notes
 
 - Observational only: no Bead mutations, no follow-on actions, output
