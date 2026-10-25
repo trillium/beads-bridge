@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.10.0
+
+- **OAuth approval is a tailnet-only QR; the typed setup key is gone.** The
+  public approval page shows a QR (inline SVG, ported Nayuki generator, no new
+  dependency), the same URL as a tappable link, and a short code, then polls
+  `/oauth/pending/:id/status` and completes by itself. The URL is served only by
+  a second listener on `TAILNET_IP:BEADS_BRIDGE_APPROVAL_PORT` (default
+  `PORT+1`), which accepts only 100.64.0.0/10 peers without forwarding headers;
+  the public listener never serves `/oauth/approve/*`. Pending approvals are
+  single-use, bound to their transaction, and expire after 10 minutes.
+  `OAUTH_SETUP_KEY`, `OAUTH_SETUP_PATH` and the `setup_key` field are removed;
+  PKCE, per-door audiences and refresh rotation are unchanged. `ops/deploy.sh`
+  probes the boundary. See docs/deploy.md.
+
 ## 1.9.0
 
 - **`start_session` companion entrypoint** (task-vog0d, task-wrsf4, task-lwckw,
