@@ -2,12 +2,12 @@
 // (PKCE, redirect validation, CIMD checks, metadata docs) plus a tiny
 // file-persisted store for clients, codes, tokens, and approvals.
 //
-// The human approval behind every grant is gated by OAUTH_SETUP_KEY
-// (env wins, else a 0600 file under ~/.config/beads-bridge minted on first use).
+// The human approval behind every grant is a tailnet-only QR approval (pending
+// records below, served by src/lib/tailnet-approval.ts) — there is no typed key.
 // Token/client state lives in OAUTH_STORE_PATH (default
 // ~/.config/beads-bridge/beads-bridge-oauth.json, 0600) so restarts don't revoke
 // ChatGPT — only in-flight approval transactions are memory-only.
-import { createHash, randomBytes, randomInt, timingSafeEqual } from 'crypto'
+import { createHash, randomBytes, randomInt } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { configFile } from './config-dir'
@@ -185,32 +185,6 @@ export function buildAuthorizationServerMetadata(issuer: string): Record<string,
     authorization_response_iss_parameter_supported: true,
     scopes_supported: [...SUPPORTED_SCOPES],
   }
-}
-
-// ── Setup key (human approval gate) ──────────────────────────────────────────
-
-
-export function setupKeyPath(): string {
-  return process.env.OAUTH_SETUP_PATH ?? configFile('beads-bridge-oauth-setup')
-}
-
-export function getSetupKey(): string {
-  if (process.env.OAUTH_SETUP_KEY) return process.env.OAUTH_SETUP_KEY
-  const p = setupKeyPath()
-  try {
-    const k = readFileSync(p, 'utf8').trim()
-    if (k) return k
-  } catch { /* mint below */ }
-  const k = `bo_${rand(24)}`
-  mkdirSync(join(p, '..'), { recursive: true, mode: 0o700 })
-  writeFileSync(p, k, { mode: 0o600 })
-  return k
-}
-
-export function setupKeyMatches(presented: string): boolean {
-  const a = Buffer.from(presented)
-  const b = Buffer.from(getSetupKey())
-  return a.length === b.length && timingSafeEqual(a, b)
 }
 
 // ── Persisted store ──────────────────────────────────────────────────────────

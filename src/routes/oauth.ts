@@ -26,7 +26,6 @@ import {
   cimdRedirectUris,
   consumeCode,
   geminiResource,
-  getSetupKey,
   grantApproval,
   grokResource,
   jungleResource,
@@ -41,7 +40,6 @@ import {
   registerClient,
   resolveClient,
   rotateRefresh,
-  setupKeyPath,
   validateRedirectUri,
 } from '../lib/oauth'
 
@@ -377,11 +375,3 @@ oauthRouter.post('/oauth/token', (req: Request, res: Response) => {
 
   return void tokenError(res, 400, 'unsupported_grant_type', 'want authorization_code or refresh_token')
 })
-
-// Boot hint (logged once from server start): where the setup key lives.
-export function oauthSetupHint(): string {
-  try {
-    getSetupKey()
-  } catch { /* page will explain */ }
-  return setupKeyPath()
-}

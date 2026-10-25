@@ -19,7 +19,7 @@ mini1 is the canonical host (it owns the authoritative Dolt). Scout report:
 - Quirk seen: after `deploy.sh`'s bootout/bootstrap the mini1 job sat "pended nondemand spawn" with runs=0 and the deploy reported no pid; `launchctl kickstart -k gui/$(id -u)/com.beads-bridge.server` started it.
 
 ## Phase 2 - ChatGPT re-grant (human step, not done)
-New connector URL `https://mini1.hippo-tilapia.ts.net:8443/chatgpt/mcp`; OAuth approval page takes the setup key from mini1 `~/.config/beads-bridge/beads-bridge-oauth-setup`. Keep the old connector until Phase 4.
+New connector URL `https://mini1.hippo-tilapia.ts.net:8443/chatgpt/mcp`; OAuth approval is a tailnet-only QR/link shown on the approval page (no typed key; see docs/deploy.md). Keep the old connector until Phase 4.
 
 ## Phase 3 - vps01 `/live` and displayd poller (staged, not done)
 Repointing before ChatGPT moves would show an empty activity ring (it is per-process memory). After the soak: vps01 Caddy upstream `100.74.138.74:3737` -> `100.102.238.78:3737` (pre-check vps01 -> mini1:3737), and the displayd poller `--bridge` URL likewise. Rollback: restore the old values.

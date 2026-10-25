@@ -11,7 +11,6 @@ import { isWebAgent } from './agent-detect'
 import { accessGate } from './lib/access-gate'
 import { recordHit } from './routes/activity'
 import { trackAction, shutdownAnalytics } from './lib/analytics'
-import { oauthSetupHint } from './routes/oauth'
 import { startTailnetApprovalListener } from './lib/tailnet-approval'
 
 const app = express()
@@ -73,7 +72,6 @@ async function start() {
     console.log(`  local:   http://localhost:${PORT}`)
     console.log(`  tailnet: http://${TAILNET_IP}:${PORT}`)
     console.log(`  funnel:  ${BASE} (public; use this in ChatGPT blurbs)`)
-    console.log(`  oauth setup key: ${oauthSetupHint()} (paste into the approval page once)`)
     startTailnetApprovalListener()
   })
 }
