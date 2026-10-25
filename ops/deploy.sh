@@ -100,6 +100,34 @@ for p in /live /live/variants /live/v1 /live/jumbotron /live/timeline /live/log 
   [ "$code" = 200 ] || rc=1
 done
 
+# OAuth approval boundary. Human approval is tailnet-only: a second listener
+# bound to TAILNET_IP:APPROVAL_PORT (default PORT+1) serves /oauth/approve/*,
+# and the public listener must not serve it at all. Both probes use an id that
+# does not exist, so a healthy answer is a plain 404 on each; anything else is
+# a broken boundary or a listener that never came up. Read TAILNET_IP and the
+# port from the deploy .env (the same file the service loads). Skipped, loudly,
+# when .env has no TAILNET_IP: the approval page then says approval is
+# unconfigured and no new grant can be made on that host.
+env_val() { grep -E "^$1=" .env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' "; }
+TAILNET_IP_VAL="${TAILNET_IP:-$(env_val TAILNET_IP)}"
+APPROVAL_PORT="${BEADS_BRIDGE_APPROVAL_PORT:-$(env_val BEADS_BRIDGE_APPROVAL_PORT)}"
+APPROVAL_PORT="${APPROVAL_PORT:-$((PORT + 1))}"
+echo "==> oauth approval boundary"
+code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/oauth/approve/deploy-probe" || true)
+printf '    %-34s %s (want 404)\n' "public :$PORT /oauth/approve" "$code"
+[ "$code" = 404 ] || rc=1
+if [ -n "$TAILNET_IP_VAL" ]; then
+  code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "http://$TAILNET_IP_VAL:$APPROVAL_PORT/oauth/approve/deploy-probe" || true)
+  printf '    %-34s %s (want 404 = listener up)\n' "tailnet $TAILNET_IP_VAL:$APPROVAL_PORT" "$code"
+  [ "$code" = 404 ] || rc=1
+  code=$(curl -s -m 3 -o /dev/null -w '%{http_code}' "http://127.0.0.1:$APPROVAL_PORT/oauth/approve/deploy-probe" || true)
+  printf '    %-34s %s (want 000 = not bound to loopback)\n' "loopback :$APPROVAL_PORT" "$code"
+  [ "$code" = 000 ] || rc=1
+else
+  echo "    !! no TAILNET_IP in $DEPLOY_DIR/.env: tailnet approval listener is OFF; new OAuth grants are impossible here" >&2
+  rc=1
+fi
+
 # MCP smoke check. The /live routes above stayed green through the 2026-10-06
 # outage in which every MCP call answered "Session terminated" because the
 # deployed revision lacked the MCP/auth work — so the route gate alone cannot

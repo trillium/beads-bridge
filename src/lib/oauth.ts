@@ -2,19 +2,22 @@
 // (PKCE, redirect validation, CIMD checks, metadata docs) plus a tiny
 // file-persisted store for clients, codes, tokens, and approvals.
 //
-// The human approval behind every grant is gated by OAUTH_SETUP_KEY
-// (env wins, else a 0600 file under ~/.config/beads-bridge minted on first use).
+// The human approval behind every grant is a tailnet-only QR approval (pending
+// records below, served by src/lib/tailnet-approval.ts) — there is no typed key.
 // Token/client state lives in OAUTH_STORE_PATH (default
 // ~/.config/beads-bridge/beads-bridge-oauth.json, 0600) so restarts don't revoke
 // ChatGPT — only in-flight approval transactions are memory-only.
-import { createHash, randomBytes, timingSafeEqual } from 'crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { createHash, randomBytes, randomInt } from 'crypto'
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { configFile } from './config-dir'
 
 export const SUPPORTED_SCOPES = ['mcp']
 export const CODE_TTL_MS = 10 * 60 * 1000
 export const TX_TTL_MS = 15 * 60 * 1000
+// Tailnet approval requests (QR + short code): short-lived and single-use.
+export const PENDING_APPROVAL_TTL_MS = 10 * 60 * 1000
+export const MAX_PENDING_APPROVALS = 100
 // Granted credentials live until revoked (deleting the store file revokes).
 // expiresAt === NEVER_EXPIRES (0) means "never expires". 0 is the sentinel
 // because it JSON round-trips exactly (JSON.stringify(Infinity) becomes
@@ -185,32 +188,6 @@ export function buildAuthorizationServerMetadata(issuer: string): Record<string,
   }
 }
 
-// ── Setup key (human approval gate) ──────────────────────────────────────────
-
-
-export function setupKeyPath(): string {
-  return process.env.OAUTH_SETUP_PATH ?? configFile('beads-bridge-oauth-setup')
-}
-
-export function getSetupKey(): string {
-  if (process.env.OAUTH_SETUP_KEY) return process.env.OAUTH_SETUP_KEY
-  const p = setupKeyPath()
-  try {
-    const k = readFileSync(p, 'utf8').trim()
-    if (k) return k
-  } catch { /* mint below */ }
-  const k = `bo_${rand(24)}`
-  mkdirSync(join(p, '..'), { recursive: true, mode: 0o700 })
-  writeFileSync(p, k, { mode: 0o600 })
-  return k
-}
-
-export function setupKeyMatches(presented: string): boolean {
-  const a = Buffer.from(presented)
-  const b = Buffer.from(getSetupKey())
-  return a.length === b.length && timingSafeEqual(a, b)
-}
-
 // ── Persisted store ──────────────────────────────────────────────────────────
 
 export interface CodeRec {
@@ -235,12 +212,31 @@ export interface RefreshRec extends TokenRec {
   accessToken: string
 }
 
+export type PendingStatus = 'pending' | 'approved' | 'denied'
+
+export interface PendingApproval {
+  // Authorization transaction this approval is bound to (routes/oauth.ts).
+  tx: string
+  shortCode: string
+  status: PendingStatus
+  // Display fields for the tailnet approval page; never the redirect URI.
+  clientName: string
+  redirectHost: string
+  scope: string[]
+  createdAt: number
+  expiresAt: number
+}
+
 interface StoreData {
   clients: Record<string, { name?: string; redirectUris: string[]; createdAt: number }>
   codes: Record<string, CodeRec>
   access: Record<string, TokenRec>
   refresh: Record<string, RefreshRec>
   approvals: Record<string, number>
+  // Human approvals awaiting a tailnet device (QR + short code), keyed by an
+  // unguessable id. Pruned with the rest of the store; never granted by
+  // anything but `decidePendingApproval` (called from the tailnet listener).
+  pendingApprovals: Record<string, PendingApproval>
   // Tombstones for access tokens pruned because they expired: sha256(token) →
   // when the record died. Lets the gate say "expired" rather than "unknown".
   // Hashed so the store never gains a second copy of a credential; a tombstone
@@ -253,7 +249,7 @@ export function storePath(): string {
 }
 
 function blank(): StoreData {
-  return { clients: {}, codes: {}, access: {}, refresh: {}, approvals: {}, expired: {} }
+  return { clients: {}, codes: {}, access: {}, refresh: {}, approvals: {}, pendingApprovals: {}, expired: {} }
 }
 
 export const EXPIRED_TOMBSTONE_TTL_MS = 30 * 24 * 3600 * 1000
@@ -278,6 +274,7 @@ function prune(d: StoreData): StoreData {
     else if (v.expiresAt !== NEVER_EXPIRES) v.expiresAt = NEVER_EXPIRES
   }
   for (const [k, v] of Object.entries(d.expired)) if (v + EXPIRED_TOMBSTONE_TTL_MS <= now) delete d.expired[k]
+  for (const [k, v] of Object.entries(d.pendingApprovals)) if (v.expiresAt <= now) delete d.pendingApprovals[k]
   for (const [k, v] of Object.entries(d.approvals)) if (v + 90 * 24 * 3600 * 1000 <= now) delete d.approvals[k]
   return d
 }
@@ -295,7 +292,9 @@ export function loadStore(): StoreData {
 export function saveStore(d: StoreData): void {
   const p = storePath()
   mkdirSync(join(p, '..'), { recursive: true, mode: 0o700 })
-  writeFileSync(p, JSON.stringify(prune(d)), { mode: 0o600 })
+  const tmp = `${p}.${process.pid}.${rand(6)}.tmp`
+  writeFileSync(tmp, JSON.stringify(prune(d)), { mode: 0o600 })
+  renameSync(tmp, p)
 }
 
 export function registerClient(name: string | undefined, redirectUris: string[]): { clientId: string } {
@@ -378,6 +377,77 @@ export function checkApproval(token: string | undefined): boolean {
   const d = loadStore()
   const at = d.approvals[token]
   return !!at && at + 90 * 24 * 3600 * 1000 > Date.now()
+}
+
+// ── Pending approvals (tailnet QR) ───────────────────────────────────────────
+
+// No 0/O/1/I/L: the code is read aloud / compared by eye across two screens.
+const SHORT_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
+export const SHORT_CODE_LEN = 6
+
+function shortCode(): string {
+  let out = ''
+  for (let i = 0; i < SHORT_CODE_LEN; i++) out += SHORT_CODE_ALPHABET[randomInt(SHORT_CODE_ALPHABET.length)]
+  return out
+}
+
+export function createPendingApproval(input: {
+  tx: string
+  clientName: string
+  redirectHost: string
+  scope: string[]
+}): { id: string; shortCode: string; expiresAt: number } {
+  const d = loadStore()
+  const id = `bbpa_${rand(18)}`
+  const rec: PendingApproval = {
+    ...input,
+    shortCode: shortCode(),
+    status: 'pending',
+    createdAt: Date.now(),
+    expiresAt: Date.now() + PENDING_APPROVAL_TTL_MS,
+  }
+  d.pendingApprovals[id] = rec
+  const open = Object.entries(d.pendingApprovals).sort(([, a], [, b]) => a.createdAt - b.createdAt)
+  for (const [k] of open.slice(0, Math.max(0, open.length - MAX_PENDING_APPROVALS))) delete d.pendingApprovals[k]
+  saveStore(d)
+  return { id, shortCode: rec.shortCode, expiresAt: rec.expiresAt }
+}
+
+// Live record or null (unknown, expired and pruned all read the same).
+export function getPendingApproval(id: string): PendingApproval | null {
+  return loadStore().pendingApprovals[id] ?? null
+}
+
+export type PendingApprovalState = PendingStatus | 'expired'
+
+// What the public status poll may reveal: the state, nothing else.
+export function pendingApprovalState(id: string): PendingApprovalState {
+  return getPendingApproval(id)?.status ?? 'expired'
+}
+
+// pending → approved|denied, once. Anything else (unknown, expired, already
+// decided) changes nothing and says why.
+export function decidePendingApproval(id: string, decision: 'approved' | 'denied'): 'ok' | 'not_found' | 'already_decided' {
+  const d = loadStore()
+  const rec = d.pendingApprovals[id]
+  if (!rec) return 'not_found'
+  if (rec.status !== 'pending') return 'already_decided'
+  rec.status = decision
+  saveStore(d)
+  return 'ok'
+}
+
+// Single use: an approved/denied record bound to `tx` is returned and deleted.
+// 'pending' leaves it in place (the browser asked too early).
+export function consumePendingApproval(id: string, tx: string): PendingApprovalState | 'mismatch' {
+  const d = loadStore()
+  const rec = d.pendingApprovals[id]
+  if (!rec) return 'expired'
+  if (rec.tx !== tx) return 'mismatch'
+  if (rec.status === 'pending') return 'pending'
+  delete d.pendingApprovals[id]
+  saveStore(d)
+  return rec.status
 }
 
 // ── CIMD fetch (short cache; https only) ─────────────────────────────────────

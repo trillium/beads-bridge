@@ -30,8 +30,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import express from 'express'
-import { BASE, toolKey } from '../config'
-import { chatgptResource, jungleResource, loadStore, mcpResource, mintTokenPair, saveStore } from '../lib/oauth'
+import { createHash, randomBytes } from 'node:crypto'
+import { APPROVAL_PORT, BASE, toolKey } from '../config'
+import { accessGate } from '../lib/access-gate'
+import { audienceResources, chatgptResource, jungleResource, loadStore, lookupAccess, mcpResource, mintTokenPair, saveStore } from '../lib/oauth'
+import { pending } from '../lib/oauth-tx'
+import { createTailnetApprovalApp } from '../lib/tailnet-approval'
+import * as oauthLibNs from '../lib/oauth'
+import * as oauthRouteNs from './oauth'
+import { oauthRouter } from './oauth'
 import { chatgptRouter } from './chatgpt'
 import { jungleRouter } from './jungle'
 import { mcpRouter } from './mcp'
@@ -259,6 +266,279 @@ describe('credential boundary: doors agree', () => {
         assert.equal(o.raw, outs[0].raw)
       }
     }
+  })
+})
+
+// ── Approval boundary: the human grant is tailnet-only ───────────────────────
+// The public listener (access gate + oauthRouter) and the tailnet listener
+// (createTailnetApprovalApp) are separate Express apps, exactly as server.ts
+// binds them. The tailnet app's socket peer is injected (a test server can
+// only be reached from loopback); the public app has no such seam, so any
+// "tailnet-range address on the public listener" is a header-only claim.
+describe('approval boundary: tailnet-only QR approval', () => {
+  const TAILNET_PEER = { 'x-test-peer': '100.100.1.2' }
+  const REDIRECT = 'https://app.example/cb'
+  let pub: import('node:http').Server
+  let tail: import('node:http').Server
+  let pubBase = ''
+  let tailBase = ''
+  const priorTailnetIp = process.env.TAILNET_IP
+
+  before(async () => {
+    process.env.TAILNET_IP = '100.64.9.9'
+    const listen = (app: express.Express): Promise<import('node:http').Server> =>
+      new Promise((r) => {
+        const s = app.listen(0, '127.0.0.1', () => r(s))
+      })
+    const publicApp = express()
+    publicApp.use(accessGate)
+    publicApp.use(express.urlencoded({ extended: false, limit: '2mb' }))
+    publicApp.use(express.json({ limit: '2mb' }))
+    publicApp.use(oauthRouter)
+    publicApp.use((_req, res) => void res.status(404).type('text/plain').send('not found'))
+    pub = await listen(publicApp)
+    tail = await listen(createTailnetApprovalApp({ peer: (req) => req.get('x-test-peer') ?? '' }))
+    pubBase = `http://127.0.0.1:${(pub.address() as AddressInfo).port}`
+    tailBase = `http://127.0.0.1:${(tail.address() as AddressInfo).port}`
+  })
+  after(() => {
+    if (priorTailnetIp === undefined) delete process.env.TAILNET_IP
+    else process.env.TAILNET_IP = priorTailnetIp
+    pub?.close()
+    tail?.close()
+  })
+  beforeEach(() => {
+    process.env.OAUTH_STORE_PATH = join(mkdtempSync(join(tmpdir(), 'approval-boundary-')), 'store.json')
+    pending.clear()
+  })
+
+  const form = (o: Record<string, string>): string => new URLSearchParams(o).toString()
+  const post = (url: string, o: Record<string, string>, headers: Record<string, string> = {}) =>
+    realFetch(url, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers }, body: form(o) })
+
+  async function startFlow(resource: string, cookie?: string) {
+    const reg = await realFetch(`${pubBase}/oauth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ client_name: 'Boundary Test', redirect_uris: [REDIRECT] }),
+    })
+    const { client_id } = (await reg.json()) as { client_id: string }
+    const verifier = randomBytes(32).toString('base64url')
+    const challenge = createHash('sha256').update(verifier, 'ascii').digest('base64url')
+    const q = new URLSearchParams({ response_type: 'code', client_id, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: 'S256', resource, state: 's1' })
+    const page = await realFetch(`${pubBase}/oauth/authorize?${q}`, { headers: cookie ? { cookie } : {} })
+    const html = await page.text()
+    return {
+      client_id,
+      verifier,
+      status: page.status,
+      html,
+      tx: html.match(/name="tx" value="([^"]+)"/)?.[1] ?? '',
+      approval: html.match(/name="approval" value="([^"]+)"/)?.[1] ?? '',
+    }
+  }
+
+  async function exchange(f: { client_id: string; verifier: string }, location: string, resource: string) {
+    const code = new URL(location).searchParams.get('code')!
+    return realFetch(`${pubBase}/oauth/token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: form({ grant_type: 'authorization_code', code, client_id: f.client_id, redirect_uri: REDIRECT, code_verifier: f.verifier, resource }),
+    })
+  }
+
+  it('the public page offers a tappable tailnet link, a QR of the same link and a short code — and no setup-key field', async () => {
+    const f = await startFlow(mcpResource(BASE))
+    assert.equal(f.status, 200)
+    const link = f.html.match(/<a href="([^"]+)"/)?.[1]
+    assert.equal(link, `http://100.64.9.9:${APPROVAL_PORT}/oauth/approve/${f.approval}`)
+    assert.match(f.html, /<svg [^>]*shape-rendering="crispEdges"/) // inline QR
+    const code = loadStore().pendingApprovals[f.approval].shortCode
+    assert.ok(f.html.includes(code))
+    assert.doesNotMatch(f.html, /setup[_ ]key/i)
+    assert.doesNotMatch(f.html, /type="password"/)
+  })
+
+  it('(a) the approval route is 404 from a non-tailnet address', async () => {
+    const f = await startFlow(mcpResource(BASE))
+    for (const peer of ['203.0.113.9', '127.0.0.1', '192.168.1.5']) {
+      const r = await realFetch(`${tailBase}/oauth/approve/${f.approval}`, { headers: { 'x-test-peer': peer } })
+      assert.equal(r.status, 404, peer)
+      assert.equal((await post(`${tailBase}/oauth/approve/${f.approval}`, { decision: 'approve' }, { 'x-test-peer': peer })).status, 404, peer)
+    }
+    assert.equal(loadStore().pendingApprovals[f.approval].status, 'pending')
+  })
+
+  it('(b) 404 from a tailnet-range address that arrives on the public listener', async () => {
+    const f = await startFlow(mcpResource(BASE))
+    const spoof = { 'x-forwarded-for': '100.100.1.2', 'x-forwarded-proto': 'https', ...TAILNET_PEER }
+    assert.equal((await realFetch(`${pubBase}/oauth/approve/${f.approval}`, { headers: spoof })).status, 404)
+    assert.equal((await post(`${pubBase}/oauth/approve/${f.approval}`, { decision: 'approve' }, spoof)).status, 404)
+    assert.equal(loadStore().pendingApprovals[f.approval].status, 'pending')
+    // …and the same request with forwarding markers is refused even on the tailnet listener.
+    assert.equal((await realFetch(`${tailBase}/oauth/approve/${f.approval}`, { headers: spoof })).status, 404)
+  })
+
+  it('(c) 200 and approves from the tailnet listener; the public poll sees only the state word', async () => {
+    const f = await startFlow(mcpResource(BASE))
+    const poll = async () => realFetch(`${pubBase}/oauth/pending/${f.approval}/status`)
+    assert.deepEqual(await (await poll()).json(), { status: 'pending' })
+    const view = await realFetch(`${tailBase}/oauth/approve/${f.approval}`, { headers: TAILNET_PEER })
+    assert.equal(view.status, 200)
+    const html = await view.text()
+    assert.ok(html.includes('Boundary Test') && html.includes('app.example'))
+    assert.equal((await post(`${tailBase}/oauth/approve/${f.approval}`, { decision: 'approve' }, TAILNET_PEER)).status, 200)
+    assert.deepEqual(await (await poll()).json(), { status: 'approved' })
+    assert.deepEqual(await (await realFetch(`${pubBase}/oauth/pending/bbpa_unknown/status`)).json(), { status: 'expired' })
+  })
+
+  it('(c) deny from the tailnet sends the browser back access_denied and consumes the record', async () => {
+    const f = await startFlow(mcpResource(BASE))
+    assert.equal((await post(`${tailBase}/oauth/approve/${f.approval}`, { decision: 'deny' }, TAILNET_PEER)).status, 200)
+    assert.deepEqual(await (await realFetch(`${pubBase}/oauth/pending/${f.approval}/status`)).json(), { status: 'denied' })
+    const r = await post(`${pubBase}/oauth/authorize`, { tx: f.tx, approval: f.approval, decision: 'deny' })
+    assert.equal(r.status, 302)
+    const loc = new URL(r.headers.get('location') ?? '')
+    assert.equal(loc.searchParams.get('error'), 'access_denied')
+    assert.equal(r.headers.get('set-cookie'), null)
+    assert.equal(pending.has(f.tx), false)
+    assert.equal(f.approval in loadStore().pendingApprovals, false)
+    const again = await post(`${pubBase}/oauth/authorize`, { tx: f.tx, approval: f.approval, decision: 'approve' })
+    assert.equal(again.status, 400)
+  })
+
+  it('(c2) a browser that still submits approve after a tailnet deny gets access_denied, no code', async () => {
+    const f = await startFlow(mcpResource(BASE))
+    await post(`${tailBase}/oauth/approve/${f.approval}`, { decision: 'deny' }, TAILNET_PEER)
+    const r = await post(`${pubBase}/oauth/authorize`, { tx: f.tx, approval: f.approval, decision: 'approve' })
+    assert.equal(r.status, 302)
+    const loc = new URL(r.headers.get('location') ?? '')
+    assert.equal(loc.searchParams.get('error'), 'access_denied')
+    assert.equal(loc.searchParams.get('code'), null)
+  })
+
+  it('(d) the pending record is single-use: a replay and a second tx cannot reuse it', async () => {
+    const a = await startFlow(mcpResource(BASE))
+    await post(`${tailBase}/oauth/approve/${a.approval}`, { decision: 'approve' }, TAILNET_PEER)
+    // Bound to its tx: another transaction presenting this approval gets no code.
+    const b = await startFlow(mcpResource(BASE))
+    const wrong = await post(`${pubBase}/oauth/authorize`, { tx: b.tx, approval: a.approval, decision: 'approve' })
+    assert.equal(wrong.status, 403)
+    assert.equal(wrong.headers.get('location'), null)
+    assert.equal(wrong.headers.get('set-cookie'), null)
+    // The rightful tx consumes it once…
+    const ok = await post(`${pubBase}/oauth/authorize`, { tx: a.tx, approval: a.approval, decision: 'approve' })
+    assert.equal(ok.status, 302)
+    // …and it is gone afterwards.
+    assert.equal(a.approval in loadStore().pendingApprovals, false)
+    assert.deepEqual(await (await realFetch(`${pubBase}/oauth/pending/${a.approval}/status`)).json(), { status: 'expired' })
+    assert.equal((await post(`${tailBase}/oauth/approve/${a.approval}`, { decision: 'approve' }, TAILNET_PEER)).status, 404)
+  })
+
+  it('(d) an expired pending record cannot approve or complete the flow', async () => {
+    const f = await startFlow(mcpResource(BASE))
+    const raw = JSON.parse(readFileSync(process.env.OAUTH_STORE_PATH!, 'utf8'))
+    raw.pendingApprovals[f.approval].expiresAt = Date.now() - 1
+    writeFileSync(process.env.OAUTH_STORE_PATH!, JSON.stringify(raw))
+    assert.deepEqual(await (await realFetch(`${pubBase}/oauth/pending/${f.approval}/status`)).json(), { status: 'expired' })
+    assert.equal((await post(`${tailBase}/oauth/approve/${f.approval}`, { decision: 'approve' }, TAILNET_PEER)).status, 404)
+    const r = await post(`${pubBase}/oauth/authorize`, { tx: f.tx, approval: f.approval, decision: 'approve' })
+    assert.equal(r.status, 403)
+    assert.equal(r.headers.get('location'), null)
+    assert.match(await r.text(), /expired|not granted/i)
+  })
+
+  it('a browser POST before the tailnet approval gets no code (409), and nothing is consumed', async () => {
+    const f = await startFlow(mcpResource(BASE))
+    const early = await post(`${pubBase}/oauth/authorize`, { tx: f.tx, approval: f.approval, decision: 'approve' })
+    assert.equal(early.status, 409)
+    assert.equal(loadStore().pendingApprovals[f.approval].status, 'pending')
+  })
+
+  for (const resource of audienceResources(BASE)) {
+    it(`(e) an approved record completes the code flow and mints a token for exactly ${resource}`, { timeout: 30000 }, async () => {
+      const f = await startFlow(resource)
+      await post(`${tailBase}/oauth/approve/${f.approval}`, { decision: 'approve' }, TAILNET_PEER)
+      const granted = await post(`${pubBase}/oauth/authorize`, { tx: f.tx, approval: f.approval, decision: 'approve' })
+      assert.equal(granted.status, 302)
+      const location = granted.headers.get('location')!
+      assert.equal(new URL(location).origin + new URL(location).pathname, REDIRECT)
+      assert.equal(new URL(location).searchParams.get('state'), 's1')
+      assert.match(granted.headers.get('set-cookie') ?? '', /^bb_approval=/) // approval cookie, as before
+      // PKCE: a wrong verifier is refused…
+      const bad = await exchange({ ...f, verifier: 'wrong-verifier-wrong-verifier-wrong-verifier' }, location, resource)
+      assert.equal(bad.status, 400)
+    })
+  }
+
+  it('(e) the right verifier yields a token valid for its own audience only; refresh rotates', { timeout: 30000 }, async () => {
+    const resource = chatgptResource(BASE)
+    const f = await startFlow(resource)
+    await post(`${tailBase}/oauth/approve/${f.approval}`, { decision: 'approve' }, TAILNET_PEER)
+    const granted = await post(`${pubBase}/oauth/authorize`, { tx: f.tx, approval: f.approval, decision: 'approve' })
+    const tok = await exchange(f, granted.headers.get('location')!, resource)
+    assert.equal(tok.status, 200)
+    const body = (await tok.json()) as { access_token: string; refresh_token: string }
+    assert.equal(lookupAccess(body.access_token)?.resource, resource)
+    // the same code cannot be used twice
+    assert.equal((await exchange(f, granted.headers.get('location')!, resource)).status, 400)
+    // exact audience: the chatgpt token opens /chatgpt/mcp and is refused on /mcp
+    assert.equal((await call(base, '/chatgpt/mcp', body.access_token)).status, 200)
+    const wrong = await call(base, '/mcp', body.access_token)
+    assert.equal(wrong.status, 401)
+    assert.match(descriptionOf(wrong), /different endpoint/i)
+    // refresh rotation: old refresh dies, the new pair works
+    const rot = await realFetch(`${pubBase}/oauth/token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: form({ grant_type: 'refresh_token', refresh_token: body.refresh_token }),
+    })
+    assert.equal(rot.status, 200)
+    const next = (await rot.json()) as { access_token: string }
+    assert.equal(lookupAccess(body.access_token), null)
+    assert.equal(lookupAccess(next.access_token)?.resource, resource)
+    const replay = await realFetch(`${pubBase}/oauth/token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: form({ grant_type: 'refresh_token', refresh_token: body.refresh_token }),
+    })
+    assert.equal(replay.status, 400)
+  })
+
+  it('an already-approved browser (cookie) still gets the one-click page and no QR', { timeout: 30000 }, async () => {
+    const resource = mcpResource(BASE)
+    const f = await startFlow(resource)
+    await post(`${tailBase}/oauth/approve/${f.approval}`, { decision: 'approve' }, TAILNET_PEER)
+    const granted = await post(`${pubBase}/oauth/authorize`, { tx: f.tx, approval: f.approval, decision: 'approve' })
+    const cookie = (granted.headers.get('set-cookie') ?? '').split(';')[0]
+    const again = await startFlow(resource, cookie)
+    assert.match(again.html, /already approved/i)
+    assert.doesNotMatch(again.html, /<svg [^>]*shape-rendering="crispEdges"/)
+    const ok = await post(`${pubBase}/oauth/authorize`, { tx: again.tx, decision: 'approve' }, { cookie })
+    assert.equal(ok.status, 302)
+  })
+
+  it('(f) setup_key is no longer accepted anywhere', async () => {
+    const f = await startFlow(mcpResource(BASE))
+    for (const key of ['', 'bo_anything', 'wrong']) {
+      const r = await post(`${pubBase}/oauth/authorize`, { tx: f.tx, decision: 'approve', setup_key: key })
+      assert.equal(r.status, 403)
+      assert.equal(r.headers.get('location'), null)
+      assert.doesNotMatch(await r.text(), /setup[_ ]key/i)
+    }
+    // An env-provided key is not an alternate door either.
+    process.env.OAUTH_SETUP_KEY = 'bo_env_key'
+    try {
+      const r = await post(`${pubBase}/oauth/authorize`, { tx: f.tx, decision: 'approve', setup_key: 'bo_env_key' })
+      assert.equal(r.status, 403)
+      assert.equal(r.headers.get('location'), null)
+    } finally {
+      delete process.env.OAUTH_SETUP_KEY
+    }
+    // And the code that read it is gone.
+    const oauthLib: Record<string, unknown> = oauthLibNs
+    for (const name of ['setupKeyPath', 'getSetupKey', 'setupKeyMatches']) assert.equal(name in oauthLib, false, name)
+    assert.equal('oauthSetupHint' in oauthRouteNs, false)
   })
 })
 

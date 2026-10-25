@@ -2,11 +2,14 @@
 // Store tests point OAUTH_STORE_PATH at a temp dir — never the real one.
 import { describe, it, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import {
   CODE_TTL_MS,
+  MAX_PENDING_APPROVALS,
+  PENDING_APPROVAL_TTL_MS,
+  SHORT_CODE_LEN,
   EXPIRED_TOMBSTONE_TTL_MS,
   NEVER_EXPIRES,
   NO_EXPIRY_EXPIRES_IN_S,
@@ -14,6 +17,11 @@ import {
   accessTokenState,
   buildAuthorizationServerMetadata,
   consumeCode,
+  consumePendingApproval,
+  createPendingApproval,
+  decidePendingApproval,
+  getPendingApproval,
+  pendingApprovalState,
   loadStore,
   lookupAccess,
   mintCode,
@@ -312,5 +320,86 @@ describe('accessTokenState (expired vs unknown)', () => {
     } finally {
       restore()
     }
+  })
+})
+
+describe('pending approvals (tailnet QR)', () => {
+  const input = { tx: 'bbtx_a', clientName: 'ChatGPT', redirectHost: 'chatgpt.com', scope: ['mcp'] }
+
+  it('mints an unguessable id, a short code, and a 10-minute expiry in the store', () => {
+    const before = Date.now()
+    const p = createPendingApproval(input)
+    assert.match(p.id, /^bbpa_[A-Za-z0-9_-]{24}$/)
+    assert.equal(p.shortCode.length, SHORT_CODE_LEN)
+    assert.match(p.shortCode, /^[A-HJKMNP-Z2-9]+$/)
+    assert.ok(p.expiresAt >= before + PENDING_APPROVAL_TTL_MS && p.expiresAt <= Date.now() + PENDING_APPROVAL_TTL_MS)
+    assert.equal(PENDING_APPROVAL_TTL_MS, 10 * 60 * 1000)
+    const stored = JSON.parse(readFileSync(storePath(), 'utf8')).pendingApprovals[p.id]
+    assert.equal(stored.tx, 'bbtx_a')
+    assert.equal(stored.status, 'pending')
+    assert.equal(pendingApprovalState(p.id), 'pending')
+  })
+
+  it('ids and codes differ between records', () => {
+    const a = createPendingApproval(input)
+    const b = createPendingApproval(input)
+    assert.notEqual(a.id, b.id)
+  })
+
+  it('decides once: pending → approved, then refuses a second decision', () => {
+    const p = createPendingApproval(input)
+    assert.equal(decidePendingApproval(p.id, 'approved'), 'ok')
+    assert.equal(pendingApprovalState(p.id), 'approved')
+    assert.equal(decidePendingApproval(p.id, 'denied'), 'already_decided')
+    assert.equal(pendingApprovalState(p.id), 'approved')
+    assert.equal(decidePendingApproval('bbpa_nope', 'approved'), 'not_found')
+  })
+
+  it('consume is single-use and bound to its tx', () => {
+    const p = createPendingApproval(input)
+    assert.equal(consumePendingApproval(p.id, 'bbtx_a'), 'pending')
+    assert.equal(decidePendingApproval(p.id, 'approved'), 'ok')
+    assert.equal(consumePendingApproval(p.id, 'bbtx_other'), 'mismatch')
+    assert.equal(consumePendingApproval(p.id, 'bbtx_a'), 'approved')
+    assert.equal(consumePendingApproval(p.id, 'bbtx_a'), 'expired')
+    assert.equal(getPendingApproval(p.id), null)
+  })
+
+  it('a denied record consumes as denied, once', () => {
+    const p = createPendingApproval(input)
+    decidePendingApproval(p.id, 'denied')
+    assert.equal(consumePendingApproval(p.id, 'bbtx_a'), 'denied')
+    assert.equal(consumePendingApproval(p.id, 'bbtx_a'), 'expired')
+  })
+
+  it('expires: pruned on the store cadence and no longer decidable', () => {
+    const p = createPendingApproval(input)
+    const raw = JSON.parse(readFileSync(storePath(), 'utf8'))
+    raw.pendingApprovals[p.id].expiresAt = Date.now() - 1
+    writeFileSync(storePath(), JSON.stringify(raw))
+    assert.equal(pendingApprovalState(p.id), 'expired')
+    assert.equal(decidePendingApproval(p.id, 'approved'), 'not_found')
+    assert.equal(consumePendingApproval(p.id, 'bbtx_a'), 'expired')
+    saveStore(loadStore()) // any write persists the prune
+    assert.deepEqual(JSON.parse(readFileSync(storePath(), 'utf8')).pendingApprovals, {})
+  })
+
+  it('caps open records: the oldest is evicted once the cap is exceeded', () => {
+    const first = createPendingApproval(input)
+    const ids = [first.id]
+    for (let i = 0; i < MAX_PENDING_APPROVALS; i++) ids.push(createPendingApproval(input).id)
+    const stored = JSON.parse(readFileSync(storePath(), 'utf8')).pendingApprovals
+    assert.equal(Object.keys(stored).length, MAX_PENDING_APPROVALS)
+    assert.equal(pendingApprovalState(first.id), 'expired')
+    assert.equal(pendingApprovalState(ids[ids.length - 1]), 'pending')
+  })
+})
+
+describe('saveStore', () => {
+  it('replaces the store atomically: 0600 file, no temp file left behind', () => {
+    createPendingApproval({ tx: 'bbtx_a', clientName: 'ChatGPT', redirectHost: 'chatgpt.com', scope: ['mcp'] })
+    saveStore(loadStore())
+    assert.deepEqual(readdirSync(dirname(storePath())), ['store.json'])
+    assert.equal(statSync(storePath()).mode & 0o777, 0o600)
   })
 })

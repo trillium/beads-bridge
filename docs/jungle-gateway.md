@@ -199,7 +199,7 @@ a bridge OAuth token minted for the **jungle audience**
 (`jungleResource(BASE)` = `<BASE>/jungle/mcp`, `src/lib/oauth.ts`), strips
 the client bearer, and streams the MCP request to the loopback gateway
 (`http://127.0.0.1:8338/mcp`). No new credential system — the bridge OAuth
-(register/authorize + setup-key approval, PKCE, refresh rotation) is the auth.
+(register/authorize + tailnet-QR approval, PKCE, refresh rotation) is the auth.
 
 - Audience isolation: a token minted for `/mcp` never opens `/jungle/mcp`
   and vice versa (exact-audience equality in both gates). Discovery serves
