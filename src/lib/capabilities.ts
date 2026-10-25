@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { z } from 'zod'
 import { serverVersion } from './whoami'
 
 export type CapabilityEntry = {
@@ -67,9 +68,65 @@ export function backendCommit(): string {
   }
 }
 
-/** Stable hash of the registered MCP tool surface (sorted op names). */
-export function schemaHash(opNames: string[]): string {
-  return createHash('sha256').update([...opNames].sort().join('\n')).digest('hex')
+/** One registered tool as a client sees it in tools/list. */
+export type ToolSurfaceEntry = { name: string; description?: string; inputSchema?: unknown }
+
+/** Deterministic JSON: object keys sorted so the hash never depends on authoring order. */
+function canonicalJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(',')}]`
+  if (v && typeof v === 'object') {
+    const o = v as Record<string, unknown>
+    return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`).join(',')}}`
+  }
+  return JSON.stringify(v) ?? 'null'
+}
+
+/**
+ * Stable hash of the registered MCP tool surface: each tool's name,
+ * description and input schema (sorted by name), so a same-name edit — a new
+ * parameter, a reworded description — changes it. Bare strings count as
+ * name-only entries. 64 hex chars; callers print the first 16.
+ */
+export function schemaHash(surface: (string | ToolSurfaceEntry)[]): string {
+  const entries = surface
+    .map((e) => (typeof e === 'string' ? { name: e } : e))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .map((e) => [e.name, e.description ?? null, e.inputSchema ?? null])
+  return createHash('sha256').update(canonicalJson(entries)).digest('hex')
+}
+
+type ToolRegistrar = (server: {
+  registerTool: (name: string, config: { description?: string; inputSchema?: unknown }, cb: unknown) => unknown
+}) => void
+
+/** Run a registration callback against a recording server: the tools/list surface without a transport. */
+export function captureToolSurface(register: ToolRegistrar): ToolSurfaceEntry[] {
+  const out: ToolSurfaceEntry[] = []
+  register({
+    registerTool(name, config) {
+      let inputSchema: unknown = null
+      try {
+        inputSchema = z.toJSONSchema(config.inputSchema as z.ZodType)
+      } catch {
+        inputSchema = String(config.inputSchema)
+      }
+      out.push({ name, description: config.description, inputSchema })
+      return undefined
+    },
+  })
+  return out
+}
+
+let liveSurface: ToolSurfaceEntry[] | null = null
+
+/** mcp.ts installs the captured surface once its tools are defined. */
+export function setLiveToolSurface(entries: ToolSurfaceEntry[]): void {
+  liveSurface = entries
+}
+
+/** The live surface to hash: captured entries, else name-only until mcp.ts has loaded. */
+export function liveToolSurface(): ToolSurfaceEntry[] {
+  return liveSurface ?? BRIDGE_OP_NAMES.map((name) => ({ name }))
 }
 
 export function isSemver(v: string): boolean {
@@ -112,7 +169,7 @@ export function capabilitiesSince(m: CapabilityManifest, version: string): Capab
 }
 
 export function formatBridgeInfo(opts: {
-  opNames: string[]
+  opNames: (string | ToolSurfaceEntry)[]
   base: string
 }): string {
   const m = loadManifest()
@@ -129,6 +186,10 @@ export function formatBridgeInfo(opts: {
     `what you were told at connect, the backend has advanced past your loaded schema:`,
     `ask the user for a manual MCP refresh (disconnect + reconnect). New tools alone`,
     `cannot reach you — an old connection cannot see newly registered tools.`,
+    `The schema hash covers every tool's name, description and input schema.`,
+    `This bridge is stateless: it never sends notifications/tools/list_changed`,
+    `(tools.listChanged is advertised false), so a changed surface is only`,
+    `ever visible by comparing these values.`,
     ``,
     `Next: capability_status(id|bead) to check one feature,`,
     `capabilities_since(X.Y.Z) to list what changed since a version.`,
@@ -144,7 +205,7 @@ export function formatBridgeInfo(opts: {
  * changes the string. Never throws — degrades to 'unknown' segments so a
  * broken manifest/commit lookup can never fail a tool response.
  */
-export function stalenessTriple(opNames: string[] = BRIDGE_OP_NAMES): string {
+export function stalenessTriple(opNames: (string | ToolSurfaceEntry)[] = liveToolSurface()): string {
   let version = 'unknown'
   let manifest = 'unknown'
   let commit = 'unknown'
@@ -175,13 +236,8 @@ export function stalenessTriple(opNames: string[] = BRIDGE_OP_NAMES): string {
 // is near-certainly in the client's loaded schema; annotating all ~40 tools
 // would bloat every tools/list payload for no extra signal.
 //
-// SCHEMA HASH: schemaHash() stays over sorted operation NAMES only —
-// descriptions never feed it. A description-only change (like this one)
-// therefore leaves the hash stable while the version/manifest segments of
-// the staleness triple advance; the version-in-description is still a valid
-// staleness signal because bridge_info's backend/manifest report moves with
-// the same bump. Hash = "which ops exist"; tag = "which backend built
-// this schema".
+// SCHEMA HASH: schemaHash() covers each tool's name, description and input
+// schema, so a description edit moves the hash as well as the version tag.
 export const WHOAMI_DESCRIPTION_BASE =
   'Your identity on this bridge: the server, your OAuth client id and scopes, the operator profile, the complete operator personality document (startup/bootstrap context, read it fully), and what you can do.'
 

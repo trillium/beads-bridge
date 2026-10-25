@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.8.1
+
+- **Tool-surface staleness is detectable.** `initialize` now reports
+  `serverInfo` `{beads-bridge, <package version>}` instead of mcp-handler's
+  default; the schema hash (`staleness:` footer, `bridge_info`) covers each
+  tool's name, description and input schema, so same-name edits such as the
+  `bead_show` pagination/freshness changes move it; `tools.listChanged` is no
+  longer advertised (the transport is stateless and never sends it).
+- **Deploy keeps the gateway current.** `ops/deploy.sh` compares the live
+  surface with the MCPJungle catalog and re-registers when they differ;
+  `ops/mcp-refresh-check.sh` is the read-only checker and
+  `docs/jungle-gateway-refresh.md` is rewritten as the A-D refresh protocol.
+
 ## 1.8.0
 
 - **Store routing is verified, not assumed** (feedback 82t1, k3az). The bridge
