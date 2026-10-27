@@ -96,7 +96,7 @@ Ports: **3737** (this server) + **3738** (tailnet-only OAuth approval listener) 
 Tools registered in `src/routes/mcp.ts` (46 total), grouped:
 
 - Beads: `bead_show`, `beads_bundle`, `bead_create`, `bead_batch_create`, `bead_edit`, `bead_comment`, `bead_note`, `bead_decision`, `bead_label`, `bead_connections`, `bead_feedback`, `feedback_edit`
-- Query/retrieval: `query_store`, `retrieval_search`, `retrieval_activity`, `retrieval_claimed`, `retrieval_snapshot`, `random`, `relay_inspect`
+- Query/retrieval: `query_store`, `retrieval_search`, `retrieval_activity`, `retrieval_claimed`, `retrieval_snapshot`, `random`, `relay_inspect`. `query_store` takes exclusive `created_at`/`updated_at` bounds, `order_by`, and an opaque `next_cursor` (docs/query-order.md). The status store defaults to newest `updated_at`.
 - Projects/relay: `relay_resolve_project`, `relay_list_projects`, `relay_capture`, `project_edit`, `relay_upsert_task`, `relay_dispatch_request`, `relay_verify`, `relay_flow`, `relay_catchup`, `relay_attention_next`, `relay_status`
 - Meta: `start_session`, `whoami`, `bridge_info`, `capability_status`, `capabilities_since`, `identity_update`, `scratchpad`, `timeout_probe`, `heartbeat`, `agent_presence`, `store_health`
 

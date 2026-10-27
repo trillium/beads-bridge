@@ -14,6 +14,7 @@
 // Anything this port cannot reproduce faithfully THROWS (SqlUnsupported) and
 // the caller falls back to the bd subprocess path.
 import { sqlQuery, type SqlParam, type SqlRow } from './sql'
+import { keysetSql, orderBySql, type CursorVal, type OrderColumn } from './query-order'
 
 export class SqlUnsupported extends Error {
   constructor(why: string) {
@@ -137,6 +138,13 @@ export interface BeadFilter {
   notesContains?: string
   /** UTC `YYYY-MM-DD HH:MM:SS` lower bound (exclusive) on updated_at. */
   updatedAfter?: string
+  /** UTC `YYYY-MM-DD HH:MM:SS` upper bound (exclusive) on updated_at. */
+  updatedBefore?: string
+  /** Exclusive bounds on created_at, same clock form as updatedAfter. */
+  createdAfter?: string
+  createdBefore?: string
+  /** Keyset page: sort columns plus the last row's values. */
+  keyset?: { columns: OrderColumn[]; values: CursorVal[] }
   /** bd --parent: children by parent-child edge or dotted-id convention. */
   parentId?: string
   ids?: string[]
@@ -244,7 +252,15 @@ function buildWhere(f: BeadFilter, t: Tables): { sql: string[]; args: SqlParam[]
     sql.push(`id NOT IN (SELECT issue_id FROM ${t.labels} WHERE label IN (${f.excludeLabels.map(() => '?').join(', ')}))`)
     args.push(...f.excludeLabels)
   }
+  if (f.createdAfter) { sql.push('created_at > ?'); args.push(f.createdAfter) }
+  if (f.createdBefore) { sql.push('created_at < ?'); args.push(f.createdBefore) }
   if (f.updatedAfter) { sql.push('updated_at > ?'); args.push(f.updatedAfter) }
+  if (f.updatedBefore) { sql.push('updated_at < ?'); args.push(f.updatedBefore) }
+  if (f.keyset) {
+    const k = keysetSql(f.keyset.columns, f.keyset.values)
+    sql.push(k.sql)
+    args.push(...k.args)
+  }
   return { sql, args }
 }
 
@@ -289,6 +305,8 @@ function selectCols(t: Tables, withDescription: boolean): string {
 export interface SweepSpec {
   filter: BeadFilter
   sort: SortKey
+  /** When set, replaces the bd sort key. Columns are an allowlist, never caller text. */
+  order?: OrderColumn[]
   /** SQL LIMIT per store per table; 0 = unlimited (search ranking path). */
   sqlLimit: number
   withDescription?: boolean
@@ -322,8 +340,9 @@ async function sweepRaw(stores: string[], spec: SweepSpec): Promise<RawRow[]> {
       const ns = `(${prefixes.map(() => 'id LIKE ?').join(' OR ')})`
       const where = [ns, ...w.sql].join(' AND ')
       const limit = spec.sqlLimit > 0 ? ` LIMIT ${Math.floor(spec.sqlLimit)}` : ''
+      const ordering = spec.order?.length ? orderBySql(spec.order) : orderSql(spec.sort)
       parts.push(
-        `(SELECT ${selectCols(t, !!spec.withDescription)}, ? AS _store, ${isWisp} AS _wisp FROM ${t.main} WHERE ${where} ${orderSql(spec.sort)}${limit})`,
+        `(SELECT ${selectCols(t, !!spec.withDescription)}, ? AS _store, ${isWisp} AS _wisp FROM ${t.main} WHERE ${where} ${ordering}${limit})`,
       )
       params.push(store, ...prefixes.map((p) => `${p.replace(/-$/, '')}-%`), ...w.args)
     }
@@ -431,6 +450,16 @@ export interface ListSweepOpts {
   allStates?: boolean
   since?: string
   parentId?: string
+  /** Explicit order. When set, the bd `--sort` key is not re-applied in memory. */
+  order?: OrderColumn[]
+  /** Keyset values aligned with `order`. */
+  cursor?: CursorVal[]
+  createdAfter?: string
+  createdBefore?: string
+  /** Exclusive upper bound. `since` / `updatedAfter` remain the lower bound. */
+  updatedBefore?: string
+  /** When set, wins over `since` (already normalized UTC). */
+  updatedAfter?: string
 }
 
 // The BeadFilter `bd list` builds from its flags (list_filter.go defaults included).
@@ -447,7 +476,11 @@ function listFilter(o: ListSweepOpts): BeadFilter {
     descContains: o.descContains,
     notesContains: o.notesContains,
     parentId: o.parentId,
-    updatedAfter: o.since ? sinceToSqlUtc(o.since) : undefined,
+    updatedAfter: o.updatedAfter ?? (o.since ? sinceToSqlUtc(o.since) : undefined),
+    updatedBefore: o.updatedBefore,
+    createdAfter: o.createdAfter,
+    createdBefore: o.createdBefore,
+    keyset: o.order?.length && o.cursor?.length ? { columns: o.order, values: o.cursor } : undefined,
     // bd list (cmd/bd/list_filter.go) always hides gates + infra types + templates,
     // and hides pinned unless --all or --status pinned|hooked.
     excludeTypes: LIST_EXCLUDED_TYPES,
@@ -465,9 +498,11 @@ function listFilter(o: ListSweepOpts): BeadFilter {
  */
 export async function sqlListSweep(stores: string[], o: ListSweepOpts): Promise<Map<string, BdRow[]>> {
   await assertNoCustomStatuses()
-  const sort = o.sort ?? ''
+  // A caller-supplied order is already the SQL ORDER BY. goSort would
+  // re-rank by one column and drop the id/priority tie-break.
+  const sort = o.order?.length ? '' : (o.sort ?? '')
   const filter = listFilter(o)
-  const raw = await sweepRaw(stores, { filter, sort, sqlLimit: o.limit + 1, wisps: false })
+  const raw = await sweepRaw(stores, { filter, sort, order: o.order, sqlLimit: o.limit + 1, wisps: false })
   const per = group(raw)
   const finalByStore = new Map<string, RawRow[]>()
   const all: RawRow[] = []
@@ -548,13 +583,25 @@ export interface SearchSweepOpts {
   limit: number
   status?: string
   labels?: string[]
+  createdAfter?: string
+  createdBefore?: string
+  updatedAfter?: string
+  updatedBefore?: string
 }
 
 /** `bd search <q> --json --limit N [--label L]... --status S` for many stores in one round trip. */
 export async function sqlSearchSweep(stores: string[], query: string, o: SearchSweepOpts): Promise<Map<string, BdRow[]>> {
   await assertNoCustomStatuses()
   const status = (o.status ?? 'all').trim()
-  const filter: BeadFilter = { query, searchComments: true, labels: normalizeLabels(o.labels) }
+  const filter: BeadFilter = {
+    query,
+    searchComments: true,
+    labels: normalizeLabels(o.labels),
+    createdAfter: o.createdAfter,
+    createdBefore: o.createdBefore,
+    updatedAfter: o.updatedAfter,
+    updatedBefore: o.updatedBefore,
+  }
   if (status && status !== 'all') filter.status = status
   else if (status !== 'all') filter.excludeStatus = ['closed']
   const rank = !looksLikeIssueId(query)

@@ -4,7 +4,23 @@
 import { execStdout } from '../../lib/exec'
 import { withSqlFallback } from '../../lib/sql'
 import { sqlListSweep } from '../../lib/sql-beads'
-import { cleanLabel, type Row } from './params'
+import {
+  appendBdDateFlags,
+  bdSortArgs,
+  cursorBdFlags,
+  cursorVals,
+  encodeCursor,
+  formatOrder,
+  normalizeBound,
+  rowAfterCursor,
+  type CursorVal,
+  type DateBounds,
+  type OrderColumn,
+  type OrderKind,
+  type TimeBound,
+} from '../../lib/query-order'
+import { formatQueryRow } from './format'
+import { type Row } from './params'
 
 export interface ListOpts {
   exclude: string[]
@@ -14,6 +30,41 @@ export interface ListOpts {
   status?: string
   limit: number
   allStates: boolean
+  /** Resolved order. Omitted keeps bd's default sort (no --sort flag). */
+  order?: OrderColumn[]
+  /** Keyset values aligned with `order`. */
+  cursor?: CursorVal[]
+  bounds?: DateBounds
+  /** Store name stamped into next_cursor. */
+  storeName?: string
+}
+
+function earlier(a: TimeBound, b: TimeBound): TimeBound {
+  return a.sql <= b.sql ? a : b
+}
+
+function later(a: TimeBound, b: TimeBound): TimeBound {
+  return a.sql >= b.sql ? a : b
+}
+
+/** User bounds plus the cursor's primary timestamp, tightened so one bd flag remains. */
+export function bdBounds(opts: ListOpts): DateBounds {
+  const out: DateBounds = { ...(opts.bounds ?? {}) }
+  if (!opts.order?.length || !opts.cursor?.length) return out
+  const extra = cursorBdFlags(opts.order, opts.cursor)
+  if (extra.length !== 2) return out
+  let bound: TimeBound
+  try {
+    bound = normalizeBound(extra[1])
+  } catch {
+    return out
+  }
+  const key = extra[0]
+  if (key === '--created-after') out.createdAfter = out.createdAfter ? later(out.createdAfter, bound) : bound
+  else if (key === '--created-before') out.createdBefore = out.createdBefore ? earlier(out.createdBefore, bound) : bound
+  else if (key === '--updated-after') out.updatedAfter = out.updatedAfter ? later(out.updatedAfter, bound) : bound
+  else if (key === '--updated-before') out.updatedBefore = out.updatedBefore ? earlier(out.updatedBefore, bound) : bound
+  return out
 }
 
 export function listArgs(all: string[], any: string[], opts: ListOpts): string[] {
@@ -29,6 +80,8 @@ export function listArgs(all: string[], any: string[], opts: ListOpts): string[]
   if (opts.notes) args.push('--notes-contains', opts.notes)
   if (opts.status) args.push('--status', opts.status)
   if (opts.allStates) args.push('--all')
+  args.push(...bdSortArgs(opts.order))
+  appendBdDateFlags(args, bdBounds(opts))
   return args
 }
 
@@ -41,8 +94,10 @@ export function parseRows(stdout: string): Row[] {
       id: String(x.id ?? x.bead_id ?? '?'),
       title: String(x.title ?? '').slice(0, 120),
       labels: Array.isArray(x.labels) ? (x.labels as unknown[]).map(String) : [],
-      // Source timestamp: the store's own update time, never a bridge clock.
+      // Source timestamps: the store's own clock, never a bridge clock.
       ...(typeof x.updated_at === 'string' && x.updated_at ? { updatedAt: x.updated_at } : {}),
+      ...(typeof x.created_at === 'string' && x.created_at ? { createdAt: x.created_at } : {}),
+      ...(typeof x.priority === 'number' ? { priority: x.priority } : {}),
     }))
     .filter((x) => x.id !== '?')
 }
@@ -64,21 +119,48 @@ export async function runListAsync(
   }
 }
 
+function finishPage(
+  got: { rows: Row[]; error?: string },
+  opts: ListOpts,
+): { rows: Row[]; error?: string; nextCursor?: string } {
+  let rows = got.rows
+  if (opts.order?.length && opts.cursor?.length) {
+    const order = opts.order
+    const cursor = opts.cursor
+    rows = rows.filter((r) => rowAfterCursor(r, order, cursor))
+  }
+  let nextCursor: string | undefined
+  if (opts.limit > 0 && rows.length > opts.limit) {
+    const page = rows.slice(0, opts.limit)
+    const last = page[page.length - 1]
+    if (opts.storeName && opts.order?.length && last) {
+      const vals = cursorVals(last, opts.order)
+      if (vals.every((v) => v != null)) {
+        nextCursor = encodeCursor({ v: 1, store: opts.storeName, cols: opts.order, vals })
+      }
+    }
+    rows = page
+  }
+  return { rows, error: got.error, nextCursor }
+}
+
 // The query-path list: one SQL statement when the shared DB is reachable
 // (no subprocess, never blocks the event loop), else the bd subprocess list.
-// Same {rows, error?} contract as runListAsync.
+// Fetches one extra row so a full page can carry an opaque next_cursor.
+// Same {rows, error?} contract as runListAsync, plus nextCursor.
 export async function runListQuery(
   store: string,
   all: string[],
   any: string[],
   opts: ListOpts,
-): Promise<{ rows: Row[]; error?: string }> {
+): Promise<{ rows: Row[]; error?: string; nextCursor?: string }> {
+  const fetchOpts: ListOpts = { ...opts, limit: opts.limit + 1, storeName: opts.storeName ?? store }
   try {
-    return await withSqlFallback(
+    const got = await withSqlFallback(
       'query_store',
       async () => {
-        const got = await sqlListSweep([store], {
-          limit: opts.limit,
+        const listed = await sqlListSweep([store], {
+          limit: fetchOpts.limit,
           labels: all,
           labelsAny: any,
           excludeLabels: opts.exclude,
@@ -87,14 +169,36 @@ export async function runListQuery(
           notesContains: opts.notes,
           status: opts.status,
           allStates: opts.allStates,
+          order: opts.order,
+          cursor: opts.cursor,
+          createdAfter: opts.bounds?.createdAfter?.sql,
+          createdBefore: opts.bounds?.createdBefore?.sql,
+          updatedAfter: opts.bounds?.updatedAfter?.sql,
+          updatedBefore: opts.bounds?.updatedBefore?.sql,
         })
-        return { rows: parseRows(JSON.stringify(got.get(store) ?? [])) }
+        return { rows: parseRows(JSON.stringify(listed.get(store) ?? [])) }
       },
-      () => runListAsync(store, all, any, opts),
+      () => runListAsync(store, all, any, fetchOpts),
     )
+    return finishPage(got, { ...opts, storeName: opts.storeName ?? store })
   } catch (e: unknown) {
     return { rows: [], error: (e instanceof Error ? e.message : String(e)).slice(0, 200) }
   }
+}
+
+export function formatStoreQuery(store: string, rows: Row[], opts: {
+  aliasNote?: string
+  error?: string
+  nextCursor?: string
+  orderKind?: OrderKind
+  order?: OrderColumn[]
+} = {}): string {
+  const lines = [`# query — ${store} (${rows.length})${opts.aliasNote ?? ''}`]
+  if (opts.order && opts.orderKind && opts.orderKind !== 'legacy') lines.push(`order: ${formatOrder(opts.order)}`)
+  lines.push('', ...rows.map(formatQueryRow))
+  if (opts.error) lines.push('', `error: ${opts.error}`)
+  if (opts.nextCursor) lines.push('', `next_cursor: ${opts.nextCursor}`)
+  return lines.join('\n')
 }
 
 export async function showBeadAsync(store: string, id: string): Promise<string | null> {

@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 7,
+  "manifestVersion": 8,
   "note": "Source of truth for shipped Beads Bridge MCP capabilities. A capability is shipped only when implementation + tests + this entry + changelog/version land coherently. See task-qgplz.",
   "capabilities": [
     {
@@ -23,8 +23,17 @@
       "title": "Query store",
       "op": "query_store",
       "introduced": "1.0.0",
-      "changed": "1.5.0",
-      "beads": ["task-4lb3r"]
+      "changed": "1.11.0",
+      "beads": ["task-4lb3r"],
+      "params": [
+        { "name": "created_after", "type": "string", "description": "Exclusive lower bound on created_at. RFC3339 UTC or YYYY-MM-DD (UTC midnight)." },
+        { "name": "created_before", "type": "string", "description": "Exclusive upper bound on created_at. RFC3339 UTC or YYYY-MM-DD (UTC midnight)." },
+        { "name": "updated_after", "type": "string", "description": "Exclusive lower bound on updated_at. RFC3339 UTC or YYYY-MM-DD (UTC midnight)." },
+        { "name": "updated_before", "type": "string", "description": "Exclusive upper bound on updated_at. RFC3339 UTC or YYYY-MM-DD (UTC midnight)." },
+        { "name": "order_by", "type": "created_at|updated_at|priority|id", "description": "Sort field. Omitted keeps priority, then newest created_at, then id — except the status store, which defaults to updated_at descending, then priority, then id. published_at is not stored." },
+        { "name": "descending", "type": "boolean", "description": "Direction for order_by. Omit for the field's usual direction." },
+        { "name": "cursor", "type": "string", "description": "Opaque next_cursor. Encodes the sort columns and the last row's sort values plus bead id." }
+      ]
     },
     {
       "id": "bead_comment",
@@ -246,16 +255,28 @@
       "title": "Retrieval search",
       "op": "retrieval_search",
       "introduced": "1.0.0",
-      "changed": "1.5.0",
-      "beads": ["task-4lb3r", "task-6b6ij"]
+      "changed": "1.11.0",
+      "beads": ["task-4lb3r", "task-6b6ij"],
+      "params": [
+        { "name": "created_after", "type": "string", "description": "Exclusive lower bound on created_at, applied before ranking." },
+        { "name": "created_before", "type": "string", "description": "Exclusive upper bound on created_at, applied before ranking." },
+        { "name": "updated_after", "type": "string", "description": "Exclusive lower bound on updated_at, applied before ranking." },
+        { "name": "updated_before", "type": "string", "description": "Exclusive upper bound on updated_at, applied before ranking." }
+      ]
     },
     {
       "id": "retrieval_activity",
       "title": "Retrieval activity",
       "op": "retrieval_activity",
       "introduced": "1.0.0",
-      "changed": "1.5.0",
-      "beads": ["task-4lb3r"]
+      "changed": "1.11.0",
+      "beads": ["task-4lb3r"],
+      "params": [
+        { "name": "created_after", "type": "string", "description": "Exclusive lower bound on created_at." },
+        { "name": "created_before", "type": "string", "description": "Exclusive upper bound on created_at." },
+        { "name": "updated_after", "type": "string", "description": "Exclusive lower bound on updated_at. Replaces since when both are set." },
+        { "name": "updated_before", "type": "string", "description": "Exclusive upper bound on updated_at." }
+      ]
     },
     {
       "id": "retrieval_snapshot",
