@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.11.0
+
+- **Date bounds, stable sort, and keyset pages on `query_store`.**
+  `created_after` / `created_before` / `updated_after` / `updated_before` are
+  exclusive and applied in SQL (bd flags on the fallback). `order_by` plus
+  `descending` choose the sort; ties break on bead id. `cursor` is an opaque
+  keyset (sort columns + last row's values + id) so a page can walk past the
+  50-row cap. Omitting the new options keeps today's order, except store
+  `status` (the captain status feed), which defaults to `updated_at`
+  descending, then priority, then id. `published_at` is not a bead column;
+  passing it is an error. Rows include `created_at` and `updated_at` when the
+  store reported them. `retrieval_search` and `retrieval_activity` take the
+  same date bounds. See docs/query-order.md.
+
 ## 1.10.0
 
 - **OAuth approval is a tailnet-only QR; the typed setup key is gone.** The

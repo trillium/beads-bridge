@@ -16,6 +16,10 @@ export interface Row {
    * time (task-60f3z); absent when the store does not report one.
    */
   updatedAt?: string
+  /** Store `created_at`. Absent when the store does not report one. */
+  createdAt?: string
+  /** Store priority (0 = highest). Used as the status-feed tie-break. */
+  priority?: number
 }
 
 export function strParam(v: unknown): string | undefined {

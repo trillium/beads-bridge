@@ -102,6 +102,12 @@ and one SQL statement gives every comment count so zero-comment beads skip
    (`retrieval_activity` history lines), `attachClaimedDetail`, the text
    routes `GET /:store`, `GET /:id`, `/next`, `/action/next` (`bd()` execSync in
    `util.ts`) — tracked as follow-ups.
+5. **`query_store` order and pages.** A status-store query with no `order_by`
+   sorts `updated_at` descending, then priority, then id (the captain status
+   feed). Every other omitted-option query keeps bd's default order. Date
+   bounds and the keyset cursor are SQL `WHERE` predicates; the bd fallback
+   uses the matching flags. `published_at` is not a column. See
+   docs/query-order.md.
 
 ## Tests
 
@@ -109,7 +115,8 @@ and one SQL statement gives every comment count so zero-comment beads skip
   non-SELECT, config, flag, fallback), `src/lib/sql-beads.test.ts` (filter
   building binds all user text, ranking, `splitShow`, `unionAll`, BFS with
   prefetch, partial-id resolution (unique / ambiguous / none / exact-hash) and the
-  double listing of a resolved mention, `runListQuery` fallback with an unreachable DB).
+  double listing of a resolved mention, `runListQuery` fallback with an unreachable DB),
+  `src/lib/query-order.test.ts` (date bounds, status-feed order, ties, keyset pages).
 - Scratch-store helpers (`live-test-store.ts`) set `BEADS_BRIDGE_SQL=off`:
   SQL reads the shared DB, not the scratch store.
 - **Parity is a live read-only run, not fixtures**: `ops/sql-parity/run.sh`

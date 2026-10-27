@@ -24,7 +24,8 @@ import { readBeadCommentsSlice } from '../lib/comments-slice'
 import { beadFreshness, renderFreshness, type BeadFreshness } from '../lib/freshness'
 import { parseStampMs } from '../lib/age'
 import { bundleIds } from './beads'
-import { runListQuery } from './query/store'
+import { formatStoreQuery, runListQuery } from './query/store'
+import { parseDateBounds, parseListWindow, QueryOrderError } from '../lib/query-order'
 import { cleanLabel, LABEL_RE } from './query/params'
 import { validateCreateLabels } from '../lib/create'
 import { createOperationBead, formatReconciliation } from '../lib/idempotent-create'
@@ -236,38 +237,77 @@ const registerBridgeTools = (server: McpServer): void => {
     'query_store',
     {
       title: 'Query store',
-      description: 'Label/text query over one bead store (same as GET /q/:store)',
+      description: 'Label/text query over one bead store (same as GET /q/:store). Optional exclusive bounds on created_at and updated_at (RFC3339 UTC, or YYYY-MM-DD as UTC midnight), order_by plus descending, and an opaque next_cursor. The cursor encodes the sort columns and the last row\'s sort values plus bead id; pass it back unchanged with the same store and order. Page size stays limit (max 50); walk next_cursor until it is absent. Omitting the new options keeps today\'s filters and order (priority, then newest created_at, then id), except store "status" (the captain status feed), which defaults to updated_at descending, then priority, then id. published_at is not stored on bead rows; passing it returns an error. Each row includes created_at and updated_at when the store reported them.',
       inputSchema: z.object({
-        store: z.string().describe('Store name, e.g. resumes-zak'),
+        store: z.string().describe('Store name, e.g. task or status'),
         label: z.array(z.string()).optional().describe('AND labels'),
         any: z.array(z.string()).optional().describe('OR labels'),
         exclude: z.array(z.string()).optional().describe('Excluded labels'),
         title: z.string().optional(),
         status: z.string().optional(),
-        limit: z.number().int().min(1).max(50).optional().describe('Max rows (default 20)'),
+        limit: z.number().int().min(1).max(50).optional().describe('Page size (default 20, max 50). Use next_cursor for the rest of the match set.'),
+        created_after: z.string().max(40).optional().describe('Exclusive lower bound on created_at. RFC3339 UTC or YYYY-MM-DD (UTC midnight).'),
+        created_before: z.string().max(40).optional().describe('Exclusive upper bound on created_at. RFC3339 UTC or YYYY-MM-DD (UTC midnight).'),
+        updated_after: z.string().max(40).optional().describe('Exclusive lower bound on updated_at. RFC3339 UTC or YYYY-MM-DD (UTC midnight).'),
+        updated_before: z.string().max(40).optional().describe('Exclusive upper bound on updated_at. RFC3339 UTC or YYYY-MM-DD (UTC midnight).'),
+        published_after: z.string().max(40).optional().describe('Not stored. Passing this returns an error. Use updated_after.'),
+        published_before: z.string().max(40).optional().describe('Not stored. Passing this returns an error. Use updated_before.'),
+        order_by: z.enum(['created_at', 'updated_at', 'priority', 'id', 'published_at']).optional().describe('Sort field. Default is priority (then newest created_at, then id), except the status store, which defaults to updated_at. published_at is not stored and returns an error. Ties break on bead id.'),
+        descending: z.boolean().optional().describe('Direction for order_by. Omit it for that field\'s usual direction (created_at and updated_at newest-first; priority and id ascending).'),
+        cursor: z.string().max(800).optional().describe('Opaque next_cursor from the previous page. Encodes the sort key and bead id. Pass it back unchanged.'),
       }),
     },
-    async ({ store, label, any, exclude, title, status, limit }: {
+    async ({ store, label, any, exclude, title, status, limit, created_after, created_before, updated_after, updated_before, published_after, published_before, order_by, descending, cursor }: {
       store: string; label?: string[]; any?: string[]; exclude?: string[];
       title?: string; status?: string; limit?: number
+      created_after?: string; created_before?: string; updated_after?: string; updated_before?: string
+      published_after?: string; published_before?: string
+      order_by?: 'created_at' | 'updated_at' | 'priority' | 'id' | 'published_at'
+      descending?: boolean; cursor?: string
     }) => {
       const req = resolveStoreName(store ?? '')
       if (req.kind === 'ambiguous') return err(ambiguousStoreError(req.requested, req.candidates))
       if (req.kind === 'unknown') return err(unknownStoreError(store))
       store = req.store
       const aliasNote = req.kind === 'alias' ? ` (resolved alias '${req.requested}' → canonical '${req.store}')` : ''
+      let window: ReturnType<typeof parseListWindow>
+      try {
+        window = parseListWindow({
+          store,
+          orderBy: order_by,
+          descending,
+          createdAfter: created_after,
+          createdBefore: created_before,
+          updatedAfter: updated_after,
+          updatedBefore: updated_before,
+          publishedAfter: published_after,
+          publishedBefore: published_before,
+          cursor,
+        })
+      } catch (e) {
+        return err(e instanceof QueryOrderError ? e.message : `query: ${e instanceof Error ? e.message : String(e)}`)
+      }
       const all = (label ?? []).map(cleanLabel).filter((x): x is string => !!x).slice(0, 10)
       const orLabels = (any ?? []).map(cleanLabel).filter((x): x is string => !!x).slice(0, 10)
       // No filters means list-all (up to limit) — store discovery is a feature.
-      const { rows, error } = await runListQuery(store, all, orLabels, {
+      const { rows, error, nextCursor } = await runListQuery(store, all, orLabels, {
         exclude: (exclude ?? []).map(cleanLabel).filter((x): x is string => !!x).slice(0, 10),
         title: title?.slice(0, 120),
         status: status?.slice(0, 64),
         limit: limit ?? 20,
         allStates: false,
+        order: window.columns,
+        cursor: window.cursor?.vals,
+        bounds: window.bounds,
+        storeName: store,
       })
-      const lines = rows.map((r) => `${r.id} — ${r.title}${r.labels.length ? ` [${r.labels.join(', ')}]` : ''}`)
-      return ok([`# query — ${store} (${rows.length})${aliasNote}`, '', ...lines, ...(error ? ['', `error: ${error}`] : [])].join('\n'))
+      return ok(formatStoreQuery(store, rows, {
+        aliasNote,
+        error,
+        nextCursor,
+        orderKind: window.kind,
+        order: window.columns,
+      }))
     },
   )
 
@@ -1399,26 +1439,48 @@ const registerBridgeTools = (server: McpServer): void => {
     'retrieval_search',
     {
       title: 'Federated search',
-      description: 'Full-text search across all bead stores with optional store/status/label filters (same as GET /retrieval/search). Blank query lists recent beads per store.',
+      description: 'Full-text search across all bead stores with optional store/status/label filters (same as GET /retrieval/search). Blank query lists recent beads per store. Optional exclusive created_at and updated_at bounds (RFC3339 UTC or YYYY-MM-DD as UTC midnight) are applied in the query, before ranking. published_at is not stored; passing it returns an error. Order stays relevance (or the usual list order for a blank query). Page through one store with query_store and next_cursor.',
       inputSchema: z.object({
         query: z.string().max(500).describe('Full-text query — blank lists per-store beads'),
         stores: z.array(z.string()).max(10).optional().describe('Stores to search (default all)'),
         status: z.string().max(64).optional().describe('Status filter, e.g. open (default includes closed)'),
         labels: z.array(z.string()).max(10).optional().describe('AND labels'),
         limit: z.number().int().min(1).max(100).optional().describe('Max rows total (default 30)'),
+        created_after: z.string().max(40).optional().describe('Exclusive lower bound on created_at. RFC3339 UTC or YYYY-MM-DD (UTC midnight).'),
+        created_before: z.string().max(40).optional().describe('Exclusive upper bound on created_at. RFC3339 UTC or YYYY-MM-DD (UTC midnight).'),
+        updated_after: z.string().max(40).optional().describe('Exclusive lower bound on updated_at. RFC3339 UTC or YYYY-MM-DD (UTC midnight).'),
+        updated_before: z.string().max(40).optional().describe('Exclusive upper bound on updated_at. RFC3339 UTC or YYYY-MM-DD (UTC midnight).'),
+        published_after: z.string().max(40).optional().describe('Not stored. Passing this returns an error. Use updated_after.'),
+        published_before: z.string().max(40).optional().describe('Not stored. Passing this returns an error. Use updated_before.'),
       }),
     },
-    async ({ query, stores, status, labels, limit }: {
+    async ({ query, stores, status, labels, limit, created_after, created_before, updated_after, updated_before, published_after, published_before }: {
       query: string; stores?: string[]; status?: string; labels?: string[]; limit?: number
+      created_after?: string; created_before?: string; updated_after?: string; updated_before?: string
+      published_after?: string; published_before?: string
     }) => {
       const { stores: used, unknown } = pickRetrievalStores(stores?.length ? stores : undefined)
       if (stores?.length && !used.length) return err(`unknown stores: ${(unknown.length ? unknown : stores).join(', ')} (known: ${STORES.join(', ')})`)
+      let bounds: ReturnType<typeof parseDateBounds>
+      try {
+        bounds = parseDateBounds({
+          createdAfter: created_after,
+          createdBefore: created_before,
+          updatedAfter: updated_after,
+          updatedBefore: updated_before,
+          publishedAfter: published_after,
+          publishedBefore: published_before,
+        })
+      } catch (e) {
+        return err(e instanceof QueryOrderError ? e.message : `search: ${e instanceof Error ? e.message : String(e)}`)
+      }
       const { rows, errors, stores: hit } = await federatedSearch(query, {
         stores: stores?.length ? stores : undefined,
         status: status?.slice(0, 64),
         labels: cleanLabels(labels),
         perStore: 20,
         limit: limit ?? 30,
+        bounds,
       })
       return ok(formatSearch(query, rows, errors, hit, unknown))
     },
@@ -1428,27 +1490,49 @@ const registerBridgeTools = (server: McpServer): void => {
     'retrieval_activity',
     {
       title: 'Recent activity',
-      description: 'Newest-first activity across all bead stores with limit/filters and compact change info (same as GET /retrieval/activity).',
+      description: 'Newest-first activity across all bead stores with limit/filters and compact change info (same as GET /retrieval/activity). Default order is updated_at descending (priority is not the sort). Optional exclusive created_at and updated_at bounds use RFC3339 UTC or YYYY-MM-DD as UTC midnight. since remains an updated-after alias and still accepts the forms bd accepts. published_at is not stored; passing it returns an error. For a stable page through one store, use query_store and next_cursor.',
       inputSchema: z.object({
         limit: z.number().int().min(1).max(100).optional().describe('Max rows (default 20)'),
         stores: z.array(z.string()).max(10).optional().describe('Stores to cover (default all)'),
         status: z.string().max(64).optional().describe('Status filter (default includes closed)'),
         labels: z.array(z.string()).max(10).optional().describe('AND labels'),
-        since: z.string().max(64).optional().describe('Only beads updated after this date (YYYY-MM-DD or RFC3339)'),
+        since: z.string().max(64).optional().describe('Only beads updated after this date (YYYY-MM-DD or RFC3339). updated_after replaces this when both are set.'),
         history: z.boolean().optional().describe('Attach compact per-bead change info (default false)'),
+        created_after: z.string().max(40).optional().describe('Exclusive lower bound on created_at. RFC3339 UTC or YYYY-MM-DD (UTC midnight).'),
+        created_before: z.string().max(40).optional().describe('Exclusive upper bound on created_at. RFC3339 UTC or YYYY-MM-DD (UTC midnight).'),
+        updated_after: z.string().max(40).optional().describe('Exclusive lower bound on updated_at. Replaces since. RFC3339 UTC or YYYY-MM-DD (UTC midnight).'),
+        updated_before: z.string().max(40).optional().describe('Exclusive upper bound on updated_at. RFC3339 UTC or YYYY-MM-DD (UTC midnight).'),
+        published_after: z.string().max(40).optional().describe('Not stored. Passing this returns an error. Use updated_after.'),
+        published_before: z.string().max(40).optional().describe('Not stored. Passing this returns an error. Use updated_before.'),
       }),
     },
-    async ({ limit, stores, status, labels, since, history }: {
+    async ({ limit, stores, status, labels, since, history, created_after, created_before, updated_after, updated_before, published_after, published_before }: {
       limit?: number; stores?: string[]; status?: string; labels?: string[]; since?: string; history?: boolean
+      created_after?: string; created_before?: string; updated_after?: string; updated_before?: string
+      published_after?: string; published_before?: string
     }) => {
       const { stores: used, unknown } = pickRetrievalStores(stores?.length ? stores : undefined)
       if (stores?.length && !used.length) return err(`unknown stores: ${(unknown.length ? unknown : stores).join(', ')} (known: ${STORES.join(', ')})`)
+      let bounds: ReturnType<typeof parseDateBounds>
+      try {
+        bounds = parseDateBounds({
+          createdAfter: created_after,
+          createdBefore: created_before,
+          updatedAfter: updated_after,
+          updatedBefore: updated_before,
+          publishedAfter: published_after,
+          publishedBefore: published_before,
+        })
+      } catch (e) {
+        return err(e instanceof QueryOrderError ? e.message : `activity: ${e instanceof Error ? e.message : String(e)}`)
+      }
       const { rows, errors, stores: hit, unknownStores } = await recentActivity({
         stores: stores?.length ? stores : undefined,
         limit: clampLimit(limit, 20),
         status: status?.slice(0, 64),
         labels: cleanLabels(labels),
         since: since?.slice(0, 64),
+        bounds,
       })
       const hist = history && rows.length ? await attachHistory(rows.slice(0, Math.min(rows.length, 20)), 2) : undefined
       return ok(formatActivity(rows, errors, hit, unknownStores, hist))

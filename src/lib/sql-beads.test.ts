@@ -68,6 +68,31 @@ describe('buildWhere', () => {
   it('updatedAfter is an exclusive bound', () => {
     assert.deepEqual(_internal.buildWhere({ updatedAfter: '2026-10-16 01:02:03' }, T), { sql: ['updated_at > ?'], args: ['2026-10-16 01:02:03'] })
   })
+
+  it('created and updated bounds and a keyset are all bound parameters', () => {
+    const w = _internal.buildWhere({
+      createdAfter: '2026-10-01 00:00:00',
+      createdBefore: '2026-10-31 00:00:00',
+      updatedBefore: '2026-10-16 01:02:03',
+      keyset: {
+        columns: [
+          { col: 'updated_at', dir: 'desc' },
+          { col: 'priority', dir: 'asc' },
+          { col: 'id', dir: 'asc' },
+        ],
+        values: ['2026-10-02T00:00:00Z', 0, 'status-a'],
+      },
+    }, T)
+    const text = w.sql.join(' AND ')
+    assert.match(text, /created_at > \?/)
+    assert.match(text, /created_at < \?/)
+    assert.match(text, /updated_at < \?/)
+    assert.match(text, /id > \?/)
+    assert.ok(!text.includes('status-a'))
+    assert.ok(w.args.includes('status-a'))
+    assert.equal((text.match(/\?/g) ?? []).length, w.args.length)
+    assert.doesNotThrow(() => assertReadOnlySql(`SELECT id FROM issues WHERE ${text}`))
+  })
 })
 
 describe('sinceToSqlUtc', () => {

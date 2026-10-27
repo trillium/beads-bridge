@@ -15,6 +15,7 @@ import { resolveStoreName } from './store-aliases'
 import { cleanLabel } from '../routes/query/params'
 import { listArgs } from '../routes/query/store'
 import { runListAsync } from '../routes/query/store'
+import { appendBdDateFlags, type DateBounds } from './query-order'
 
 export interface RetrievalRow {
   store: string
@@ -108,10 +109,11 @@ export interface SearchOpts {
   labels?: string[]
   perStore?: number
   limit?: number
+  bounds?: DateBounds
 }
 
 // Blank query falls back to list-all (store discovery), mirroring query_store.
-export function searchArgs(query: string, opts: { status?: string; labels?: string[]; perStore: number }): string[] {
+export function searchArgs(query: string, opts: { status?: string; labels?: string[]; perStore: number; bounds?: DateBounds }): string[] {
   const q = query.trim()
   if (!q) {
     return listArgs([], [], {
@@ -119,11 +121,13 @@ export function searchArgs(query: string, opts: { status?: string; labels?: stri
       status: opts.status,
       limit: opts.perStore,
       allStates: !opts.status,
+      bounds: opts.bounds,
     })
   }
   const args = ['search', q, '--json', '--limit', String(opts.perStore)]
   for (const l of opts.labels ?? []) args.push('--label', l)
   args.push('--status', opts.status ?? 'all')
+  appendBdDateFlags(args, opts.bounds)
   return args
 }
 
@@ -136,7 +140,7 @@ export async function federatedSearch(
   const perStore = Math.min(RETRIEVAL_MAX_PER_STORE, Math.max(1, opts.perStore ?? 20))
   const limit = Math.min(RETRIEVAL_MAX_LIMIT, Math.max(1, opts.limit ?? 30))
   const status = opts.status?.trim().slice(0, 64) || undefined
-  const args = searchArgs(query, { status, labels, perStore })
+  const args = searchArgs(query, { status, labels, perStore, bounds: opts.bounds })
   const viaBd = (): Promise<{ rows: RetrievalRow[]; error?: string }[]> =>
     mapLimit(stores, 6, async (store): Promise<{ rows: RetrievalRow[]; error?: string }> => {
       try {
@@ -148,9 +152,15 @@ export async function federatedSearch(
   // One statement for the whole sweep instead of one `bd search` per store.
   const viaSql = async (): Promise<{ rows: RetrievalRow[]; error?: string }[]> => {
     const q = query.trim()
+    const dateSql = {
+      createdAfter: opts.bounds?.createdAfter?.sql,
+      createdBefore: opts.bounds?.createdBefore?.sql,
+      updatedAfter: opts.bounds?.updatedAfter?.sql,
+      updatedBefore: opts.bounds?.updatedBefore?.sql,
+    }
     const byStore = q
-      ? await sqlSearchSweep(stores, q, { limit: perStore, status: status ?? 'all', labels })
-      : await sqlListSweep(stores, { limit: perStore, status, allStates: !status })
+      ? await sqlSearchSweep(stores, q, { limit: perStore, status: status ?? 'all', labels, ...dateSql })
+      : await sqlListSweep(stores, { limit: perStore, status, allStates: !status, ...dateSql })
     return stores.map((s) => ({ rows: rowsFromSql(byStore.get(s) ?? [], s) }))
   }
   const per = await withSqlFallback('retrieval_search', viaSql, viaBd)
@@ -197,14 +207,20 @@ export interface ActivityOpts {
   status?: string
   labels?: string[]
   since?: string
+  bounds?: DateBounds
 }
 
-export function activityArgs(opts: { limit: number; status?: string; labels?: string[]; since?: string }): string[] {
+export function activityArgs(opts: { limit: number; status?: string; labels?: string[]; since?: string; bounds?: DateBounds }): string[] {
   const args = ['list', '--json', '--limit', String(opts.limit), '--sort', 'updated']
   for (const l of opts.labels ?? []) args.push('--label', l)
   if (opts.status) args.push('--status', opts.status)
   else args.push('--all')
-  if (opts.since) args.push('--updated-after', opts.since)
+  // since stays the raw caller string. A normalized updated_after replaces it.
+  if (opts.bounds?.updatedAfter) args.push('--updated-after', opts.bounds.updatedAfter.flag)
+  else if (opts.since) args.push('--updated-after', opts.since)
+  if (opts.bounds?.updatedBefore) args.push('--updated-before', opts.bounds.updatedBefore.flag)
+  if (opts.bounds?.createdAfter) args.push('--created-after', opts.bounds.createdAfter.flag)
+  if (opts.bounds?.createdBefore) args.push('--created-before', opts.bounds.createdBefore.flag)
   return args
 }
 
@@ -225,7 +241,7 @@ export async function recentActivity(
   const status = opts.status?.trim().slice(0, 64) || undefined
   const since = opts.since?.trim().slice(0, 64) || undefined
   const perStore = Math.min(RETRIEVAL_MAX_PER_STORE, Math.max(limit, 10))
-  const args = activityArgs({ limit: perStore, status, labels, since })
+  const args = activityArgs({ limit: perStore, status, labels, since, bounds: opts.bounds })
   const viaBd = (): Promise<{ rows: RetrievalRow[]; error?: string }[]> =>
     mapLimit(stores, 6, async (store): Promise<{ rows: RetrievalRow[]; error?: string }> => {
       try {
@@ -235,7 +251,18 @@ export async function recentActivity(
       }
     })
   const viaSql = async (): Promise<{ rows: RetrievalRow[]; error?: string }[]> => {
-    const byStore = await sqlListSweep(stores, { limit: perStore, sort: 'updated', labels, status, allStates: !status, since })
+    const byStore = await sqlListSweep(stores, {
+      limit: perStore,
+      sort: 'updated',
+      labels,
+      status,
+      allStates: !status,
+      since: opts.bounds?.updatedAfter ? undefined : since,
+      createdAfter: opts.bounds?.createdAfter?.sql,
+      createdBefore: opts.bounds?.createdBefore?.sql,
+      updatedAfter: opts.bounds?.updatedAfter?.sql,
+      updatedBefore: opts.bounds?.updatedBefore?.sql,
+    })
     return stores.map((s) => ({ rows: rowsFromSql(byStore.get(s) ?? [], s) }))
   }
   const per = await withSqlFallback('retrieval_activity', viaSql, viaBd)

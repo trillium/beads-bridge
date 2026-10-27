@@ -11,6 +11,7 @@ import { LABEL_RE, MAX_LABELS, strParam, listParam, cleanLabel } from './query/p
 import { runListQuery } from './query/store'
 import { resolveStoreName } from '../lib/store-aliases'
 import { formatSection } from './query/format'
+import { formatOrder, parseDescending, parseListWindow, QueryOrderError } from '../lib/query-order'
 
 export const mountOrder = -15
 export const singleQueryRouter = Router()
@@ -41,7 +42,30 @@ singleQueryRouter.get('/q/:store', async (req: Request, res: Response, next: Nex
   // No filters means list-all (up to limit) — store discovery is a feature.
   const limit = Math.min(50, Math.max(1, parseInt(strParam(req.query.limit) ?? '20', 10) || 20))
   const status = strParam(req.query.status)?.slice(0, 64)
-  const { rows, error } = await runListQuery(store, all, any, {
+  let listWindow: ReturnType<typeof parseListWindow>
+  try {
+    listWindow = parseListWindow({
+      store,
+      orderBy: strParam(req.query.order_by),
+      descending: parseDescending(strParam(req.query.descending)),
+      createdAfter: strParam(req.query.created_after),
+      createdBefore: strParam(req.query.created_before),
+      updatedAfter: strParam(req.query.updated_after),
+      updatedBefore: strParam(req.query.updated_before),
+      publishedAfter: strParam(req.query.published_after),
+      publishedBefore: strParam(req.query.published_before),
+      cursor: strParam(req.query.cursor),
+    })
+  } catch (e) {
+    const detail = e instanceof QueryOrderError ? e.message : (e instanceof Error ? e.message : String(e))
+    return res.type('text/plain').status(400).send(wrap({
+      title: `Query failed — ${store}`,
+      noNext: true,
+      body: `# query — ${store}\n\n${detail}`,
+      meta: { store },
+    }))
+  }
+  const { rows, error, nextCursor } = await runListQuery(store, all, any, {
     exclude,
     title: strParam(req.query.title)?.slice(0, 120),
     desc: strParam(req.query.desc)?.slice(0, 120),
@@ -49,6 +73,10 @@ singleQueryRouter.get('/q/:store', async (req: Request, res: Response, next: Nex
     status,
     limit,
     allStates: req.query.all !== undefined,
+    order: listWindow.columns,
+    cursor: listWindow.cursor?.vals,
+    bounds: listWindow.bounds,
+    storeName: store,
   })
   const cb = shortCode()
   const ids = rows.map((r) => r.id).slice(0, 40)
@@ -57,6 +85,8 @@ singleQueryRouter.get('/q/:store', async (req: Request, res: Response, next: Nex
     `# label query — ${store}`,
     ``,
     ...formatSection(store, [...all.map((l) => `label:${l}`), ...any.map((l) => `any:${l}`)], rows, error),
+    ...(listWindow.kind === 'legacy' ? [] : ['', `order: ${formatOrder(listWindow.columns)}`]),
+    ...(nextCursor ? ['', `next_cursor: ${nextCursor}`] : []),
     ``,
     ...(ids.length ? [`Everything at once:`, ``, withCb(`${BASE}/beads/${ids.join('+')}`, cb), ``] : []),
     `Re-fetch this literal to re-run the query (add &fresh=1 is not needed — queries run live).`,

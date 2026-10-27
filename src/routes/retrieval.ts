@@ -5,6 +5,7 @@ import type { Request, Response } from 'express'
 import { wrap } from '../wrap'
 import { withDebug } from './debug-state'
 import { strParam, listParam } from './query/params'
+import { parseDateBounds, QueryOrderError, type DateBounds } from '../lib/query-order'
 import {
   attachClaimedDetail,
   attachHistory,
@@ -28,6 +29,17 @@ import {
 export const mountOrder = -13
 export const retrievalRouter = Router()
 
+function dateBounds(query: Request['query']): DateBounds {
+  return parseDateBounds({
+    createdAfter: strParam(query.created_after),
+    createdBefore: strParam(query.created_before),
+    updatedAfter: strParam(query.updated_after),
+    updatedBefore: strParam(query.updated_before),
+    publishedAfter: strParam(query.published_after),
+    publishedBefore: strParam(query.published_before),
+  })
+}
+
 // GET /retrieval/search?q=...&store=...&status=...&label=...&limit=...
 retrievalRouter.get('/retrieval/search', async (req: Request, res: Response) => {
   const query = strParam(req.query.q) ?? strParam(req.query.query) ?? ''
@@ -35,6 +47,17 @@ retrievalRouter.get('/retrieval/search', async (req: Request, res: Response) => 
   const status = strParam(req.query.status)
   const labels = listParam(req.query.label ?? req.query.labels)
   const limit = clampLimit(req.query.limit, 30)
+  let bounds: DateBounds
+  try {
+    bounds = dateBounds(req.query)
+  } catch (e) {
+    const detail = e instanceof QueryOrderError ? e.message : ((e as Error)?.message ?? String(e))
+    return res.type('text/plain').status(400).send(wrap({
+      title: 'Federated search failed',
+      noNext: true,
+      body: `# search failed: ${detail.slice(0, 300)}`,
+    }))
+  }
   try {
     const { rows, errors, stores: used, unknownStores } = await federatedSearch(query, {
       stores: stores.length ? stores : undefined,
@@ -42,6 +65,7 @@ retrievalRouter.get('/retrieval/search', async (req: Request, res: Response) => 
       labels,
       perStore: 20,
       limit,
+      bounds,
     })
     res.type('text/plain').send(wrap({
       title: `Federated search — "${query || '(all)'}" (${rows.length})`,
@@ -65,6 +89,17 @@ retrievalRouter.get('/retrieval/activity', async (req: Request, res: Response) =
   const since = strParam(req.query.since)
   const limit = clampLimit(req.query.limit, 20)
   const wantHistory = req.query.history !== undefined
+  let bounds: DateBounds
+  try {
+    bounds = dateBounds(req.query)
+  } catch (e) {
+    const detail = e instanceof QueryOrderError ? e.message : ((e as Error)?.message ?? String(e))
+    return res.type('text/plain').status(400).send(wrap({
+      title: 'Recent activity failed',
+      noNext: true,
+      body: `# activity failed: ${detail.slice(0, 300)}`,
+    }))
+  }
   try {
     const { rows, errors, stores: used, unknownStores } = await recentActivity({
       stores: stores.length ? stores : undefined,
@@ -72,6 +107,7 @@ retrievalRouter.get('/retrieval/activity', async (req: Request, res: Response) =
       status,
       labels,
       since,
+      bounds,
     })
     const history = wantHistory && rows.length ? await attachHistory(rows.slice(0, Math.min(rows.length, 20)), 2) : undefined
     res.type('text/plain').send(wrap({
