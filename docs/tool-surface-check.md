@@ -69,3 +69,5 @@ comparison.
 The end-to-end refresh procedure (confirm live, confirm loaded, minimal
 refresh per client, verify) is in `docs/jungle-gateway-refresh.md`;
 `ops/mcp-refresh-check.sh` automates its read-only checks.
+
+See also docs/voice-guard.md: 1.12.0 added `voice_confirm`, which a stale client cannot call until it refreshes.

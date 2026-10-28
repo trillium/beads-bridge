@@ -1,0 +1,43 @@
+
+$ bead_comment {text:"deploy finished"}            # clean
+WRITE #1 -> comment on task-1: deploy finished
+
+$ bead_comment {text:"status feed is green"}       # valid term, glossary-jgv has no keep: clause -> asks, never rewrites
+PAUSED — bead_comment was NOT executed; nothing was written. Possible voice misrecognition:
+  - text: "feed" may mean "bead" (glossary-jgv) — …status feed is green…
+
+Finish with voice_confirm { token: "vg_a7bb06b05fcf", decision: ... }:
+  accept   — run with the suggested wording above
+  original — run exactly as sent (the flagged word is really intended)
+  correct  — run with your own `arguments` (full corrected argument object)
+  cancel   — drop it
+Re-sending the same bead_comment call returns this same pending request, never a second one. Expires in ~15 min.
+
+$ voice_confirm {decision:"original"}              # "status feed" preserved verbatim
+voice_confirm: executed bead_comment once (original; vg_a7bb06b05fcf).
+WRITE #2 -> comment on task-1: status feed is green
+
+$ bead_comment {text:"add a feed for the new store"}   # flagged
+PAUSED — bead_comment was NOT executed; nothing was written. Possible voice misrecognition:
+  - text: "feed" may mean "bead" (glossary-jgv) — …add a feed for the new store…
+
+Finish with voice_confirm { token: "vg_d2146bb5a05d", decision: ... }:
+  accept   — run with the suggested wording above
+  original — run exactly as sent (the flagged word is really intended)
+  correct  — run with your own `arguments` (full corrected argument object)
+  cancel   — drop it
+Re-sending the same bead_comment call returns this same pending request, never a second one. Expires in ~15 min.
+writes so far: 2
+
+$ voice_confirm {decision:"accept"}
+voice_confirm: executed bead_comment once (accept; vg_d2146bb5a05d).
+WRITE #3 -> comment on task-1: add a bead for the new store
+
+$ voice_confirm {decision:"accept"}   # retry
+voice_confirm: vg_d2146bb5a05d already executed (accept); bead_comment was NOT run again. Result of the first execution follows.
+WRITE #3 -> comment on task-1: add a bead for the new store
+
+$ bead_comment (same call re-sent)   # no second write
+voice_confirm: vg_d2146bb5a05d already executed (accept); bead_comment was NOT run again. Result of the first execution follows.
+WRITE #3 -> comment on task-1: add a bead for the new store
+total writes: 3 = clean(1) + status-feed/original(1) + bead/accept(1), retries added 0

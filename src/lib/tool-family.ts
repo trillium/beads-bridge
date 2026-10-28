@@ -20,7 +20,7 @@ export const TOOL_FAMILIES: ToolFamily[] = [
   {
     key: 'write',
     label: 'write',
-    tools: ['bead_comment', 'bead_note', 'bead_decision', 'bead_label', 'bead_create', 'bead_batch_create', 'bead_edit', 'project_edit'],
+    tools: ['bead_comment', 'bead_note', 'bead_decision', 'bead_label', 'bead_create', 'bead_batch_create', 'bead_edit', 'project_edit', 'voice_confirm'],
     prefixes: [],
   },
   { key: 'feedback', label: 'feedback', tools: ['bead_feedback', 'feedback_edit'], prefixes: [] },

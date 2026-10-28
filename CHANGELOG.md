@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.12.0
+
+- **Voice-misrecognition guard: conditional two-step confirmation (feature-n7e).**
+  Dictated requests sometimes carry a speech-to-text slip ("feed" for "bead").
+  Misrecognitions are read at runtime from open `glossary` beads labelled
+  `voice-transcription` (glossary-jgv is the first; its existing wording parses
+  unedited). The free-text arguments of the bead-writing tools (`bead_comment`,
+  `bead_note`, `bead_create`, `bead_batch_create`, `bead_edit`, `project_edit`,
+  `relay_capture`, `relay_upsert_task`, `relay_dispatch_request`, `relay_flow`)
+  are checked BEFORE the tool runs. A clean call executes in one step. A flagged
+  call is paused with nothing written and returns a proposed correction plus a
+  token; the new `voice_confirm` tool finishes it with `accept`, `original`
+  (keep my wording), `correct` (supply arguments) or `cancel`. The call
+  executes at most once; retries get the cached result. Nothing is rewritten
+  silently, a `; keep: status feed` clause protects legitimate phrases, and a
+  glossary read failure fails open. Pauses show in the response and heartbeat
+  footers. Kill switch `BEADS_BRIDGE_VOICE_GUARD=off`. See docs/voice-guard.md.
+  Clients with a cached tools/list must refresh to see `voice_confirm`; the
+  guarded tools are marked `changed: 1.12.0` so `start_session` reports it.
+
 ## 1.11.0
 
 - **Date bounds, stable sort, and keyset pages on `query_store`.**

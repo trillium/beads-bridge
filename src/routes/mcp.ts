@@ -57,6 +57,7 @@ import { unverifiedMessage } from '../lib/receipts'
 import { formatRelayStatus, relayStatus, relayStatusReading } from '../lib/relay-status'
 import { currentScope, registerFollowon, withFollowonScope, withResponseFooter } from '../lib/followons'
 import { currentRequestCaller, withProvenance } from '../lib/provenance'
+import { withVoiceGuard, voiceFooterLine } from '../lib/voice-guard'
 import { HEARTBEAT_CALLER_ANONYMOUS, HEARTBEAT_CALLER_LOOPBACK, HEARTBEAT_EXCLUDED_TOOLS, advanceHeartbeatCursor, heartbeatReading, peekHeartbeatBlock, renderHeartbeatBlock } from '../lib/heartbeat'
 import { agentPresence, formatPresence } from '../lib/agent-mail'
 import { recordLatestHeartbeat } from '../lib/heartbeat-latest'
@@ -141,6 +142,15 @@ registerFollowon({
   },
 })
 
+// Fail-open must be visible: when the glossary rules could not be read, a
+// guarded call says it ran unchecked (src/lib/voice-guard.ts).
+registerFollowon({
+  name: 'voice-guard',
+  priority: 90,
+  excludeTools: HEARTBEAT_EXCLUDED_TOOLS,
+  run: (ctx) => voiceFooterLine(ctx.tool),
+})
+
 // Canonical store for a bead id, with loud ambiguity: an id prefix that
 // could belong to more than one store names the candidates instead of
 // guessing. Returns the error text (caller wraps with err()).
@@ -192,7 +202,10 @@ async function showBeads(ids: string[]): Promise<string[]> {
   return resolved.map(({ id, r }) => ('text' in r ? r.text : renderBeadBlock(id, r.store, texts.get(id)!)))
 }
 
-const registerBridgeTools = (server: McpServer): void => {
+const registerBridgeTools = (rawServer: McpServer): void => {
+  // Voice-misrecognition guard (feature-n7e): every tool is registered on the
+  // wrapped server, so flagged writes pause before their callback runs.
+  const { server, confirm: voiceConfirm } = withVoiceGuard(rawServer, { ok: (t) => ok(t), err: (t) => err(t) })
   // GET /{bead-id} equivalent.
   server.registerTool(
     'bead_show',
@@ -1650,6 +1663,24 @@ const registerBridgeTools = (server: McpServer): void => {
         return err(`agent_presence failed: ${e instanceof Error ? e.message : String(e)}`)
       }
     },
+  )
+
+  // Second step of the voice-misrecognition guard (feature-n7e): settles a
+  // paused call. Executes the original tool exactly once; retries get the
+  // cached outcome. Bare-composed by the guard itself (the executed tool's
+  // own response already carries the footer).
+  server.registerTool(
+    'voice_confirm',
+    {
+      title: 'Confirm voice-checked call',
+      description: 'Finish a tool call the bridge PAUSED because its text looked like a voice transcription slip (a response beginning "PAUSED — … NOT executed" with a token). decision: "accept" runs it with the suggested wording; "original" runs it exactly as sent (the flagged word is really intended, e.g. a status feed); "correct" runs it with your own full `arguments` object for that tool; "cancel" drops it. Executes at most once — repeating the same confirm returns the first result instead of writing again. Only needed after a PAUSED response; normal calls never use it.',
+      inputSchema: z.object({
+        token: z.string().min(1).max(40).describe('The vg_… token from the PAUSED response'),
+        decision: z.enum(['accept', 'original', 'correct', 'cancel']),
+        arguments: z.record(z.string(), z.unknown()).optional().describe('decision "correct" only: the full corrected argument object for the paused tool'),
+      }),
+    },
+    async (args: { token: string; decision: 'accept' | 'original' | 'correct' | 'cancel'; arguments?: Record<string, unknown> }, extra: unknown) => voiceConfirm(args, extra),
   )
 
   // Heartbeat as an explicitly callable tool (task-ksmy1): the same delta

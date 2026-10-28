@@ -1,5 +1,5 @@
 {
-  "manifestVersion": 8,
+  "manifestVersion": 9,
   "note": "Source of truth for shipped Beads Bridge MCP capabilities. A capability is shipped only when implementation + tests + this entry + changelog/version land coherently. See task-qgplz.",
   "capabilities": [
     {
@@ -40,16 +40,16 @@
       "title": "Comment on bead",
       "op": "bead_comment",
       "introduced": "1.0.0",
-      "changed": "1.5.0",
-      "beads": ["task-4lb3r"]
+      "changed": "1.12.0",
+      "beads": ["task-4lb3r", "feature-n7e"]
     },
     {
       "id": "bead_note",
       "title": "Append bead note",
       "op": "bead_note",
       "introduced": "1.0.0",
-      "changed": "1.5.0",
-      "beads": ["task-4lb3r"]
+      "changed": "1.12.0",
+      "beads": ["task-4lb3r", "feature-n7e"]
     },
     {
       "id": "bead_decision",
@@ -72,16 +72,16 @@
       "title": "Create bead (idempotent, revision-aware)",
       "op": "bead_create",
       "introduced": "1.0.0",
-      "changed": "1.6.1",
-      "beads": ["task-4lb3r"]
+      "changed": "1.12.0",
+      "beads": ["task-4lb3r", "feature-n7e"]
     },
     {
       "id": "bead_batch_create",
       "title": "Batch create beads",
       "op": "bead_batch_create",
       "introduced": "1.0.0",
-      "changed": "1.5.0",
-      "beads": ["task-4lb3r"]
+      "changed": "1.12.0",
+      "beads": ["task-4lb3r", "feature-n7e"]
     },
     {
       "id": "bead_connections",
@@ -96,8 +96,8 @@
       "title": "Edit bead",
       "op": "bead_edit",
       "introduced": "1.0.0",
-      "changed": "1.5.0",
-      "beads": ["task-4lb3r"]
+      "changed": "1.12.0",
+      "beads": ["task-4lb3r", "feature-n7e"]
     },
     {
       "id": "bead_feedback",
@@ -194,29 +194,32 @@
       "title": "Capture to project",
       "op": "relay_capture",
       "introduced": "1.0.0",
-      "changed": "1.5.0",
-      "beads": ["task-4lb3r"]
+      "changed": "1.12.0",
+      "beads": ["task-4lb3r", "feature-n7e"]
     },
     {
       "id": "project_edit",
       "title": "Edit project",
       "op": "project_edit",
       "introduced": "1.1.0",
-      "beads": [
-        "inbox-z6dv"
-      ]
+      "changed": "1.12.0",
+      "beads": ["inbox-z6dv", "feature-n7e"]
     },
     {
       "id": "relay_upsert_task",
       "title": "Create or update task",
       "op": "relay_upsert_task",
-      "introduced": "1.0.0"
+      "introduced": "1.0.0",
+      "changed": "1.12.0",
+      "beads": ["feature-n7e"]
     },
     {
       "id": "relay_dispatch_request",
       "title": "Dispatch request",
       "op": "relay_dispatch_request",
-      "introduced": "1.0.0"
+      "introduced": "1.0.0",
+      "changed": "1.12.0",
+      "beads": ["feature-n7e"]
     },
     {
       "id": "relay_verify",
@@ -230,7 +233,9 @@
       "id": "relay_flow",
       "title": "Resolve-capture-dispatch flow",
       "op": "relay_flow",
-      "introduced": "1.0.0"
+      "introduced": "1.0.0",
+      "changed": "1.12.0",
+      "beads": ["feature-n7e"]
     },
     {
       "id": "relay_catchup",
@@ -393,6 +398,13 @@
       "op": "start_session",
       "introduced": "1.9.0",
       "beads": ["task-vog0d", "task-5l0qc", "task-wrsf4", "task-lwckw", "task-hdiyo"]
+    },
+    {
+      "id": "voice_confirm",
+      "title": "Confirm voice-checked call",
+      "op": "voice_confirm",
+      "introduced": "1.12.0",
+      "beads": ["feature-n7e", "glossary-jgv"]
     }
   ]
 }
