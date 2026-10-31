@@ -17,7 +17,58 @@ REF="${1:-origin/main}"
 DEPLOY_DIR="${DEPLOY_DIR:-$HOME/.local/share/beads-bridge/app}"
 APP_NAME="${APP_NAME:-com.beads-bridge.server}"
 PLIST="$HOME/Library/LaunchAgents/$APP_NAME.plist"
+# mini1 runs the bridge as a system LaunchDaemon. The per-user agent there
+# was renamed aside, so bootout/bootstrap in gui/<uid> fails EIO while the
+# old process keeps answering the port. Override is for tests only.
+SYSTEM_PLIST="${BEADS_BRIDGE_SYSTEM_PLIST:-/Library/LaunchDaemons/$APP_NAME.plist}"
 PORT="${BEADS_BRIDGE_PORT:-3737}"
+
+# system when that LaunchDaemon is installed or already loaded; otherwise the
+# gui-domain LaunchAgent path (macbook, mini0) is unchanged.
+service_domain() {
+  if [ -f "$SYSTEM_PLIST" ] || launchctl print "system/$APP_NAME" >/dev/null 2>&1; then
+    echo system
+  else
+    echo gui
+  fi
+}
+
+# Pid of whatever is accepting TCP on $PORT. Empty when nothing is listening.
+listener_pid() {
+  lsof -nP -iTCP:"$PORT" -sTCP:LISTEN -t 2>/dev/null | head -n 1 || true
+}
+
+# Restart the system LaunchDaemon. sudo -n must work; a password prompt would
+# hang a deploy, and continuing would let the old process pass the health check.
+kickstart_system() {
+  if err=$(sudo -n launchctl kickstart -k "system/$APP_NAME" 2>&1); then
+    return 0
+  fi
+  case "$err" in
+    *password*|*terminal*|*not\ permitted*)
+      echo "!! sudo -n is not available, so $APP_NAME was not restarted." >&2
+      ;;
+    *)
+      echo "!! launchctl kickstart failed: $err" >&2
+      ;;
+  esac
+  echo "!! Run: sudo launchctl kickstart -k system/$APP_NAME" >&2
+  return 1
+}
+
+case "${1:-}" in
+  --restart-plan)
+    printf 'domain=%s\n' "$(service_domain)"
+    exit 0
+    ;;
+esac
+
+# Test hook: exercise kickstart_system without touching a checkout or a live job
+# beyond the sudo/launchctl commands on PATH. Unset in normal deploys.
+if [ "${DEPLOY_RESTART_HOOK:-}" = 1 ]; then
+  kickstart_system
+  exit $?
+fi
 
 echo "==> deploying $REF to $DEPLOY_DIR"
 mkdir -p "$(dirname "$DEPLOY_DIR")"
@@ -41,6 +92,15 @@ pnpm install --frozen-lockfile
 echo "    now at $(git log --oneline -1)"
 
 echo "==> restarting $APP_NAME"
+# Recorded before the restart so a survivor of the old process cannot pass
+# the health check below. Empty when the port was not taken.
+OLD_LISTENER="$(listener_pid)"
+DOMAIN_KIND="$(service_domain)"
+if [ "$DOMAIN_KIND" = system ]; then
+  echo "    domain system/$APP_NAME (listener before restart: ${OLD_LISTENER:-none})"
+  kickstart_system
+else
+echo "    domain gui/$(id -u) (listener before restart: ${OLD_LISTENER:-none})"
 DOMAIN="gui/$(id -u)"
 launchctl bootout "$DOMAIN/$APP_NAME" 2>/dev/null || true
 
@@ -73,21 +133,32 @@ while :; do
   fi
   sleep 1
 done
+fi
 
-# Wait for a RUNNING pid, not merely an answered port: the port alone cannot
-# tell the new process from the old one draining.
+# Wait for a NEW listener on $PORT, not merely an answered port. On the
+# system-domain host the job is not in the user `launchctl list`, and an old
+# process kept answering /live after a failed gui bootstrap (2026-10-31).
 echo "==> waiting for :$PORT"
 i=0
 pid=""
 while [ $i -lt 120 ]; do
-  pid=$(launchctl list | awk -v n="$APP_NAME" '$3 == n { print $1 }')
-  if [ -n "$pid" ] && [ "$pid" != "-" ] && curl -fsS -m 2 -o /dev/null "http://127.0.0.1:$PORT/live" 2>/dev/null; then break; fi
+  listen="$(listener_pid)"
+  job_pid=""
+  if [ "$DOMAIN_KIND" != system ]; then
+    job_pid=$(launchctl list | awk -v n="$APP_NAME" '$3 == n { print $1 }')
+  fi
+  if [ -n "$listen" ] && [ "$listen" != "$OLD_LISTENER" ] \
+    && { [ "$DOMAIN_KIND" = system ] || { [ -n "$job_pid" ] && [ "$job_pid" != "-" ]; }; } \
+    && curl -fsS -m 2 -o /dev/null "http://127.0.0.1:$PORT/live" 2>/dev/null; then
+    pid="$listen"
+    break
+  fi
   pid=""
   i=$((i + 1))
   sleep 0.5
 done
 if [ -z "$pid" ]; then
-  echo "!! $APP_NAME has no running pid after 60s" >&2
+  echo "!! $APP_NAME has no new listener on :$PORT after 60s (old pid ${OLD_LISTENER:-none})" >&2
   exit 1
 fi
 echo "    running as pid $pid"
