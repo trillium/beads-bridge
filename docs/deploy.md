@@ -30,10 +30,21 @@ ops/deploy.sh              # fast-forward to origin/main, install, restart, veri
 ops/deploy.sh <git-ref>    # or deploy a specific ref (detached HEAD)
 ```
 
-The script refuses to run over a modified deploy checkout, waits for `:3737`
-to answer `/live`, then prints the status code of every live route and the
-OAuth approval-boundary probes (below). Exit non-zero means at least one route
-is not 200 or a boundary probe is wrong — that is the deploy's own gate.
+The script refuses to run over a modified deploy checkout, restarts the job,
+then waits until the process listening on `:3737` is a different pid from the
+one recorded before the restart and `/live` answers. It then prints the status
+code of every live route and the OAuth approval-boundary probes (below). Exit
+non-zero means the new process never took the port, at least one route is not
+200, or a boundary probe is wrong — that is the deploy's own gate.
+
+Which launchd domain is restarted depends on the host. When
+`/Library/LaunchDaemons/com.beads-bridge.server.plist` exists, or
+`launchctl print system/com.beads-bridge.server` succeeds, the script runs
+`sudo -n launchctl kickstart -k system/com.beads-bridge.server` and stops with
+that command printed if passwordless sudo is missing. Otherwise it keeps the
+per-user `gui/<uid>` bootout and bootstrap (MacBook and mini0).
+`ops/deploy.sh --restart-plan` prints `domain=system` or `domain=gui` and does
+not restart anything.
 
 **Open `/live` tabs reload on deploy.** Every deploy restarts the process, which
 mints a new `BOOT_ID` (`src/lib/build-id.ts`). Pages carry the id they were
