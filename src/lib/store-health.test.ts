@@ -114,6 +114,16 @@ describe('write/read guards (fake store CLIs)', () => {
     assert.equal(calls(), '')
   })
 
+  it('refuses writes when the registry is unreachable and creates no bead', async () => {
+    const s = fakeStore('unreach', '', 'ssh: connect to host brain port 22: Connection refused', 255)
+    assert.equal((await probeStore(s)).status, 'unreachable')
+    await assert.rejects(() => assertStoreWritable(s), StoreUnavailableError)
+    await assert.rejects(() => runMutation(s, ['create', 'dup candidate']), /not reachable at its authoritative location \(unreachable\)/)
+    assert.throws(() => runMutationSync(s, ['create', 'dup candidate']), StoreUnavailableError)
+    await assert.rejects(() => execStdout(s, ['comment', 'x-1', 'hi'], 5000), StoreUnavailableError)
+    assert.equal(calls(), '', 'no write verb may reach an unreachable store')
+  })
+
   it('reads of a fallback-local store are refused; a no-database read degrades to a named diagnosis', async () => {
     const fb = fakeStore('fb2', WHERE_OK, 'beads: remote h unreachable, using local')
     await assert.rejects(() => assertStoreReadable(fb), StoreUnavailableError)
