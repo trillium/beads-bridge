@@ -56,6 +56,25 @@ kickstart_system() {
   return 1
 }
 
+# Block until $1 (the pre-restart listener) has exited, so a survivor of the old
+# process can never be mistaken for the new one or hold the port. `ps -p`, not
+# `kill -0`: the old process may belong to root, where kill -0 answers EPERM and
+# would read as "gone". Empty pid means nothing was listening: nothing to wait on.
+wait_old_exit() {
+  old="$1"
+  [ -n "$old" ] || return 0
+  limit=$(( ${BEADS_BRIDGE_OLD_EXIT_WAIT:-30} * 2 ))
+  n=0
+  while ps -p "$old" >/dev/null 2>&1; do
+    n=$((n + 1))
+    if [ "$n" -ge "$limit" ]; then
+      echo "!! old process $old for $APP_NAME did not exit within $((limit / 2))s" >&2
+      exit 1
+    fi
+    sleep 0.5
+  done
+}
+
 case "${1:-}" in
   --restart-plan)
     printf 'domain=%s\n' "$(service_domain)"
@@ -99,40 +118,44 @@ DOMAIN_KIND="$(service_domain)"
 if [ "$DOMAIN_KIND" = system ]; then
   echo "    domain system/$APP_NAME (listener before restart: ${OLD_LISTENER:-none})"
   kickstart_system
+  wait_old_exit "$OLD_LISTENER"
 else
-echo "    domain gui/$(id -u) (listener before restart: ${OLD_LISTENER:-none})"
-DOMAIN="gui/$(id -u)"
-launchctl bootout "$DOMAIN/$APP_NAME" 2>/dev/null || true
+  echo "    domain gui/$(id -u) (listener before restart: ${OLD_LISTENER:-none})"
+  DOMAIN="gui/$(id -u)"
+  launchctl bootout "$DOMAIN/$APP_NAME" 2>/dev/null || true
 
-# bootout is asynchronous. Until it finishes, the job is still `print`-able
-# (state: SIGTERMed, cleanup scheduled) and the OLD process is still answering
-# :$PORT during its shutdown grace period. Observed on 2026-10-06: a deploy
-# checked routes 200ms after bootout, got 200s from the dying process, and
-# reported success while the service was in fact being removed — a false pass
-# that left the bridge down. So wait for the job to genuinely disappear first.
-i=0
-while launchctl print "$DOMAIN/$APP_NAME" >/dev/null 2>&1; do
-  i=$((i + 1))
-  if [ "$i" -ge 60 ]; then
-    echo "!! $APP_NAME did not unload within 30s" >&2
-    exit 1
-  fi
-  sleep 0.5
-done
+  # bootout is asynchronous. Until it finishes, the job is still `print`-able
+  # (state: SIGTERMed, cleanup scheduled) and the OLD process is still answering
+  # :$PORT during its shutdown grace period. Observed on 2026-10-06: a deploy
+  # checked routes 200ms after bootout, got 200s from the dying process, and
+  # reported success while the service was in fact being removed — a false pass
+  # that left the bridge down. So wait for the job to genuinely disappear first.
+  i=0
+  while launchctl print "$DOMAIN/$APP_NAME" >/dev/null 2>&1; do
+    i=$((i + 1))
+    if [ "$i" -ge 60 ]; then
+      echo "!! $APP_NAME did not unload within 30s" >&2
+      exit 1
+    fi
+    sleep 0.5
+  done
+
+  # The job being gone is not the process being gone: wait for the old pid too.
+wait_old_exit "$OLD_LISTENER"
 
 # bootstrap can race the bootout that just finished and answer EIO
-# ("Bootstrap failed: 5: Input/output error"). A deploy that leaves the service
-# down is worse than a slow deploy, so retry a bounded number of times.
-tries=0
-while :; do
-  if err=$(launchctl bootstrap "$DOMAIN" "$PLIST" 2>&1); then break; fi
-  tries=$((tries + 1))
-  if [ "$tries" -ge 10 ]; then
-    echo "!! launchctl bootstrap failed after $tries attempts: $err" >&2
-    exit 1
-  fi
-  sleep 1
-done
+  # ("Bootstrap failed: 5: Input/output error"). A deploy that leaves the service
+  # down is worse than a slow deploy, so retry a bounded number of times.
+  tries=0
+  while :; do
+    if err=$(launchctl bootstrap "$DOMAIN" "$PLIST" 2>&1); then break; fi
+    tries=$((tries + 1))
+    if [ "$tries" -ge 10 ]; then
+      echo "!! launchctl bootstrap failed after $tries attempts: $err" >&2
+      exit 1
+    fi
+    sleep 1
+  done
 fi
 
 # Wait for a NEW listener on $PORT, not merely an answered port. On the
@@ -163,6 +186,8 @@ if [ -z "$pid" ]; then
 fi
 echo "    running as pid $pid"
 
+# Each phase below stops the deploy at its first failure (exit 1) instead of
+# carrying on to later phases and reporting only at the end.
 echo "==> live route check"
 rc=0
 for p in /live /live/variants /live/v1 /live/jumbotron /live/timeline /live/log /live/stats; do
@@ -170,6 +195,7 @@ for p in /live /live/variants /live/v1 /live/jumbotron /live/timeline /live/log 
   printf '    %-16s %s\n' "$p" "$code"
   [ "$code" = 200 ] || rc=1
 done
+[ "$rc" -eq 0 ] || { echo "!! live route check failed; stopping" >&2; exit 1; }
 
 # OAuth approval boundary. Human approval is tailnet-only: a second listener
 # bound to TAILNET_IP:APPROVAL_PORT (default PORT+1) serves /oauth/approve/*,
@@ -198,6 +224,7 @@ else
   echo "    !! no TAILNET_IP in $DEPLOY_DIR/.env: tailnet approval listener is OFF; new OAuth grants are impossible here" >&2
   rc=1
 fi
+[ "$rc" -eq 0 ] || { echo "!! oauth approval boundary check failed; stopping" >&2; exit 1; }
 
 # MCP smoke check. The /live routes above stayed green through the 2026-10-06
 # outage in which every MCP call answered "Session terminated" because the
@@ -221,6 +248,7 @@ if [ -r "$KEY_FILE" ]; then
 else
   echo "    !! $KEY_FILE unreadable; skipping MCP smoke check" >&2
 fi
+[ "$rc" -eq 0 ] || { echo "!! MCP smoke check failed; stopping" >&2; exit 1; }
 
 # Gateway catalog. The MCPJungle gateway caches tool metadata at register
 # time, so a deploy that adds/removes/re-describes tools leaves every gateway
@@ -232,22 +260,18 @@ fi
 # never prints the service key; re-running is idempotent. Skipped when the
 # smoke checks above already failed (do not register a broken surface).
 echo "==> gateway catalog"
-if [ "$rc" -ne 0 ]; then
-  echo "    skipped: bridge checks failed above; fix, then run ops/mcp-refresh-check.sh"
-else
-  grc=0
-  "$DEPLOY_DIR/ops/mcp-refresh-check.sh" >/dev/null 2>&1 || grc=$?
-  case "$grc" in
-    0) echo "    gateway catalog matches live" ;;
-    1)
-      echo "    gateway catalog differs from live; re-registering"
-      if "$DEPLOY_DIR/ops/jungle-register-bearer.sh" >/dev/null 2>&1; then
-        echo "    re-registered; reconnect gateway clients (docs/jungle-gateway-refresh.md step C)"
-      else
-        echo "    !! re-register failed: run $DEPLOY_DIR/ops/jungle-register-bearer.sh" >&2
-      fi
-      ;;
-    *) echo "    gateway not observable: run $DEPLOY_DIR/ops/mcp-refresh-check.sh, then $DEPLOY_DIR/ops/jungle-register-bearer.sh if stale" ;;
-  esac
-fi
-exit $rc
+grc=0
+"$DEPLOY_DIR/ops/mcp-refresh-check.sh" >/dev/null 2>&1 || grc=$?
+case "$grc" in
+  0) echo "    gateway catalog matches live" ;;
+  1)
+    echo "    gateway catalog differs from live; re-registering"
+    if "$DEPLOY_DIR/ops/jungle-register-bearer.sh" >/dev/null 2>&1; then
+      echo "    re-registered; reconnect gateway clients (docs/jungle-gateway-refresh.md step C)"
+    else
+      echo "    !! re-register failed: run $DEPLOY_DIR/ops/jungle-register-bearer.sh" >&2
+    fi
+    ;;
+  *) echo "    gateway not observable: run $DEPLOY_DIR/ops/mcp-refresh-check.sh, then $DEPLOY_DIR/ops/jungle-register-bearer.sh if stale" ;;
+esac
+exit 0
