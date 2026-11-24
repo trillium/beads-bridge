@@ -1,32 +1,33 @@
 // OAuth 2.1 authorization server for ChatGPT's MCP connector flow:
 // discovery metadata, dynamic client registration, human approval,
 // auth-code + PKCE exchange, and refresh rotation. Co-hosted with the
-// resource server; token/client state persists under ~/.config/beads-bridge so
-// restarts don't revoke ChatGPT. Human approval is a tailnet-only QR/link
-// (src/lib/tailnet-approval.ts) that completes in the original browser, which
-// then holds an approval cookie so later grants are one click.
+// resource server. Every grant in flight is one persisted record
+// (src/lib/oauth.ts `Grant`), as are clients and tokens, so a restart neither
+// revokes ChatGPT nor breaks an approval mid-flow. Human approval is a
+// tailnet-only QR/link (src/lib/tailnet-approval.ts) that completes in the
+// original browser, which then holds a remembered-browser cookie so later
+// grants are one click.
 import { Router } from 'express'
 import type { Request, Response } from 'express'
 import { protectedResourceHandler } from 'mcp-handler'
 import { BASE } from '../config'
 import { mountFetch } from '../lib/express-fetch'
-import { esc, pending, pruneTx, txId } from '../lib/oauth-tx'
-import type { Tx } from '../lib/oauth-tx'
 import { qrSvg } from '../lib/qr'
 import { tailnetApprovalUrl } from '../lib/tailnet-approval'
 import {
   SUPPORTED_SCOPES,
-  TX_TTL_MS,
   audienceResources,
   buildAuthorizationServerMetadata,
+  challengeGrant,
   chatgptResource,
   checkApproval,
-  consumePendingApproval,
-  createPendingApproval,
-  cimdRedirectUris,
   consumeCode,
+  denyGrant,
+  esc,
   geminiResource,
+  getGrant,
   grantApproval,
+  grantChallengeState,
   grokResource,
   jungleResource,
   lookupAccess,
@@ -34,14 +35,16 @@ import {
   mintCode,
   mintTokenPair,
   normalizeResource,
+  openGrant,
   parseScope,
-  pendingApprovalState,
   pkceChallenge,
+  redeemGrant,
   registerClient,
   resolveClient,
   rotateRefresh,
   validateRedirectUri,
 } from '../lib/oauth'
+import type { Grant } from '../lib/oauth'
 
 export const mountOrder = -25
 export const oauthRouter = Router()
@@ -155,16 +158,12 @@ interface Challenge {
   url: string | null
 }
 
-// How the human proves they are on the tailnet: a pending record, a link and a
-// QR code for it. Skipped for a browser that already holds an approval cookie.
-function openChallenge(txKey: string, tx: Tx): Challenge {
-  const p = createPendingApproval({
-    tx: txKey,
-    clientName: tx.clientName ?? tx.clientId,
-    redirectHost: hostOf(tx.redirectUri),
-    scope: tx.scope,
-  })
-  return { approvalId: p.id, shortCode: p.shortCode, url: tailnetApprovalUrl(p.id) }
+// How the human proves they are on the tailnet: a challenge on the grant
+// record, a link and a QR code for it. Skipped for a browser that already holds
+// an approval cookie. Null when the grant cannot take a new challenge.
+function openChallenge(grantId: string): Challenge | null {
+  const c = challengeGrant(grantId)
+  return c ? { approvalId: c.id, shortCode: c.shortCode, url: tailnetApprovalUrl(c.id) } : null
 }
 
 function hostOf(redirectUri: string): string {
@@ -218,7 +217,6 @@ function redirectError(res: Response, redirectUri: string, error: string, state:
 }
 
 oauthRouter.get('/oauth/authorize', async (req: Request, res: Response) => {
-  pruneTx()
   const q = req.query as Record<string, unknown>
   const str = (v: unknown): string => (typeof v === 'string' ? v : '')
   const clientId = str(q.client_id)
@@ -243,21 +241,19 @@ oauthRouter.get('/oauth/authorize', async (req: Request, res: Response) => {
   if (!scope) {
     return void redirectError(res, redirectUri, 'invalid_scope', state, `supported scopes: ${SUPPORTED_SCOPES.join(', ')}`)
   }
-  const id = txId()
-  pending.set(id, {
+  const { id } = openGrant({
     clientId,
     clientName: resolved.name,
     redirectUri,
     scope,
-    state,
-    challenge,
+    clientState: state,
+    codeChallenge: challenge,
     resource,
-    expiresAt: Date.now() + TX_TTL_MS,
   })
-  const tx = pending.get(id)!
-  const approval: Challenge = checkApproval(approvalCookie(req))
+  const approval = checkApproval(approvalCookie(req))
     ? { approvalId: null, shortCode: '', url: null }
-    : openChallenge(id, tx)
+    : openChallenge(id)
+  if (!approval) return void res.type('text/plain').status(503).send('approval could not be opened — retry from ChatGPT')
   res.type('text/html').send(approvePage(id, resolved.name ?? clientId, hostOf(redirectUri), scope, approval))
 })
 
@@ -265,56 +261,52 @@ oauthRouter.get('/oauth/authorize', async (req: Request, res: Response) => {
 // the answer is one of pending|approved|denied|expired and nothing else.
 oauthRouter.get('/oauth/pending/:id/status', (req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store')
-  res.json({ status: pendingApprovalState(String(req.params.id)) })
+  res.json({ status: grantChallengeState(String(req.params.id)) })
 })
 
 oauthRouter.post('/oauth/authorize', (req: Request, res: Response) => {
-  pruneTx()
   const body = (req.body ?? {}) as Record<string, unknown>
   const str = (v: unknown): string => (typeof v === 'string' ? v : '')
-  // A grant that is not (yet) approved must NOT burn the transaction: the
-  // page is re-rendered so the human can retry.
-  const txKey = str(body.tx)
-  const tx = pending.get(txKey)
-  if (!tx) return void res.type('text/plain').status(400).send('approval expired — restart from ChatGPT')
-  const approvalId = str(body.approval)
-  const deny = (): void => {
-    pending.delete(txKey)
-    redirectError(res, tx.redirectUri, 'access_denied', tx.state, 'user denied the request')
-  }
+  // Every step reads and writes the persisted grant record, so this works the
+  // same whether or not the process restarted since GET /oauth/authorize.
+  // A grant that is not (yet) approved must NOT burn the record: the page is
+  // re-rendered so the human can retry.
+  const grantId = str(body.tx)
+  const grant = getGrant(grantId)
+  if (!grant) return void res.type('text/plain').status(400).send('approval expired — restart from ChatGPT')
+  const denied = (g: Grant): void => redirectError(res, g.redirectUri, 'access_denied', g.clientState, 'user denied the request')
   if (str(body.decision) !== 'approve') {
-    if (approvalId) consumePendingApproval(approvalId, txKey)
-    return void deny()
+    denyGrant(grantId)
+    return void denied(grant)
   }
-  const cookieOk = checkApproval(approvalCookie(req))
-  if (!cookieOk) {
-    // Approval must come from the tailnet device that decided this exact tx.
-    const outcome = approvalId ? consumePendingApproval(approvalId, txKey) : 'expired'
-    if (outcome === 'denied') return void deny()
-    if (outcome === 'pending') {
-      return void res.type('text/plain').status(409).send('not approved yet — approve from your tailnet device')
-    }
-    if (outcome !== 'approved') {
-      return void res.type('text/html').status(403).send(
-        approvePage(txKey, tx.clientName ?? tx.clientId, hostOf(tx.redirectUri), tx.scope, openChallenge(txKey, tx), 'Approval expired or was not granted — use the new code below.'),
-      )
-    }
-    setApprovalCookie(res, grantApproval())
-  } else if (approvalId) {
-    consumePendingApproval(approvalId, txKey)
+  const r = redeemGrant(grantId, { challengeId: str(body.approval), browserApproved: checkApproval(approvalCookie(req)) })
+  if (r.outcome === 'unknown') return void res.type('text/plain').status(400).send('approval expired — restart from ChatGPT')
+  if (r.outcome === 'denied') return void denied(r.grant)
+  if (r.outcome === 'pending') {
+    return void res.type('text/plain').status(409).send('not approved yet — approve from your tailnet device')
   }
-  pending.delete(txKey)
+  if (r.outcome === 'unapproved') {
+    // The previous challenge (if any) dies here: only the new code can approve.
+    const fresh = openChallenge(grantId)
+    if (!fresh) return void res.type('text/plain').status(403).send('approval was not granted to this request')
+    return void res.type('text/html').status(403).send(
+      approvePage(grantId, grant.clientName ?? grant.clientId, hostOf(grant.redirectUri), grant.scope, fresh, 'Approval expired or was not granted — use the new code below.'),
+    )
+  }
+  // Approved, and the record is gone: it can mint exactly one code.
+  const g = r.grant
+  if (r.via === 'tailnet') setApprovalCookie(res, grantApproval())
   const { code } = mintCode({
-    clientId: tx.clientId,
-    redirectUri: tx.redirectUri,
-    challenge: tx.challenge,
-    resource: tx.resource,
-    scope: tx.scope,
+    clientId: g.clientId,
+    redirectUri: g.redirectUri,
+    challenge: g.codeChallenge,
+    resource: g.resource,
+    scope: g.scope,
     expiresAt: 0, // mintCode stamps its own expiry
   })
-  const u = new URL(tx.redirectUri)
+  const u = new URL(g.redirectUri)
   u.searchParams.set('code', code)
-  if (tx.state) u.searchParams.set('state', tx.state)
+  if (g.clientState) u.searchParams.set('state', g.clientState)
   u.searchParams.set('iss', ISSUER)
   res.redirect(302, u.toString())
 })

@@ -69,6 +69,14 @@ returns only `{status}`) and completes by itself once a tailnet device approves.
 - **Needs `TAILNET_IP`** in the bridge's `.env` (this host's tailnet address).
   Without it the listener stays off and the approval page says approval is not
   configured.
+- **One record per grant, restart-safe:** each in-flight grant (the
+  authorization request, its current QR challenge, and the approve/deny
+  decision) is one record in the OAuth store file next to clients and tokens.
+  Nothing about it is held in process memory, so a deploy or crash between
+  opening the page, approving on the phone, and the client's token exchange
+  does not break the flow. A retry replaces the QR code; the old one stops
+  working at once. The grant record is deleted when it mints its code, when
+  either side denies, or after 15 minutes.
 - **Rule for vps01 / Funnel:** the public front must **never** proxy
   `/oauth/approve/*` or port 3738 (the vps01 allowlist is exact; do not add
   either). Approval pages are reachable only over the tailnet.

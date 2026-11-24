@@ -8,8 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AddressInfo } from 'node:net'
 import type { Server } from 'node:http'
-import { createPendingApproval, pendingApprovalState } from './oauth'
-import { pending } from './oauth-tx'
+import { challengeGrant, getGrant, grantChallengeState, openGrant } from './oauth'
 import { createTailnetApprovalApp, isTailnetAddress, tailnetApprovalUrl } from './tailnet-approval'
 
 describe('isTailnetAddress (100.64.0.0/10)', () => {
@@ -44,11 +43,14 @@ describe('tailnet approval app', () => {
   after(() => void server.close())
   beforeEach(() => {
     process.env.OAUTH_STORE_PATH = join(mkdtempSync(join(tmpdir(), 'tn-approval-')), 'store.json')
-    pending.clear()
   })
 
   const TAILNET = { 'x-test-peer': '100.100.1.2' }
-  const mk = () => createPendingApproval({ tx: 'bbtx_t', clientName: 'Test <b>Client</b>', redirectHost: 'app.example', scope: ['mcp'] })
+  let grantId = ''
+  const mk = () => {
+    grantId = openGrant({ clientId: 'c', clientName: 'Test <b>Client</b>', redirectUri: 'https://app.example/cb', scope: ['mcp'], clientState: '', codeChallenge: 'x', resource: 'r' }).id
+    return challengeGrant(grantId)!
+  }
   const get = (id: string, headers: Record<string, string> = TAILNET) => fetch(`${base}/oauth/approve/${id}`, { headers })
   const post = (id: string, decision: string, headers: Record<string, string> = TAILNET) =>
     fetch(`${base}/oauth/approve/${id}`, {
@@ -63,14 +65,14 @@ describe('tailnet approval app', () => {
       assert.equal((await get(p.id, { 'x-test-peer': peer })).status, 404, peer)
       assert.equal((await post(p.id, 'approve', { 'x-test-peer': peer })).status, 404, peer)
     }
-    assert.equal(pendingApprovalState(p.id), 'pending')
+    assert.equal(grantChallengeState(p.id), 'pending')
   })
 
   it('404s a tailnet peer that carries proxy-forwarding headers (a proxied hop)', async () => {
     const p = mk()
     assert.equal((await get(p.id, { ...TAILNET, 'x-forwarded-for': '100.100.1.2' })).status, 404)
     assert.equal((await post(p.id, 'approve', { ...TAILNET, 'x-forwarded-proto': 'https' })).status, 404)
-    assert.equal(pendingApprovalState(p.id), 'pending')
+    assert.equal(grantChallengeState(p.id), 'pending')
   })
 
   it('never trusts X-Forwarded-For as the tailnet check', async () => {
@@ -99,24 +101,23 @@ describe('tailnet approval app', () => {
   it('POST approve marks the record approved, once', async () => {
     const p = mk()
     assert.equal((await post(p.id, 'approve')).status, 200)
-    assert.equal(pendingApprovalState(p.id), 'approved')
+    assert.equal(grantChallengeState(p.id), 'approved')
     assert.equal((await post(p.id, 'deny')).status, 409)
-    assert.equal(pendingApprovalState(p.id), 'approved')
+    assert.equal(grantChallengeState(p.id), 'approved')
   })
 
-  it('POST deny marks the record denied and leaves the transaction for the browser to close', async () => {
+  it('POST deny marks the grant denied and leaves it for the browser to close', async () => {
     const p = mk()
-    pending.set('bbtx_t', { clientId: 'c', redirectUri: 'https://app.example/cb', scope: ['mcp'], state: '', challenge: 'x', resource: 'r', expiresAt: Date.now() + 1000 })
     assert.equal((await post(p.id, 'deny')).status, 200)
-    assert.equal(pendingApprovalState(p.id), 'denied')
-    assert.equal(pending.has('bbtx_t'), true)
+    assert.equal(grantChallengeState(p.id), 'denied')
+    assert.equal(getGrant(grantId)?.state, 'denied')
   })
 
   it('refuses a cross-origin form post', async () => {
     const p = mk()
     const r = await post(p.id, 'approve', { ...TAILNET, origin: 'https://evil.example' })
     assert.equal(r.status, 403)
-    assert.equal(pendingApprovalState(p.id), 'pending')
+    assert.equal(grantChallengeState(p.id), 'pending')
   })
 
   it('serves nothing else', async () => {
