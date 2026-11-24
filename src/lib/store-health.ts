@@ -21,6 +21,12 @@ export type StoreStatus = 'ok' | 'no-database' | 'fallback-local' | 'local-shado
 // Statuses that prove the CLI is NOT pointing at the authoritative store.
 export const BLOCKING_STATUSES: readonly StoreStatus[] = ['no-database', 'fallback-local', 'local-shadow', 'misrouted']
 
+// Writes also refuse when the registry cannot be reached at all: the write
+// would either fail or land in an unverified copy, and a retry after the
+// registry returns then creates a duplicate. Reads stay allowed (they fail on
+// their own).
+export const WRITE_BLOCKING_STATUSES: readonly StoreStatus[] = [...BLOCKING_STATUSES, 'unreachable']
+
 export interface StoreProbe {
   store: string
   /** Exact command run, for reports: e.g. `task where`. */
@@ -211,7 +217,7 @@ export function unavailableText(p: StoreProbe): string {
 export async function assertStoreWritable(store: string): Promise<void> {
   if (guardDisabled()) return
   const p = await probeStore(store)
-  if (BLOCKING_STATUSES.includes(p.status)) throw new StoreUnavailableError(p)
+  if (WRITE_BLOCKING_STATUSES.includes(p.status)) throw new StoreUnavailableError(p)
 }
 
 const SILENT_WRONG: readonly StoreStatus[] = ['fallback-local', 'local-shadow', 'misrouted']
@@ -232,7 +238,7 @@ export async function assertStoreReadable(store: string): Promise<void> {
 export function assertStoreWritableSync(store: string): void {
   if (guardDisabled()) return
   const p = probeStoreSync(store)
-  if (BLOCKING_STATUSES.includes(p.status)) throw new StoreUnavailableError(p)
+  if (WRITE_BLOCKING_STATUSES.includes(p.status)) throw new StoreUnavailableError(p)
 }
 
 // bd verbs that change a store. `comments` (plural) is a read.
@@ -264,7 +270,7 @@ export function formatStoreHealth(rows: StoreHealthRow[]): string {
     `# store health — ${rows.length - bad.length}/${rows.length} stores at their authoritative location`,
     ``,
     `Probe = the store's own CLI (\`<store> where\`), the same command the bridge runs for every read and write.`,
-    `Writes are refused for: ${BLOCKING_STATUSES.join(', ')}.`,
+    `Writes are refused for: ${WRITE_BLOCKING_STATUSES.join(', ')}.`,
     ``,
     ...rows.map((r) => `- ${r.status === 'ok' ? 'OK ' : 'BAD'} ${r.store} [${r.status}] \`${r.command}\`${r.path ? ` -> ${r.path}` : ''}${r.prefix ? ` prefix=${r.prefix}` : ''}${r.status === 'ok' ? '' : ` — ${r.detail}`}`),
   ].join('\n')
