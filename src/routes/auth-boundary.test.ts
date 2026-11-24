@@ -34,7 +34,6 @@ import { createHash, randomBytes } from 'node:crypto'
 import { APPROVAL_PORT, BASE, toolKey } from '../config'
 import { accessGate } from '../lib/access-gate'
 import { audienceResources, chatgptResource, jungleResource, loadStore, lookupAccess, mcpResource, mintTokenPair, saveStore } from '../lib/oauth'
-import { pending } from '../lib/oauth-tx'
 import { createTailnetApprovalApp } from '../lib/tailnet-approval'
 import * as oauthLibNs from '../lib/oauth'
 import * as oauthRouteNs from './oauth'
@@ -309,10 +308,11 @@ describe('approval boundary: tailnet-only QR approval', () => {
   })
   beforeEach(() => {
     process.env.OAUTH_STORE_PATH = join(mkdtempSync(join(tmpdir(), 'approval-boundary-')), 'store.json')
-    pending.clear()
   })
 
   const form = (o: Record<string, string>): string => new URLSearchParams(o).toString()
+  // The persisted grant record for transaction `tx`, straight from the store file.
+  const grantOf = (tx: string) => loadStore().grants[tx]
   const post = (url: string, o: Record<string, string>, headers: Record<string, string> = {}) =>
     realFetch(url, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers }, body: form(o) })
 
@@ -353,7 +353,8 @@ describe('approval boundary: tailnet-only QR approval', () => {
     const link = f.html.match(/<a href="([^"]+)"/)?.[1]
     assert.equal(link, `http://100.64.9.9:${APPROVAL_PORT}/oauth/approve/${f.approval}`)
     assert.match(f.html, /<svg [^>]*shape-rendering="crispEdges"/) // inline QR
-    const code = loadStore().pendingApprovals[f.approval].shortCode
+    const code = grantOf(f.tx).challenge!.shortCode
+    assert.equal(grantOf(f.tx).challenge!.id, f.approval)
     assert.ok(f.html.includes(code))
     assert.doesNotMatch(f.html, /setup[_ ]key/i)
     assert.doesNotMatch(f.html, /type="password"/)
@@ -366,7 +367,7 @@ describe('approval boundary: tailnet-only QR approval', () => {
       assert.equal(r.status, 404, peer)
       assert.equal((await post(`${tailBase}/oauth/approve/${f.approval}`, { decision: 'approve' }, { 'x-test-peer': peer })).status, 404, peer)
     }
-    assert.equal(loadStore().pendingApprovals[f.approval].status, 'pending')
+    assert.equal(grantOf(f.tx).state, 'challenged')
   })
 
   it('(b) 404 from a tailnet-range address that arrives on the public listener', async () => {
@@ -374,7 +375,7 @@ describe('approval boundary: tailnet-only QR approval', () => {
     const spoof = { 'x-forwarded-for': '100.100.1.2', 'x-forwarded-proto': 'https', ...TAILNET_PEER }
     assert.equal((await realFetch(`${pubBase}/oauth/approve/${f.approval}`, { headers: spoof })).status, 404)
     assert.equal((await post(`${pubBase}/oauth/approve/${f.approval}`, { decision: 'approve' }, spoof)).status, 404)
-    assert.equal(loadStore().pendingApprovals[f.approval].status, 'pending')
+    assert.equal(grantOf(f.tx).state, 'challenged')
     // …and the same request with forwarding markers is refused even on the tailnet listener.
     assert.equal((await realFetch(`${tailBase}/oauth/approve/${f.approval}`, { headers: spoof })).status, 404)
   })
@@ -401,8 +402,7 @@ describe('approval boundary: tailnet-only QR approval', () => {
     const loc = new URL(r.headers.get('location') ?? '')
     assert.equal(loc.searchParams.get('error'), 'access_denied')
     assert.equal(r.headers.get('set-cookie'), null)
-    assert.equal(pending.has(f.tx), false)
-    assert.equal(f.approval in loadStore().pendingApprovals, false)
+    assert.equal(grantOf(f.tx), undefined)
     const again = await post(`${pubBase}/oauth/authorize`, { tx: f.tx, approval: f.approval, decision: 'approve' })
     assert.equal(again.status, 400)
   })
@@ -426,11 +426,14 @@ describe('approval boundary: tailnet-only QR approval', () => {
     assert.equal(wrong.status, 403)
     assert.equal(wrong.headers.get('location'), null)
     assert.equal(wrong.headers.get('set-cookie'), null)
+    // The re-render replaced b's challenge: its old QR code is dead, only the new one is live.
+    assert.deepEqual(await (await realFetch(`${pubBase}/oauth/pending/${b.approval}/status`)).json(), { status: 'expired' })
+    assert.notEqual(grantOf(b.tx).challenge!.id, b.approval)
     // The rightful tx consumes it once…
     const ok = await post(`${pubBase}/oauth/authorize`, { tx: a.tx, approval: a.approval, decision: 'approve' })
     assert.equal(ok.status, 302)
     // …and it is gone afterwards.
-    assert.equal(a.approval in loadStore().pendingApprovals, false)
+    assert.equal(grantOf(a.tx), undefined)
     assert.deepEqual(await (await realFetch(`${pubBase}/oauth/pending/${a.approval}/status`)).json(), { status: 'expired' })
     assert.equal((await post(`${tailBase}/oauth/approve/${a.approval}`, { decision: 'approve' }, TAILNET_PEER)).status, 404)
   })
@@ -438,7 +441,7 @@ describe('approval boundary: tailnet-only QR approval', () => {
   it('(d) an expired pending record cannot approve or complete the flow', async () => {
     const f = await startFlow(mcpResource(BASE))
     const raw = JSON.parse(readFileSync(process.env.OAUTH_STORE_PATH!, 'utf8'))
-    raw.pendingApprovals[f.approval].expiresAt = Date.now() - 1
+    raw.grants[f.tx].challenge.expiresAt = Date.now() - 1
     writeFileSync(process.env.OAUTH_STORE_PATH!, JSON.stringify(raw))
     assert.deepEqual(await (await realFetch(`${pubBase}/oauth/pending/${f.approval}/status`)).json(), { status: 'expired' })
     assert.equal((await post(`${tailBase}/oauth/approve/${f.approval}`, { decision: 'approve' }, TAILNET_PEER)).status, 404)
@@ -452,7 +455,7 @@ describe('approval boundary: tailnet-only QR approval', () => {
     const f = await startFlow(mcpResource(BASE))
     const early = await post(`${pubBase}/oauth/authorize`, { tx: f.tx, approval: f.approval, decision: 'approve' })
     assert.equal(early.status, 409)
-    assert.equal(loadStore().pendingApprovals[f.approval].status, 'pending')
+    assert.equal(grantOf(f.tx).state, 'challenged')
   })
 
   for (const resource of audienceResources(BASE)) {

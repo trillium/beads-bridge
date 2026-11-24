@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **An OAuth grant in flight survives a bridge restart.** Each authorization is
+  now one persisted record in the OAuth store file (request, current tailnet
+  challenge, and decision) instead of an in-memory transaction map beside a
+  separate approval record. A restart between opening the approval page,
+  approving on the tailnet device, and the token exchange no longer ends in
+  "approval expired — restart from ChatGPT". Re-rendering the page after a
+  failed attempt replaces the challenge, so the old QR code stops working at
+  once instead of staying live. Transaction ids are now drawn from the crypto
+  RNG. The remembered-browser cookie (one-click approval for 90 days) is
+  unchanged. Old in-flight approval records are dropped on first load. See
+  docs/deploy.md.
+
 ## 1.12.0
 
 - **Voice-misrecognition guard: conditional two-step confirmation (feature-n7e).**

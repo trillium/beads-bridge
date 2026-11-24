@@ -2,11 +2,11 @@
 // (PKCE, redirect validation, CIMD checks, metadata docs) plus a tiny
 // file-persisted store for clients, codes, tokens, and approvals.
 //
-// The human approval behind every grant is a tailnet-only QR approval (pending
+// The human approval behind every grant is a tailnet-only QR approval (grant
 // records below, served by src/lib/tailnet-approval.ts) — there is no typed key.
-// Token/client state lives in OAUTH_STORE_PATH (default
-// ~/.config/beads-bridge/beads-bridge-oauth.json, 0600) so restarts don't revoke
-// ChatGPT — only in-flight approval transactions are memory-only.
+// All OAuth state — clients, in-flight grants, codes, tokens — lives in
+// OAUTH_STORE_PATH (default ~/.config/beads-bridge/beads-bridge-oauth.json,
+// 0600), so a restart neither revokes ChatGPT nor breaks a grant mid-flow.
 import { createHash, randomBytes, randomInt } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { join } from 'path'
@@ -14,10 +14,11 @@ import { configFile } from './config-dir'
 
 export const SUPPORTED_SCOPES = ['mcp']
 export const CODE_TTL_MS = 10 * 60 * 1000
-export const TX_TTL_MS = 15 * 60 * 1000
-// Tailnet approval requests (QR + short code): short-lived and single-use.
+// An in-flight grant (authorize → code) lives at most this long.
+export const GRANT_TTL_MS = 15 * 60 * 1000
+// A grant's tailnet challenge (QR + short code): short-lived, replaced on retry.
 export const PENDING_APPROVAL_TTL_MS = 10 * 60 * 1000
-export const MAX_PENDING_APPROVALS = 100
+export const MAX_GRANTS = 100
 // Granted credentials live until revoked (deleting the store file revokes).
 // expiresAt === NEVER_EXPIRES (0) means "never expires". 0 is the sentinel
 // because it JSON round-trips exactly (JSON.stringify(Infinity) becomes
@@ -44,6 +45,10 @@ const CIMD_CACHE_TTL_MS = 5 * 60 * 1000
 const rand = (n: number): string => randomBytes(n).toString('base64url')
 
 // ── Pure helpers ─────────────────────────────────────────────────────────────
+
+export function esc(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
 
 // PKCE S256 (RFC 7636): base64url(sha256(ascii(verifier))).
 export function pkceChallenge(verifier: string): string {
@@ -212,20 +217,44 @@ export interface RefreshRec extends TokenRec {
   accessToken: string
 }
 
-export type PendingStatus = 'pending' | 'approved' | 'denied'
+// One authorization grant, from /oauth/authorize to the code it mints, is ONE
+// persisted record (`StoreData.grants`, keyed by its unguessable id — the `tx`
+// field of the public approval form). Nothing about an in-flight grant lives in
+// process memory, so a restart between any two steps changes nothing.
+//
+//   open ──challenge──▶ challenged ──tailnet decides──▶ approved | denied
+//     │                    ▲   │ (re-challenge replaces the challenge; the
+//     │                    └───┘  previous one is dead at once)
+//     └── redeem (browser already approved) ──▶ consumed (record deleted)
+//   approved ── redeem with its own challenge id ──▶ consumed (record deleted)
+//   denied / any state ── deny ──▶ record deleted
+//   every state ── expiresAt ──▶ pruned (reads as unknown)
+export type GrantState = 'open' | 'challenged' | 'approved' | 'denied'
 
-export interface PendingApproval {
-  // Authorization transaction this approval is bound to (routes/oauth.ts).
-  tx: string
+// The tailnet proof (QR + short code) a grant is waiting on. At most one per
+// grant; its id is the capability in the QR link and the status poll.
+export interface GrantChallenge {
+  id: string
   shortCode: string
-  status: PendingStatus
-  // Display fields for the tailnet approval page; never the redirect URI.
-  clientName: string
-  redirectHost: string
+  expiresAt: number
+}
+
+export interface Grant {
+  state: GrantState
+  // The authorization request, validated by GET /oauth/authorize.
+  clientId: string
+  clientName?: string
+  redirectUri: string
   scope: string[]
+  clientState: string
+  codeChallenge: string
+  resource: string
+  challenge?: GrantChallenge
   createdAt: number
   expiresAt: number
 }
+
+export type GrantRequest = Pick<Grant, 'clientId' | 'clientName' | 'redirectUri' | 'scope' | 'clientState' | 'codeChallenge' | 'resource'>
 
 interface StoreData {
   clients: Record<string, { name?: string; redirectUris: string[]; createdAt: number }>
@@ -233,10 +262,10 @@ interface StoreData {
   access: Record<string, TokenRec>
   refresh: Record<string, RefreshRec>
   approvals: Record<string, number>
-  // Human approvals awaiting a tailnet device (QR + short code), keyed by an
-  // unguessable id. Pruned with the rest of the store; never granted by
-  // anything but `decidePendingApproval` (called from the tailnet listener).
-  pendingApprovals: Record<string, PendingApproval>
+  // In-flight authorization grants, keyed by grant id (see Grant above).
+  // Pruned with the rest of the store; never approved by anything but
+  // `decideGrantChallenge` (called from the tailnet listener).
+  grants: Record<string, Grant>
   // Tombstones for access tokens pruned because they expired: sha256(token) →
   // when the record died. Lets the gate say "expired" rather than "unknown".
   // Hashed so the store never gains a second copy of a credential; a tombstone
@@ -249,7 +278,7 @@ export function storePath(): string {
 }
 
 function blank(): StoreData {
-  return { clients: {}, codes: {}, access: {}, refresh: {}, approvals: {}, pendingApprovals: {}, expired: {} }
+  return { clients: {}, codes: {}, access: {}, refresh: {}, approvals: {}, grants: {}, expired: {} }
 }
 
 export const EXPIRED_TOMBSTONE_TTL_MS = 30 * 24 * 3600 * 1000
@@ -274,7 +303,10 @@ function prune(d: StoreData): StoreData {
     else if (v.expiresAt !== NEVER_EXPIRES) v.expiresAt = NEVER_EXPIRES
   }
   for (const [k, v] of Object.entries(d.expired)) if (v + EXPIRED_TOMBSTONE_TTL_MS <= now) delete d.expired[k]
-  for (const [k, v] of Object.entries(d.pendingApprovals)) if (v.expiresAt <= now) delete d.pendingApprovals[k]
+  for (const [k, v] of Object.entries(d.grants)) if (v.expiresAt <= now) delete d.grants[k]
+  // Pre-grant stores kept tailnet approvals in their own map; their memory
+  // transactions died with the old process, so the records are orphans.
+  delete (d as unknown as Record<string, unknown>).pendingApprovals
   for (const [k, v] of Object.entries(d.approvals)) if (v + 90 * 24 * 3600 * 1000 <= now) delete d.approvals[k]
   return d
 }
@@ -379,7 +411,7 @@ export function checkApproval(token: string | undefined): boolean {
   return !!at && at + 90 * 24 * 3600 * 1000 > Date.now()
 }
 
-// ── Pending approvals (tailnet QR) ───────────────────────────────────────────
+// ── Grants (authorization transaction + tailnet QR challenge) ───────────────
 
 // No 0/O/1/I/L: the code is read aloud / compared by eye across two screens.
 const SHORT_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
@@ -391,63 +423,132 @@ function shortCode(): string {
   return out
 }
 
-export function createPendingApproval(input: {
-  tx: string
-  clientName: string
-  redirectHost: string
-  scope: string[]
-}): { id: string; shortCode: string; expiresAt: number } {
+// Unauthenticated callers can open grants, so the store keeps only the newest.
+function capGrants(d: StoreData): void {
+  const open = Object.entries(d.grants).sort(([, a], [, b]) => a.createdAt - b.createdAt)
+  for (const [k] of open.slice(0, Math.max(0, open.length - MAX_GRANTS))) delete d.grants[k]
+}
+
+const liveChallenge = (g: Grant): GrantChallenge | null =>
+  g.challenge && g.challenge.expiresAt > Date.now() ? g.challenge : null
+
+function findByChallenge(d: StoreData, challengeId: string): Grant | null {
+  if (!challengeId) return null
+  for (const g of Object.values(d.grants)) if (liveChallenge(g)?.id === challengeId) return g
+  return null
+}
+
+export function openGrant(req: GrantRequest): { id: string } {
   const d = loadStore()
-  const id = `bbpa_${rand(18)}`
-  const rec: PendingApproval = {
-    ...input,
-    shortCode: shortCode(),
-    status: 'pending',
-    createdAt: Date.now(),
-    expiresAt: Date.now() + PENDING_APPROVAL_TTL_MS,
-  }
-  d.pendingApprovals[id] = rec
-  const open = Object.entries(d.pendingApprovals).sort(([, a], [, b]) => a.createdAt - b.createdAt)
-  for (const [k] of open.slice(0, Math.max(0, open.length - MAX_PENDING_APPROVALS))) delete d.pendingApprovals[k]
+  const id = `bbtx_${rand(18)}`
+  const now = Date.now()
+  d.grants[id] = { ...req, state: 'open', createdAt: now, expiresAt: now + GRANT_TTL_MS }
+  capGrants(d)
   saveStore(d)
-  return { id, shortCode: rec.shortCode, expiresAt: rec.expiresAt }
+  return { id }
 }
 
 // Live record or null (unknown, expired and pruned all read the same).
-export function getPendingApproval(id: string): PendingApproval | null {
-  return loadStore().pendingApprovals[id] ?? null
+export function getGrant(id: string): Grant | null {
+  return loadStore().grants[id] ?? null
 }
 
-export type PendingApprovalState = PendingStatus | 'expired'
+// → challenged with a fresh tailnet challenge. Replacing the challenge kills
+// the previous one: a grant never has two live QR codes. A decision lapses with
+// its challenge, so an approval whose challenge expired is re-challenged too;
+// null for an unknown grant, a denied one, or a live approval (a stray POST
+// must not wipe it out from under the rightful browser).
+export function challengeGrant(id: string): GrantChallenge | null {
+  const d = loadStore()
+  const g = d.grants[id]
+  if (!g || g.state === 'denied' || (g.state === 'approved' && liveChallenge(g))) return null
+  g.state = 'challenged'
+  g.challenge = { id: `bbpa_${rand(18)}`, shortCode: shortCode(), expiresAt: Date.now() + PENDING_APPROVAL_TTL_MS }
+  saveStore(d)
+  return g.challenge
+}
+
+export type ChallengeState = 'pending' | 'approved' | 'denied' | 'expired'
+
+const challengeStateOf = (g: Grant | null): ChallengeState =>
+  !g ? 'expired' : g.state === 'approved' || g.state === 'denied' ? g.state : 'pending'
 
 // What the public status poll may reveal: the state, nothing else.
-export function pendingApprovalState(id: string): PendingApprovalState {
-  return getPendingApproval(id)?.status ?? 'expired'
+export function grantChallengeState(challengeId: string): ChallengeState {
+  return challengeStateOf(findByChallenge(loadStore(), challengeId))
 }
 
-// pending → approved|denied, once. Anything else (unknown, expired, already
-// decided) changes nothing and says why.
-export function decidePendingApproval(id: string, decision: 'approved' | 'denied'): 'ok' | 'not_found' | 'already_decided' {
+// Display fields for the tailnet approval page; never the redirect URI itself.
+export interface ChallengeView {
+  status: 'pending' | 'approved' | 'denied'
+  shortCode: string
+  clientName: string
+  redirectHost: string
+  scope: string[]
+}
+
+export function getGrantChallenge(challengeId: string): ChallengeView | null {
+  const g = findByChallenge(loadStore(), challengeId)
+  if (!g) return null
+  let redirectHost = g.redirectUri
+  try { redirectHost = new URL(g.redirectUri).host } catch { /* show it raw */ }
+  return {
+    status: challengeStateOf(g) as ChallengeView['status'],
+    shortCode: g.challenge!.shortCode,
+    clientName: g.clientName ?? g.clientId,
+    redirectHost,
+    scope: g.scope,
+  }
+}
+
+// challenged → approved|denied, once, through its live challenge. Anything
+// else (unknown, expired, replaced, already decided) changes nothing.
+export function decideGrantChallenge(challengeId: string, decision: 'approved' | 'denied'): 'ok' | 'not_found' | 'already_decided' {
   const d = loadStore()
-  const rec = d.pendingApprovals[id]
-  if (!rec) return 'not_found'
-  if (rec.status !== 'pending') return 'already_decided'
-  rec.status = decision
+  const g = findByChallenge(d, challengeId)
+  if (!g) return 'not_found'
+  if (g.state !== 'challenged') return 'already_decided'
+  g.state = decision
   saveStore(d)
   return 'ok'
 }
 
-// Single use: an approved/denied record bound to `tx` is returned and deleted.
-// 'pending' leaves it in place (the browser asked too early).
-export function consumePendingApproval(id: string, tx: string): PendingApprovalState | 'mismatch' {
+export type RedeemOutcome =
+  | { outcome: 'approved'; grant: Grant; via: 'browser' | 'tailnet' }
+  | { outcome: 'denied'; grant: Grant }
+  | { outcome: 'pending' }
+  | { outcome: 'unapproved' }
+  | { outcome: 'unknown' }
+
+// The browser asks to finish the grant. One compare-and-set on the record:
+//   denied                                   → deleted, 'denied'
+//   approved via the challenge it presents   → deleted, 'approved' (tailnet)
+//   any state, browser already approved      → deleted, 'approved' (browser)
+//   challenged, presenting its live challenge → kept,   'pending'
+//   otherwise (expired/replaced challenge)    → kept,   'unapproved'
+export function redeemGrant(id: string, proof: { challengeId: string; browserApproved: boolean }): RedeemOutcome {
   const d = loadStore()
-  const rec = d.pendingApprovals[id]
-  if (!rec) return 'expired'
-  if (rec.tx !== tx) return 'mismatch'
-  if (rec.status === 'pending') return 'pending'
-  delete d.pendingApprovals[id]
+  const g = d.grants[id]
+  if (!g) return { outcome: 'unknown' }
+  const presented = liveChallenge(g)?.id === proof.challengeId && !!proof.challengeId
+  let result: RedeemOutcome
+  if (g.state === 'denied') result = { outcome: 'denied', grant: g }
+  else if (g.state === 'approved' && presented) result = { outcome: 'approved', grant: g, via: 'tailnet' }
+  else if (proof.browserApproved) result = { outcome: 'approved', grant: g, via: 'browser' }
+  else return { outcome: g.state === 'challenged' && presented ? 'pending' : 'unapproved' }
+  delete d.grants[id]
   saveStore(d)
-  return rec.status
+  return result
+}
+
+// The human declined in the browser: the grant ends now, whatever its state.
+export function denyGrant(id: string): Grant | null {
+  const d = loadStore()
+  const g = d.grants[id]
+  if (!g) return null
+  delete d.grants[id]
+  saveStore(d)
+  return g
 }
 
 // ── CIMD fetch (short cache; https only) ─────────────────────────────────────

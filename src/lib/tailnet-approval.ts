@@ -12,7 +12,7 @@
 //      (displayd `touch_client.py` TAILNET_CGNAT);
 //   3. a request carrying proxy-forwarding headers (a Funnel/proxy hop) is
 //      refused even if its peer is in range. X-Forwarded-For is never trusted.
-// Approving only flips the pending record; the original public browser sees
+// Approving only flips the grant record; the original public browser sees
 // that on its status poll and completes the normal code/PKCE flow itself.
 import express from 'express'
 import type { Request, RequestHandler } from 'express'
@@ -20,8 +20,7 @@ import { isIPv4 } from 'net'
 import type { Server } from 'http'
 import { APPROVAL_PORT } from '../config'
 import { hasForwardMarkers, socketPeer } from './access-gate'
-import { esc } from './oauth-tx'
-import { decidePendingApproval, getPendingApproval } from './oauth'
+import { decideGrantChallenge, esc, getGrantChallenge } from './oauth'
 
 /** True for IPv4 addresses inside 100.64.0.0/10 (also ::ffff:-mapped). */
 export function isTailnetAddress(addr: string): boolean {
@@ -73,7 +72,7 @@ export function createTailnetApprovalApp(opts: TailnetApprovalOptions = {}): exp
   const id = (req: Request): string => String(req.params.id ?? '')
 
   app.get(`${APPROVE_PATH}/:id`, (req, res, next) => {
-    const rec = getPendingApproval(id(req))
+    const rec = getGrantChallenge(id(req))
     if (!rec) return notFound(req, res, next)
     if (rec.status !== 'pending') {
       return void res.type('text/html').send(page(`<h1>Already ${esc(rec.status)}</h1><p>This request has been decided. You can close this page.</p>`))
@@ -99,7 +98,7 @@ export function createTailnetApprovalApp(opts: TailnetApprovalOptions = {}): exp
       if (host !== req.get('host')) return void res.type('text/plain').status(403).send('cross-origin request refused\n')
     }
     const approve = (req.body ?? {}).decision === 'approve'
-    const result = decidePendingApproval(id(req), approve ? 'approved' : 'denied')
+    const result = decideGrantChallenge(id(req), approve ? 'approved' : 'denied')
     if (result === 'not_found') return notFound(req, res, next)
     if (result === 'already_decided') {
       return void res.status(409).type('text/html').send(page(`<h1>Already decided</h1><p>This request was decided already. You can close this page.</p>`))
